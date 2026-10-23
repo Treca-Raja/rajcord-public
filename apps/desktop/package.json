@@ -1,0 +1,19 @@
+{
+  "name": "@tricord/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "dev": "cross-env TRICORD_DEV_URL=http://127.0.0.1:5173 electron .",
+    "start": "electron .",
+    "smoke": "electron . --smoke"
+  },
+  "dependencies": {
+    "@tricord/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "45.0.0"
+  }
+}

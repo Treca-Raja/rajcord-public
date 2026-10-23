@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tricord
+      POSTGRES_DB: tricord
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infrastructure/.env}
+    ports:
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - tricord_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tricord -d tricord']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  tricord_postgres:

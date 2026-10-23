@@ -1,0 +1,29 @@
+{
+  "name": "@tricord/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
+    "build": "tsc",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file-if-exists=.env src/migrate.ts",
+    "db:verify-persistence": "tsx --env-file-if-exists=.env src/db/verify-persistence.ts"
+  },
+  "dependencies": {
+    "@tricord/shared": "workspace:*",
+    "fastify": "^5.12.7",
+    "@fastify/cors": "^11.0.0",
+    "socket.io": "^4.8.1",
+    "drizzle-orm": "^0.45.4",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11",
+    "@types/pg": "^8.15.0",
+    "tsx": "^4.20.0",
+    "socket.io-client": "^4.8.1"
+  }
+}

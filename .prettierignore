@@ -1,0 +1,9 @@
+node_modules
+dist
+pnpm-lock.yaml
+artifacts
+.local
+docs/milestone-1-brief.md
+
+experiments/
+tricord.code-workspace
