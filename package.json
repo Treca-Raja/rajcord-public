@@ -24,7 +24,10 @@
     "db:down": "docker compose --env-file infrastructure/.env -f infrastructure/compose.yaml down",
     "db:setup": "node scripts/db-setup.mjs",
     "test:db": "vitest run --config vitest.database.config.ts",
-    "db:verify-persistence": "pnpm --filter @tricord/api db:verify-persistence"
+    "db:verify-persistence": "pnpm --filter @tricord/api db:verify-persistence",
+    "owner:bootstrap": "pnpm --filter @tricord/api owner:bootstrap",
+    "test:desktop": "pnpm build && pnpm --filter @tricord/api test:desktop",
+    "test:browser": "pnpm build && pnpm --filter @tricord/api test:browser"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

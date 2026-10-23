@@ -11,14 +11,14 @@ describe('foundation', () => {
     active.push(instance);
     const response = await instance.app.inject('/health');
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ status: 'ok', service: 'tricord-api', milestone: 1 });
+    expect(response.json()).toEqual({ status: 'ok', service: 'tricord-api', milestone: 2 });
   });
   it('does not expose unimplemented message endpoints', async () => {
     const instance = createApp();
     active.push(instance);
     expect((await instance.app.inject('/messages')).statusCode).toBe(404);
   });
-  it('connects Socket.IO and acknowledges a round trip', async () => {
+  it('rejects anonymous Socket.IO connections', async () => {
     const instance = createApp();
     active.push(instance);
     const address = await instance.app.listen({ host: '127.0.0.1', port: 0 });
@@ -27,10 +27,8 @@ describe('foundation', () => {
       extraHeaders: { Origin: 'http://127.0.0.1:5173' },
     });
     try {
-      const reply = await new Promise((resolve) => {
-        socket.on('connection:welcome', () => socket.emit('connection:ping', resolve));
-      });
-      expect(reply).toEqual({ ok: true });
+      await new Promise<void>((resolve) => socket.once('connect_error', () => resolve()));
+      expect(socket.connected).toBe(false);
     } finally {
       socket.disconnect();
     }

@@ -14,7 +14,7 @@ if (existsSync(infra) || existsSync(api)) {
   writeFileSync(infra, 'POSTGRES_PASSWORD=' + password + '\n', { flag: 'wx' });
   writeFileSync(
     api,
-    'HOST=127.0.0.1\nPORT=3001\nWEB_ORIGINS=http://127.0.0.1:5173,http://localhost:5173\nDATABASE_URL=postgresql://tricord:' +
+    'HOST=127.0.0.1\nPORT=3001\nWEB_ORIGINS=http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:3001\nDATABASE_URL=postgresql://tricord:' +
       password +
       '@127.0.0.1:5432/tricord\n',
     { flag: 'wx' },

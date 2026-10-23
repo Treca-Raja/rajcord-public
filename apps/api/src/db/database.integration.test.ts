@@ -76,8 +76,28 @@ describe('real PostgreSQL foundation', () => {
     const labels = await database.pool.query(
       "SELECT enumlabel FROM pg_enum JOIN pg_type ON pg_enum.enumtypid=pg_type.oid WHERE typname='approval_status' ORDER BY enumsortorder",
     );
-    expect(labels.rows.map((x) => x.enumlabel)).toEqual(['pending', 'approved']);
-    expect(snapshot.journal).toHaveLength(1);
+    expect(labels.rows.map((x) => x.enumlabel)).toEqual([
+      'pending',
+      'approved',
+      'rejected',
+      'suspended',
+      'removed',
+    ]);
+    expect(snapshot.journal).toHaveLength(2);
+    const tables = await database.pool.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name",
+    );
+    expect(tables.rows.map((row) => row.table_name)).toEqual([
+      'approval_history',
+      'credentials',
+      'platform',
+      'sessions',
+      'users',
+    ]);
+    const singleton = await database.pool.query(
+      "SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='public.platform'::regclass AND contype='c'",
+    );
+    expect(singleton.rows[0].definition).toContain('id = 1');
   });
   it('inserts, reads and deletes only its disposable row through Drizzle', async () => {
     const row = await insert();

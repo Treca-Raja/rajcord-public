@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { io, type Socket } from 'socket.io-client';
+import { AuthRoot, useAuth } from './Auth';
+import './auth.css';
 import {
   Hash,
   Headphones,
@@ -18,7 +19,7 @@ import {
   Radio,
 } from 'lucide-react';
 import { Avatar, Badge } from '@tricord/ui';
-import type { HealthResponse, ClientToServerEvents, ServerToClientEvents } from '@tricord/shared';
+import type { AuthUser } from '@tricord/shared';
 
 const channels = ['general', 'gaming', 'off-topic', 'links-and-finds'];
 const people = [
@@ -37,39 +38,24 @@ const messages = [
   { person: 0, time: '18:46', text: 'Count me in. I’ll bring the questionable strategies.' },
 ];
 export function App() {
+  return (
+    <AuthRoot>
+      <Community />
+    </AuthRoot>
+  );
+}
+function Community() {
+  const { state, connected, openSettings, request } = useAuth();
+  const [members, setMembers] = useState<AuthUser[]>([]);
   const [channel, setChannel] = useState('general');
-  const [connected, setConnected] = useState(false);
-  const [health, setHealth] = useState('Checking API');
+  const health = 'Authenticated API';
   const [notice, setNotice] = useState('');
   const [mobile, setMobile] = useState(false);
   useEffect(() => {
-    const url = import.meta.env.VITE_API_URL || 'http://127.0.0.1:3001';
-    const controller = new AbortController();
-    const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(url, {
-      transports: ['websocket'],
-      reconnection: true,
-    });
-    socket.on('connection:welcome', () => {
-      socket.emit('connection:ping', (response) => {
-        setConnected(response.ok);
-      });
-    });
-    socket.on('disconnect', () => setConnected(false));
-    socket.on('connect_error', () => setConnected(false));
-    fetch(url + '/health', { signal: controller.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error();
-        return r.json() as Promise<HealthResponse>;
-      })
-      .then((data) => setHealth(data.status === 'ok' ? 'API healthy' : 'API unavailable'))
-      .catch(() => {
-        if (!controller.signal.aborted) setHealth('API unavailable');
-      });
-    return () => {
-      controller.abort();
-      socket.disconnect();
-    };
-  }, []);
+    void request<{ users: AuthUser[] }>('/members')
+      .then((data) => setMembers(data.users))
+      .catch(() => setNotice('Unable to load members.'));
+  }, [state.user.id, state.user.status]);
   const placeholder = (feature: string) =>
     setNotice(`${feature} is planned for a later milestone. This is a demo interface.`);
   return (
@@ -90,15 +76,11 @@ export function App() {
         >
           <Compass />
         </button>
-        <button
-          title="People"
-          aria-label="People"
-          onClick={() => placeholder('People and accounts')}
-        >
+        <button title="People" aria-label="People" onClick={openSettings}>
           <Users />
         </button>
         <div className="grow" />
-        <button aria-label="Settings" onClick={() => placeholder('Settings')}>
+        <button aria-label="Settings" onClick={openSettings}>
           <Settings />
         </button>
       </nav>
@@ -150,10 +132,10 @@ export function App() {
           </p>
         </div>
         <div className="profile">
-          <Avatar>Y</Avatar>
+          <Avatar>{state.user.displayName.slice(0, 1)}</Avatar>
           <div>
-            <strong>Preview profile</strong>
-            <small>Not signed in</small>
+            <strong>{state.user.displayName}</strong>
+            <small>{state.user.isOwner ? 'Platform owner' : 'Member · administrator'}</small>
           </div>
           <button
             aria-label="Microphone settings"
@@ -193,10 +175,7 @@ export function App() {
           </span>
           <div>
             <strong>A foundation for something ours.</strong>
-            <span>
-              {' '}
-              Milestone 1 · Sample conversations. Accounts and messaging aren’t connected yet.
-            </span>
+            <span> Milestone 2A · Accounts are live. Conversations below are samples.</span>
           </div>
         </div>
         {notice && (
@@ -260,7 +239,7 @@ export function App() {
           <div className="composer">
             <Plus size={20} />
             <input
-              aria-label="Message composer unavailable in Milestone 1"
+              aria-label="Message composer unavailable"
               placeholder={`Messaging in #${channel} is coming next`}
               disabled
             />
@@ -282,20 +261,20 @@ export function App() {
       </section>
       <aside className="members">
         <header>
-          <Users size={17} /> THE PEOPLE <span>3 sample profiles</span>
+          <Users size={17} /> THE PEOPLE <span>{members.length} approved</span>
         </header>
-        <div className="section-label">PREVIEW MEMBERS</div>
-        {people.map((person) => (
-          <div className="member" key={person.name}>
-            <Avatar tone={person.tone}>{person.initials}</Avatar>
+        <div className="section-label">COMMUNITY MEMBERS</div>
+        {members.map((member) => (
+          <div className="member" key={member.id}>
+            <Avatar>{member.displayName.slice(0, 1)}</Avatar>
             <div>
-              <strong>{person.name}</strong>
-              <small>Sample profile</small>
+              <strong>{member.displayName}</strong>
+              <small>{member.isOwner ? 'Owner' : 'Member · administrator'}</small>
             </div>
           </div>
         ))}
         <div className="member-note">
-          Real members and presence will appear after account approval is implemented.
+          <button onClick={openSettings}>Manage accounts & approvals →</button>
         </div>
         <div className="grow" />
         <div className="system-card">
