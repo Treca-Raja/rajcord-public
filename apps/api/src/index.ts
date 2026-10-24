@@ -18,8 +18,15 @@ try {
     port: Number(process.env.PORT || 3001),
     host: process.env.HOST || '127.0.0.1',
   });
-} catch {
-  app.log.error('API startup failed. Check database and port configuration.');
+} catch (error) {
+  const code = (error as { code?: string }).code;
+  app.log.error(
+    { code: code ?? 'startup' },
+    code === 'EADDRINUSE'
+      ? 'API port is already in use. Close the other Tricord development terminal and retry.'
+      : 'API startup failed. Check local configuration.',
+  );
+  await app.close();
   process.exitCode = 1;
 }
 for (const signal of ['SIGINT', 'SIGTERM'] as const)

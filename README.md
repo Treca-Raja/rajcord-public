@@ -61,6 +61,8 @@ To run the desktop app, stop `pnpm dev` with Ctrl+C, then:
 pnpm dev:desktop
 ```
 
+The API uses Node’s watch mode with the existing tsx TypeScript loader. Desktop startup waits up to 30 seconds for Vite and a valid Tricord API health response, then opens Electron. If startup fails, it names the unavailable service and stops the helpers instead of waiting forever.
+
 The same screens run in the sandboxed Electron renderer. A normal desktop exit stops its development helpers and returns success; actual app/helper failures still fail. Minimize retains the session. Closing the window fully quits; there is no tray mode. Temporary sessions are revoked on an orderly online quit and their local cookie is removed. Remembered sessions survive restart for up to 30 days. Settings includes display-name changes, password changes, device revocation and logout.
 
 From another terminal:
@@ -120,7 +122,7 @@ pnpm peers check
 pnpm audit --prod
 ```
 
-There are **100 passing Vitest tests**: 4 foundation, 7 database, 29 authentication/security, 29 messaging, 15 voice integration and 16 client/pool/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
+There are **104 passing Vitest tests**: 4 foundation, 7 database, 29 authentication/security, 29 messaging, 15 voice integration and 20 client/pool/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
 
 - `test:db` checks the existing development schema with unique disposable rows. Authentication and messaging tests create uniquely named temporary databases, migrate it, then drop **only the database created by that test run**. Your development database, owner, migration history and volume are preserved. The local development database role must have CREATEDB permission for these tests.
 - The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 11 messaging checks. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.

@@ -8,9 +8,9 @@ Windows 11, 2026-10-24. Active repository: F:\tricord. Milestone 2B commit d298a
 | LiveKit                    | Pinned 1.13.10 local container; control/TCP/UDP ports bound only to 127.0.0.1                                    |
 | Migrations                 | 0000–0002 unchanged; additive 0003 creates voice_channels and seeds The lounge                                   |
 | Schema                     | Ten public tables; repeat migration execution is safe; generation reports no drift                               |
-| Unit/regression tests      | 20 passing                                                                                                       |
+| Unit/regression tests      | 24 passing                                                                                                       |
 | Database integration tests | 80 passing: 7 database, 29 authentication, 29 messaging, 15 voice                                                |
-| Total Vitest tests         | **100 passing**                                                                                                  |
+| Total Vitest tests         | **104 passing**                                                                                                  |
 | Existing Edge checks       | 22 authentication/messaging checks preserved                                                                     |
 | Voice Edge checks          | 17 checks using two independent real Edge processes and synthetic audio                                          |
 | Electron checks            | 23 across three actual launches, including real microphone publication and camera denial                         |
@@ -45,3 +45,11 @@ LiveKit's client is loaded only on voice connection. The production build curren
 This is a single-process local voice MVP. Reservations are ephemeral; channels are persistent. Account checks run on each gateway handshake and in a one-second reconciliation sweep. Network/service failures may delay remote cleanup. No E2EE, private calls, ringing, push-to-talk, voice rename/archive UI, recording, streaming, signed installer, TURN/WAN setup or deployment is included. Edge/Electron on Windows 11 are verified; other browsers and physical devices require validation.
 
 Use [README](../README.md) for exact startup, shutdown and test commands. Existing data, old migrations and Docker volumes are preserved. No push or deployment occurred.
+
+## Development startup fix — 2026-10-25
+
+The Windows development API watcher was observed remaining alive without opening port 3001, leaving the desktop command waiting indefinitely while Vite was ready. The launcher now uses Node's native watch mode with the existing tsx loader. A real subprocess regression runs that exact API command under concurrently, verifies HTTP health, touches an imported source file and verifies a successful restart.
+
+The desktop readiness check now has a 30-second deadline, identifies unavailable services, and verifies the API response belongs to Tricord. Tests cover success, an unavailable API and an unrelated service on the API port. Existing normal/failing desktop-supervisor exit tests remain intact. The actual pnpm dev:desktop command was run: Vite and Fastify listened, readiness succeeded after starting PostgreSQL, and the real Tricord Electron window opened.
+
+Four new startup regressions bring the suite to 104 tests (24 unit/regression and 80 database integration). The earlier production-build smoke tests did not cover this watch-mode startup path; the new regression closes that gap.
