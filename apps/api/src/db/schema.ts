@@ -193,3 +193,13 @@ export const messages = pgTable(
     ),
   ],
 );
+
+export const voiceChannels = pgTable(
+  'voice_channels',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: varchar('name', { length: 48 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('voice_channel_name').on(sql`lower(${t.name})`)],
+);

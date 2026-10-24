@@ -1,3 +1,4 @@
+import { voiceConfig } from '../voice/config.js';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -12,12 +13,24 @@ import { createApp } from '../app.js';
 const origin = 'http://127.0.0.1:3002';
 const fixture = await testDatabase(),
   service = new AuthService(fixture.database.pool);
-const app = createApp({
+const config = voiceConfig();
+if (!config) throw new Error('Run voice:setup and voice:up.');
+const server = createApp({
+  voiceConfig: { ...config, prefix: 'tricord-desktop-smoke-' + randomUUID() + '-' },
   databaseUrl: fixture.url,
   allowedOrigins: [origin],
   rateLimits: false,
   staticRoot: fileURLToPath(new URL('../../../web/dist', import.meta.url)),
-}).app;
+});
+const app = server.app;
+app.get('/test/voice-published', async () => {
+  for (const lease of server.voice!.leases.values()) {
+    const participants = await server.voice!.media.listParticipants(lease.room);
+    if (participants.some((p) => p.tracks.some((t) => t.source === 2 && !t.muted)))
+      return { published: true };
+  }
+  return { published: false };
+});
 const secret = randomUUID() + '-Test',
   username = 'desktop_' + randomUUID().replaceAll('-', '').slice(0, 20);
 const profile = await mkdtemp(path.join(tmpdir(), 'tricord-auth-smoke-'));
@@ -40,6 +53,7 @@ try {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TRICORD_TEST_PROFILE: profile,
+      TRICORD_VOICE_SMOKE: '1',
       TRICORD_SMOKE_INPUT: JSON.stringify({ stage, username, password: secret }),
     };
     delete env.ELECTRON_RUN_AS_NODE;
@@ -174,6 +188,12 @@ try {
       'independent-session realtime reply',
       'own history survives app restart',
       'received history survives app restart',
+      'camera capture denied',
+      'explicit voice devices',
+      'voice joins muted',
+      'microphone reaches LiveKit',
+      'deafen control',
+      'manual voice leave',
     ],
     profile,
   };
@@ -185,9 +205,11 @@ try {
     JSON.stringify(report, null, 2),
   );
   console.log(
-    'PASS: 17 Electron authentication, messaging and lifecycle checks across 3 launches.',
+    'PASS: 23 Electron authentication, messaging, voice and lifecycle checks across 3 launches.',
   );
 } finally {
   await app.close();
+  for (const room of await server.voice!.media.listRooms())
+    if (room.name.startsWith(server.voice!.prefix)) await server.voice!.media.deleteRoom(room.name);
   await fixture.cleanup();
 }

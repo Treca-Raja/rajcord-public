@@ -19,6 +19,9 @@ const original = createDatabase(source),
   database = fixture.database;
 const api = createApp({ databaseUrl: fixture.url, rateLimits: false }).app;
 try {
+  const voiceChannels = (
+    await database.pool.query('SELECT id,name FROM voice_channels ORDER BY id')
+  ).rows;
   const journal = (
     await original.pool.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')
   ).rows;
@@ -96,6 +99,10 @@ try {
     (await original.pool.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')).rows,
     journal,
   );
+  assert.deepEqual(
+    (await database.pool.query('SELECT id,name FROM voice_channels ORDER BY id')).rows,
+    voiceChannels,
+  );
   assert.equal((await identity(database.pool, first.token))?.sessionId, first.auth.sessionId);
   const encoded = (
     await database.pool.query('SELECT password_hash FROM credentials WHERE user_id=$1', [owner.id])
@@ -128,7 +135,7 @@ try {
   });
   assert.equal(subsequent.seq, '3');
   console.log(
-    'PASS: channels, DMs, group history boundaries, messages, idempotency, credentials, sessions, invitations and audit survive restart.',
+    'PASS: voice channels, text channels, DMs, group history boundaries, messages, idempotency, credentials, sessions, invitations and audit survive restart.',
   );
   console.log(
     'PASS: existing Fastify/pg pools recover; original development migration journal is unchanged.',

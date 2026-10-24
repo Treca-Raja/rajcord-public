@@ -1,6 +1,6 @@
 # Tricord
 
-Milestone 2B adds persistent, real-time shared text channels, private one-to-one DMs and invitation-based group DMs to the existing authenticated React/Electron application. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
+Milestone 2C adds local community voice channels to the authenticated React/Electron application, alongside persistent shared text channels, private DMs and group DMs. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
 
 ## Windows prerequisites
 
@@ -24,6 +24,8 @@ pnpm install --frozen-lockfile
 pnpm setup:desktop
 pnpm db:setup
 pnpm db:up
+pnpm voice:setup
+pnpm voice:up
 pnpm db:migrate
 pnpm owner:bootstrap
 ```
@@ -45,6 +47,8 @@ The browser uses same-origin requests. Vite proxies `/api` and `/socket.io` to F
 ```powershell
 Set-Location F:\tricord
 pnpm db:up
+pnpm voice:setup
+pnpm voice:up
 pnpm db:migrate
 pnpm dev
 ```
@@ -75,6 +79,7 @@ Close Electron if it is running, then press **Ctrl+C** in the development termin
 
 ```powershell
 Set-Location F:\tricord
+pnpm voice:down
 pnpm db:down
 ```
 
@@ -88,15 +93,17 @@ New group members see messages sent after acceptance. Leaving or removal immedia
 
 Messages are plain text, limited to 4,000 characters. Enter sends; Shift+Enter adds a newline. Only the author can edit/delete, including in archived channels; administrators have no override. Deletion clears content and retains a stable tombstone for synchronization. History otherwise has no automatic expiry. “Load older messages” uses server sequence pagination.
 
-The composer keeps its draft on connection/send failure and retries with the same idempotency ID. Reconnection synchronizes missed sends, edits and deletions. There is no durable offline queue; reloading or switching conversations can discard an unsent draft. No uploads, search, unread counters, blocking UI or media are included.
+The composer keeps its draft on connection/send failure and retries with the same idempotency ID. Reconnection synchronizes missed sends, edits and deletions. There is no durable offline queue; reloading or switching conversations can discard an unsent draft. No uploads, search, unread counters or blocking UI are included. Community voice is described below.
 
 ## Verification
 
-With Docker Desktop running:
+With Docker Desktop running (the database suite and Electron smoke now also require the local voice service):
 
 ```powershell
 Set-Location F:\tricord
 pnpm db:up
+pnpm voice:setup
+pnpm voice:up
 pnpm db:migrate
 pnpm format:check
 pnpm lint
@@ -106,17 +113,18 @@ pnpm test:db
 pnpm build
 pnpm --filter @tricord/api test:browser
 pnpm --filter @tricord/api test:desktop
+pnpm --filter @tricord/api test:voice
 pnpm db:verify-persistence
 pnpm db:migrate
 pnpm peers check
 pnpm audit --prod
 ```
 
-There are **77 passing Vitest tests**: 4 foundation, 7 database, 29 authentication/security, 29 messaging and 8 client/pool/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
+There are **100 passing Vitest tests**: 4 foundation, 7 database, 29 authentication/security, 29 messaging, 15 voice integration and 16 client/pool/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
 
 - `test:db` checks the existing development schema with unique disposable rows. Authentication and messaging tests create uniquely named temporary databases, migrate it, then drop **only the database created by that test run**. Your development database, owner, migration history and volume are preserved. The local development database role must have CREATEDB permission for these tests.
 - The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 11 messaging checks. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.
-- The Electron smoke uses three real launches with an isolated temporary profile. It verifies registration, live approval, account settings, logout, minimization, temporary-session cleanup and remembered-session restoration, plus renderer isolation and absence of localStorage tokens. Sending, receiving from an independent account and restored message history bring the total to 17 checks.
+- The Electron smoke uses three real launches with an isolated temporary profile. It verifies registration, live approval, account settings, logout, minimization, temporary-session cleanup and remembered-session restoration, plus renderer isolation and absence of localStorage tokens. Sending, receiving from an independent account and restored message history plus voice device selection, microphone publication, camera denial, mute/deafen and leave bring the total to 23 checks.
 - Browser/Electron smoke servers bind to **127.0.0.1:3003 / :3002**, respectively. Reports/screenshots go to ignored `artifacts/`. Their temporary profiles are separate from your real browser and desktop profile.
 - `db:verify-persistence` restarts the existing PostgreSQL container, uses its own disposable database to verify accounts, sessions, audit records, invitations, channels, DMs, group history boundaries, idempotent retries and message persistence. Existing Fastify/pg pools must recover. It then drops only its own test database and verifies the development migration journal is unchanged. Run it when interrupting development connections is acceptable.
 - `pnpm test:browser` and `pnpm test:desktop` are convenience commands that build first. Tests fail when required infrastructure is missing; they do not silently skip.
@@ -145,7 +153,7 @@ pnpm db:generate
 pnpm db:migrate
 ```
 
-Additive `0002_overrated_puck.sql` creates conversations, membership periods, invitations and messages, including ordering, idempotency and DM-pair constraints. It seeds the shared `general` channel. There are now nine public tables. Existing users remain intact. Rows from the foundation without credentials cannot sign in. Existing usernames that differ only by case would block the new unique index safely; reconcile such a conflict deliberately rather than deleting accounts or resetting migrations.
+Additive `0002_overrated_puck.sql` creates conversations, membership periods, invitations and messages, including ordering, idempotency and DM-pair constraints. It seeds the shared `general` channel. Milestone 2C migration 0003 adds persistent voice_channels and seeds The lounge; there are now ten public tables. Existing users remain intact. Rows from the foundation without credentials cannot sign in. Existing usernames that differ only by case would block the new unique index safely; reconcile such a conflict deliberately rather than deleting accounts or resetting migrations.
 
 ## Security and current limits
 
@@ -155,4 +163,38 @@ Removed accounts become tombstones, preserving audit and identity history. They 
 
 Crash/offline quits cannot guarantee immediate server revocation. Electron discards temporary local cookies at startup, and remaining server sessions expire within 12 hours or can be revoked from another device. Browser session restoration may preserve session cookies according to browser settings. No password recovery, MFA, email verification, TLS deployment, signed installer or multi-process socket adapter is implemented. HTTP/socket event limits are in-process; the message-send quota is persisted in PostgreSQL. This implementation targets a single API process and up to ten friends. Login errors are generic; registration necessarily reveals whether a username can be used.
 
-See [security decisions](docs/decisions.md) and [verification evidence](docs/verification.md). Recommended Milestone 2C: an authenticated voice-channel MVP with join/leave, microphone selection and mute controls, preceded by a small media architecture experiment. Leave video/streaming and cloud deployment for later.
+See [security decisions](docs/decisions.md) and [verification evidence](docs/verification.md). Recommended next: validate real headsets and ten-person voice load, then add private/group calling and blocking rules. Leave video/streaming and cloud deployment for later.
+
+## Local voice channels (Milestone 2C)
+
+LiveKit 1.13.10 runs as a separate local Docker service. Approved users can create persistent voice channels and join one channel per account across devices. Each room is capped at ten participants. Private calls, push-to-talk, streaming, tray behavior and hosting are later milestones.
+
+First-time voice setup (preserves all existing database files and data):
+
+```powershell
+Set-Location F:\tricord
+pnpm voice:setup
+pnpm voice:up
+pnpm db:up
+pnpm db:migrate
+pnpm dev:desktop
+```
+
+The setup command creates random keys in ignored infrastructure/.env.voice and preserves an existing file. The API reads this file locally. LiveKit control/signaling (7880), media TCP (7881) and media UDP (7882) are bound only to 127.0.0.1. No public STUN/TURN service, paid service or cloud deployment is used. Docker Compose keeps the voice service separate from the PostgreSQL volume.
+
+In the sidebar, open **Audio controls → Find audio devices**, allow microphone permission, select a concrete microphone and speakers, then choose a channel. Joining starts muted. Use the microphone, deafen and leave buttons; participant sliders control playback volume independently. Deafen also suppresses your microphone and restores your prior mute preference when disabled. “Enable audio playback” handles browser autoplay restrictions.
+
+Device discovery briefly opens and immediately stops a microphone to reveal device labels. It does not transmit audio. Calls use exact device IDs, excluding the Windows Default/Communications aliases. A missing microphone stops transmission; missing speakers mute playback. Choose a replacement explicitly. Browser/OS device-disconnection notifications determine when this is detected. This milestone requires output-selection support, verified in Edge and Electron on Windows 11; other browsers are not yet certified.
+
+Network reconnection preserves in-memory mute/deafen, devices and participant volumes. Voice reservations have a 45-second heartbeat lifetime; still-authenticated clients can obtain a fresh reservation after expiry or an API restart. Manual leave, logout, suspension and full quit stop client recovery. Fresh launches never join automatically. An offline quit can leave a server reservation for up to 45 seconds.
+
+Voice uses the existing session cookie and CSRF boundary. The API issues an opaque reservation credential, not a LiveKit bearer token. Its same-origin signaling gateway reauthorizes each handshake and replaces refreshed LiveKit tokens before forwarding them. Only microphone publication is granted. Removal is enforced at the media server; a one-second sweep also handles expiration and external account changes. This is a single-API-process development design. LiveKit terminates media encryption; it is not end-to-end encryption.
+
+Run the real two-browser synthetic-audio test after building:
+
+```powershell
+pnpm build
+pnpm --filter @tricord/api test:voice
+```
+
+This test covers actual received audio, independent sessions, mute/deafen, selected output, volume, disconnect/reconnect, API restart, simulated device loss and revocation. Electron tests also publish a synthetic microphone track and deny camera capture. Physical microphones, unplugging real USB/Bluetooth hardware, listening quality, ten-person load and WAN/TURN behavior still need manual validation.

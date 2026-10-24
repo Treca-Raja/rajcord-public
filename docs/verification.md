@@ -1,54 +1,47 @@
-# Milestone 2B verification
+# Milestone 2C verification
 
-Windows 11, 2026-10-24. Repository: F:\tricord. Milestone 2A commit b81b485 retained.
+Windows 11, 2026-10-24. Active repository: F:\tricord. Milestone 2B commit d298aa9 retained.
 
-| Check                                         | Result                                                                                                                           |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL                                    | Existing postgres:17-alpine container healthy, bound only to 127.0.0.1:5432                                                      |
-| Migrations                                    | Original 0000/0001 unchanged; additive 0002 applied; nine expected public tables                                                 |
-| Migration reruns                              | Repeated execution leaves schema, journal and fixtures unchanged; generation detects no schema drift                             |
-| Persistence                                   | Channels, DMs, group membership windows, messages, invitations, credentials, sessions and audit survive actual container restart |
-| Foundation suite                              | 4 passing tests                                                                                                                  |
-| Database suite                                | 7 passing tests                                                                                                                  |
-| Authentication/security suite                 | 29 passing tests                                                                                                                 |
-| Messaging suite                               | 29 passing tests                                                                                                                 |
-| Client/pool/development lifecycle regressions | 8 passing tests                                                                                                                  |
-| Total Vitest tests                            | **77 passing tests**                                                                                                             |
-| Browser integration                           | Actual headless Edge; 11 authentication and 11 messaging checks                                                                  |
-| Electron integration                          | Three actual launches; 17 authentication/lifecycle/messaging checks                                                              |
-| Static checks/builds                          | Formatting, ESLint, TypeScript and all production builds pass                                                                    |
-| Dependencies                                  | No dependencies added; peer checks and production audit pass                                                                     |
+| Check                      | Result                                                                                                           |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL                 | Healthy existing PostgreSQL 17 service; 127.0.0.1:5432 only                                                      |
+| LiveKit                    | Pinned 1.13.10 local container; control/TCP/UDP ports bound only to 127.0.0.1                                    |
+| Migrations                 | 0000–0002 unchanged; additive 0003 creates voice_channels and seeds The lounge                                   |
+| Schema                     | Ten public tables; repeat migration execution is safe; generation reports no drift                               |
+| Unit/regression tests      | 20 passing                                                                                                       |
+| Database integration tests | 80 passing: 7 database, 29 authentication, 29 messaging, 15 voice                                                |
+| Total Vitest tests         | **100 passing**                                                                                                  |
+| Existing Edge checks       | 22 authentication/messaging checks preserved                                                                     |
+| Voice Edge checks          | 17 checks using two independent real Edge processes and synthetic audio                                          |
+| Electron checks            | 23 across three actual launches, including real microphone publication and camera denial                         |
+| Persistence                | Actual PostgreSQL restart preserves voice channels and existing messaging/authentication fixtures; pools recover |
+| Static verification        | Formatting, lint, TypeScript and production builds pass                                                          |
+| Dependency verification    | Peer checks and production audit pass                                                                            |
 
-## Automated coverage
+## Real voice evidence
 
-Authentication coverage from Milestone 2A remains: registration, hashing, session/cookie/CSRF/origin checks, approvals, ownership, account state transitions, device revocation, expiry, protected sockets and live suspension.
+The browser smoke creates a disposable PostgreSQL database, unique LiveKit room prefix and two isolated Edge profiles. Both approved accounts select concrete fake devices through the rendered controls, join muted, unmute and receive actual audio bytes through the media server. Its synthetic WAV input is generated in the temporary test profile; it never opens a physical microphone.
 
-Messaging tests use real PostgreSQL and independent authenticated HTTP/Socket.IO sessions. Coverage includes channel creation/rename/archive, ordered concurrent sends, history pagination, idempotent retries and conflicting IDs, canonical DM pairs and nonparticipant privacy, explicit invitation acceptance/decline, unapproved/wrong-user denial, manager-only removal/transfer, leave/rejoin membership windows, direct-ID and pagination privacy, timestamp-independent ordering, empty membership periods, author-only edits/deletes, deleted-content removal, literal untrusted text, validation, account status, CSRF, persisted socket acknowledgments, unauthorized rooms, stale-room removal, suspension disconnect, missed edits/deletes on reconnect, backend restart and message quotas. A historical edit outside a new member's visible period must neither reveal content nor evict that member from subsequent authorized updates.
+Checks cover session separation, explicit input/output selection, bidirectional audio, microphone-only server grants, mute propagation, deafen playback suppression, signaling reconnect, retained mute preference, simulated microphone loss without fallback, suspension removal, cached-credential rejection, manual leave, expired-reservation recovery, actual Fastify API restart and both clients recovering, per-participant volume and missing-output muting.
 
-Client regressions cover in-flight auth request coalescing and later refreshes, revision-aware message merging, tombstones, pool error handling, and real supervisor subprocess exit codes for normal desktop exit, desktop failure and early helper failure.
+The test inspects real WebRTC receive statistics and LiveKit participant tracks. It does not establish subjective audio quality, WAN latency, ten-person performance or hardware hot-unplug behavior. The selected speaker-loss simulation verifies application behavior after a device-change notification.
 
-## Browser evidence
+Reports/screenshots are ignored under artifacts/: voice-browser.json, voice-browser.png, auth-browser.json, messaging-browser.json and auth-desktop.json. The voice screenshot was visually reviewed. No passwords or media bearer tokens are written to reports.
 
-Real headless Microsoft Edge runs the production build with an isolated temporary profile and disposable database. Existing registration, approval, cookie, account administration, reload and suspension checks remain.
+## Authorization and lifecycle coverage
 
-Messaging checks send through the rendered composer, verify persistence, receive a reply from an independent account, render HTML-like input as text, edit/delete as author, open a DM, switch conversations, accept a group invitation, hide pre-join content, preserve history on reload and check responsive layout. Desktop and 390-pixel mobile screenshots are captured and visually reviewed.
+Database-backed voice tests exercise approved-only access, channel persistence and unique names, Origin/CSRF validation, one account across concurrent devices, idempotent reservation retry, explicit leave before switching, opaque client credentials, microphone-only grants, binary/JSON refresh-token sanitization, session binding, wrong-session leave protection, heartbeat expiry, session revocation, suspension and unauthorized gateway Origin.
 
-Ignored reports: artifacts/auth-browser.json and artifacts/messaging-browser.json. Screenshots include messaging-browser-channel.png, messaging-browser-group.png and messaging-browser-mobile.png. This verifies Chromium/Edge on Windows, not Safari/Firefox or a physical mobile device.
+Client regressions verify explicit device requirements, exclusion of Default/Communications aliases, cancellation while join is pending, missing-device behavior and deafen preserving the mute preference. Electron policy tests reject camera, screen, foreign-origin and embedded-frame requests. The real Electron harness additionally confirms camera getUserMedia is denied while an explicitly selected synthetic microphone reaches LiveKit.
 
-## Electron evidence
+Existing authentication/messaging tests remain intact: private DM and group history access, author-only edits/deletes, idempotency, reconnection, account state changes, cookie/CSRF protections and data preservation.
 
-Three actual sandboxed Electron launches use a temporary profile and disposable database. They verify registration, live approval, account settings, logout, minimize behavior, temporary-session cleanup and remembered-session restoration. The rendered composer sends a persisted message and receives an independent account's reply; both remain after restarting the application.
+## Infrastructure and limits
 
-Renderer Node/process access remains unavailable, the preload remains narrow and localStorage contains no tokens. Ignored report: artifacts/auth-desktop.json. Crash/offline limitations remain documented in README.
+The Docker Desktop media experiment initially failed ICE negotiation because loopback candidate collection inside the container produced duplicate mapped addresses. Disabling container loopback candidates while retaining explicit 127.0.0.1 host bindings resolved it. No LAN/public binding or public STUN service was introduced.
 
-## Restart and preservation
+LiveKit's client is loaded only on voice connection. The production build currently emits a non-failing size advisory for its approximately 532 kB minified / 138 kB gzip lazy chunk. It does not add that SDK to the initial application bundle. Two existing deprecated Drizzle-tooling subdependencies remain; no production vulnerabilities were reported by the audit.
 
-The persistence probe creates its own disposable database and fixture users, channels, DM, group invitation/membership periods and messages. It keeps existing Fastify/pg pools open across an actual Docker Compose PostgreSQL restart, checks readiness recovery, then verifies identity, ordering, privacy, idempotent retries and a subsequent send. It checks that the original development migration journal is unchanged and drops only its own test database.
+This is a single-process local voice MVP. Reservations are ephemeral; channels are persistent. Account checks run on each gateway handshake and in a one-second reconciliation sweep. Network/service failures may delay remote cleanup. No E2EE, private calls, ringing, push-to-talk, voice rename/archive UI, recording, streaming, signed installer, TURN/WAN setup or deployment is included. Edge/Electron on Windows 11 are verified; other browsers and physical devices require validation.
 
-The existing development database, users, sessions, audit records, applied migrations and named volume are preserved. PostgreSQL remains running after verification. No production deployment, publishing or push occurred.
-
-Use the exact PowerShell commands in [README](../README.md). Prior milestone evidence remains in Git. Reports contain no credentials.
-
-## Remaining limits
-
-Single API process, intended for ten friends; serialized database authorization favors correctness over throughput. No end-to-end encryption, durable offline message queue, unread counters, blocking UI, uploads, search, voice/video/streaming, cloud deployment or signed installer. A database operator can read stored messages, while application administrators cannot access other participants' private conversations.
+Use [README](../README.md) for exact startup, shutdown and test commands. Existing data, old migrations and Docker volumes are preserved. No push or deployment occurred.

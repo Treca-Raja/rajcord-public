@@ -18,6 +18,7 @@ export default defineConfig(({ command }) => ({
     port: 5173,
     strictPort: true,
     proxy: {
+      '/media': { target: 'http://127.0.0.1:3001', ws: true },
       '/api': 'http://127.0.0.1:3001',
       '/health': 'http://127.0.0.1:3001',
       '/socket.io': { target: 'http://127.0.0.1:3001', ws: true },

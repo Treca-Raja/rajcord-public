@@ -27,7 +27,11 @@
     "db:verify-persistence": "pnpm --filter @tricord/api db:verify-persistence",
     "owner:bootstrap": "pnpm --filter @tricord/api owner:bootstrap",
     "test:desktop": "pnpm build && pnpm --filter @tricord/api test:desktop",
-    "test:browser": "pnpm build && pnpm --filter @tricord/api test:browser"
+    "test:browser": "pnpm build && pnpm --filter @tricord/api test:browser",
+    "voice:setup": "node scripts/voice-setup.mjs",
+    "voice:up": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice up -d",
+    "voice:down": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice down",
+    "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

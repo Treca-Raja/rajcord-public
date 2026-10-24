@@ -13,22 +13,27 @@
     "db:verify-persistence": "tsx --env-file-if-exists=.env src/db/verify-persistence.ts",
     "owner:bootstrap": "tsx --env-file-if-exists=.env src/auth/bootstrap.ts",
     "test:desktop": "tsx --env-file-if-exists=.env src/auth/desktop-smoke.ts",
-    "test:browser": "tsx --env-file-if-exists=.env src/auth/browser-smoke.ts"
+    "test:browser": "tsx --env-file-if-exists=.env src/auth/browser-smoke.ts",
+    "test:voice": "tsx --env-file-if-exists=.env src/voice/browser-smoke.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.3",
     "@fastify/cors": "^11.0.0",
     "@fastify/rate-limit": "^11.2.1",
     "@fastify/static": "^10.1.7",
+    "@livekit/protocol": "^1.53.0",
     "@tricord/shared": "workspace:*",
     "argon2": "^0.45.1",
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.7",
+    "livekit-server-sdk": "^2.19.2",
     "pg": "^8.16.0",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@types/pg": "^8.15.0",
+    "@types/ws": "^8.18.2",
     "drizzle-kit": "^0.31.11",
     "socket.io-client": "^4.8.1",
     "tsx": "^4.20.0"

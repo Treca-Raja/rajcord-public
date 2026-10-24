@@ -1,3 +1,4 @@
+import { VoicePanel } from './VoicePanel';
 import { mergeMessages } from './message-state';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
@@ -7,14 +8,13 @@ import {
   Plus,
   Send,
   MessageCircle,
-  Volume2,
   ChevronDown,
   ShieldCheck,
   Menu,
   X,
   LogOut,
 } from 'lucide-react';
-import { Avatar, Badge } from '@tricord/ui';
+import { Avatar } from '@tricord/ui';
 import type {
   Conversation,
   ChatMessage,
@@ -226,10 +226,7 @@ function Community() {
             ))}
           </div>
         )}
-        <div className="section-label voice-label">VOICE CHANNELS</div>
-        <div className="voice-channel">
-          <Volume2 size={18} /> The lounge <Badge>SOON</Badge>
-        </div>
+        <VoicePanel />
         <div className="grow" />
         <div className="profile">
           <Avatar>{state.user.displayName.slice(0, 1)}</Avatar>
@@ -340,7 +337,7 @@ function Community() {
           </p>
         </div>
         <div className="version">
-          TRICORD <span>Milestone 2B</span>
+          TRICORD <span>Voice & text</span>
         </div>
       </aside>
       {modal && (

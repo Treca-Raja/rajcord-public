@@ -1,3 +1,7 @@
+import { VoiceService } from './voice/service.js';
+import { registerVoice } from './voice/routes.js';
+import { registerGateway } from './voice/gateway.js';
+import type { VoiceConfig } from './voice/config.js';
 import { ChatService } from './chat/service.js';
 import { registerChat } from './chat/transport.js';
 import { createDatabase } from './db/client.js';
@@ -19,6 +23,7 @@ export function createApp({
   secureCookies = false,
   rateLimits = true,
   staticRoot,
+  voiceConfig,
 }: {
   logger?: boolean;
   databaseUrl?: string;
@@ -26,6 +31,7 @@ export function createApp({
   secureCookies?: boolean;
   rateLimits?: boolean;
   staticRoot?: string;
+  voiceConfig?: VoiceConfig;
 } = {}) {
   if (
     allowedOrigins.some((origin) => {
@@ -44,6 +50,7 @@ export function createApp({
     throw new Error('WEB_ORIGINS must contain exact HTTP origins (HTTPS in production).');
   const app = Fastify({ logger, bodyLimit: 16384, requestTimeout: 15000 });
   const database = databaseUrl ? createDatabase(databaseUrl) : null;
+  const voice = database && voiceConfig ? new VoiceService(database.pool, voiceConfig) : undefined;
   app.setErrorHandler((error, req, reply) => {
     const status =
       error instanceof HttpError
@@ -89,6 +96,7 @@ export function createApp({
     allowRequest: (req, callback) =>
       callback(null, !!req.headers.origin && allowedOrigins.includes(req.headers.origin)),
     maxHttpBufferSize: 16384,
+    destroyUpgrade: false,
   });
   io.use(async (socket, next) => {
     try {
@@ -142,11 +150,40 @@ export function createApp({
     if (database) {
       registerAuth(routes, database.pool, io, secureCookies, rateLimits);
       registerChat(routes, new ChatService(database.pool), io, rateLimits);
+      routes.register(async (child) => registerVoice(child, voice));
     } else
       routes.all('/api/*', async () => {
         throw new HttpError(503, 'Database not configured.');
       });
   });
+  let checkingVoice = false;
+  const checkVoice = async () => {
+    if (!voice || checkingVoice) return;
+    checkingVoice = true;
+    try {
+      await voice.reconcile();
+    } catch {
+      app.log.warn('Voice authorization check unavailable; retrying removal.');
+      for (const lease of voice.leases.values()) {
+        lease.revoked = true;
+        lease.close?.();
+      }
+    } finally {
+      checkingVoice = false;
+    }
+  };
+  const voiceTimer = setInterval(() => void checkVoice(), 1000);
+  voiceTimer.unref();
+  app.addHook('onResponse', async (req) => {
+    if (
+      req.method !== 'GET' &&
+      (req.url.startsWith('/api/auth/') ||
+        req.url.startsWith('/api/account') ||
+        req.url.startsWith('/api/admin/'))
+    )
+      await checkVoice();
+  });
+  if (voice) registerGateway(app, voice, allowedOrigins);
   app.get('/health', async (): Promise<HealthResponse> => ({
     status: 'ok',
     service: 'tricord-api',
@@ -165,11 +202,13 @@ export function createApp({
   if (staticRoot) app.register(staticFiles, { root: staticRoot });
   app.addHook('preClose', async () => {
     clearInterval(expiry);
+    clearInterval(voiceTimer);
+    await voice?.close();
     io.disconnectSockets(true);
     io.close();
   });
   app.addHook('onClose', async () => {
     await database?.pool.end();
   });
-  return { app, io };
+  return { app, io, voice };
 }

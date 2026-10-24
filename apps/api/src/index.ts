@@ -1,9 +1,11 @@
+import { voiceConfig } from './voice/config.js';
 import { createApp } from './app.js';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 const root = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 const { app } = createApp({
   logger: true,
+  voiceConfig: voiceConfig(),
   databaseUrl: process.env.DATABASE_URL,
   allowedOrigins: (
     process.env.WEB_ORIGINS || 'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:3001'

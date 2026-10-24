@@ -73,6 +73,45 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     await wait("document.querySelector('textarea[name=message]').value===''");
     await wait("document.querySelector('.message-scroll').innerText.includes('Reply to Electron')");
 
+    assert.equal(
+      await js(
+        "navigator.mediaDevices.getUserMedia({video:true}).then(s=>{s.getTracks().forEach(t=>t.stop());return false}).catch(e=>e.name==='NotAllowedError')",
+      ),
+      true,
+    );
+    await js("document.querySelector('.voice-settings-toggle').click()");
+    await click('Find audio devices');
+    await wait(
+      'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
+    );
+    for (const label of ['Voice microphone', 'Voice speakers']) {
+      await js(
+        "(()=>{const s=document.querySelector('select[aria-label=" +
+          JSON.stringify(label) +
+          "]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
+      );
+    }
+    await wait('!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled');
+    await js(
+      "(()=>{const s=document.querySelector('select[aria-label=\"Join voice channel\"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
+    );
+    await wait("document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'");
+    assert.equal(
+      await js(
+        "document.querySelector('button[aria-label=\"Unmute microphone\"]')?.getAttribute('aria-pressed')",
+      ),
+      'true',
+    );
+    await js('document.querySelector(\'button[aria-label="Unmute microphone"]\').click()');
+    await wait("fetch('/test/voice-published').then(r=>r.json()).then(r=>r.published)");
+    await js("document.querySelector('button[aria-label=Deafen]').click()");
+    assert.equal(
+      await js("document.querySelector('button[aria-label=Deafen]').getAttribute('aria-pressed')"),
+      'true',
+    );
+    await js('document.querySelector(\'button[aria-label="Leave voice"]\').click()');
+    await wait("!document.querySelector('[data-voice-status]')");
+
     await js("document.querySelector('button[aria-label=Settings]').click()");
     await wait("!!document.querySelector('input[name=displayName]')");
     await fill({ displayName: 'Verified desktop member' });

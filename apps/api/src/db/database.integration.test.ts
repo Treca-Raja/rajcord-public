@@ -83,7 +83,7 @@ describe('real PostgreSQL foundation', () => {
       'suspended',
       'removed',
     ]);
-    expect(snapshot.journal).toHaveLength(3);
+    expect(snapshot.journal).toHaveLength(4);
     const tables = await database.pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name",
     );
@@ -97,6 +97,7 @@ describe('real PostgreSQL foundation', () => {
       'platform',
       'sessions',
       'users',
+      'voice_channels',
     ]);
     const singleton = await database.pool.query(
       "SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='public.platform'::regclass AND contype='c'",

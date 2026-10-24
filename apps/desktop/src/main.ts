@@ -1,4 +1,5 @@
-import { app, BrowserWindow, session } from 'electron';
+import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
+import { app, BrowserWindow, session, dialog } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { runAuthSmoke } from './smoke.js';
@@ -17,6 +18,9 @@ app.on('second-instance', () => {
     window.focus();
   }
 });
+if (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1') {
+  app.commandLine.appendSwitch('use-fake-device-for-media-stream');
+}
 const dev = process.env.TRICORD_DEV_URL;
 if (dev && dev !== 'http://127.0.0.1:5173')
   throw new Error('Only the local development origin is permitted.');
@@ -59,10 +63,51 @@ app
   .whenReady()
   .then(async () => {
     await clearTemporarySession();
-    session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
-      callback(false),
+    let microphoneAllowed = authSmoke && process.env.TRICORD_VOICE_SMOKE === '1';
+    session.defaultSession.setPermissionRequestHandler(
+      (contents, permission, callback, details) => {
+        if (
+          !contents ||
+          !trustedAudioRequest(
+            target,
+            details.requestingUrl,
+            details.isMainFrame,
+            permission,
+            'mediaTypes' in details ? details.mediaTypes : undefined,
+          )
+        ) {
+          callback(false);
+          return;
+        }
+        if (microphoneAllowed || (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1')) {
+          microphoneAllowed = true;
+          callback(true);
+          return;
+        }
+        void dialog
+          .showMessageBox({
+            type: 'question',
+            title: 'Allow microphone access?',
+            message: 'Allow Tricord to use your microphone for voice?',
+            detail:
+              'You select a device and join muted. Camera and screen capture remain disabled.',
+            buttons: ['Cancel', 'Allow microphone'],
+            defaultId: 0,
+            cancelId: 0,
+          })
+          .then((result) => {
+            microphoneAllowed = result.response === 1;
+            callback(microphoneAllowed);
+          })
+          .catch(() => callback(false));
+      },
     );
-    session.defaultSession.setPermissionCheckHandler(() => false);
+    session.defaultSession.setPermissionCheckHandler(
+      (contents, permission, origin, details) =>
+        !!contents &&
+        microphoneAllowed &&
+        trustedAudioCheck(target, origin, details.isMainFrame, permission, details.mediaType),
+    );
     const win = new BrowserWindow({
       width: 1360,
       height: 880,

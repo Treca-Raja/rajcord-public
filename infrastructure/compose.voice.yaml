@@ -1,0 +1,22 @@
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.10
+    restart: unless-stopped
+    environment:
+      LIVEKIT_CONFIG: |
+        port: 7880
+        bind_addresses: ["0.0.0.0"]
+        rtc:
+          tcp_port: 7881
+          udp_port: 7882
+          node_ip: 127.0.0.1
+          use_external_ip: false
+          enable_loopback_candidate: false
+        keys:
+          ${LIVEKIT_API_KEY:?Run pnpm voice:setup}: ${LIVEKIT_API_SECRET:?Run pnpm voice:setup}
+        logging:
+          level: warn
+    ports:
+      - '127.0.0.1:7880:7880'
+      - '127.0.0.1:7881:7881'
+      - '127.0.0.1:7882:7882/udp'
