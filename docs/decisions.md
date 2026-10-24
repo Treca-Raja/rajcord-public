@@ -1,12 +1,12 @@
 # Tricord architecture and security decisions
 
-Updated 2026-10-23 for Milestone 2A. Foundation commit: 1576549. Active repository: F:\tricord.
+Updated 2026-10-24 for Milestone 2B; Milestone 2A commit b81b485 retained. Foundation commit: 1576549. Active repository: F:\tricord.
 
 ## Scope and stack
 
 One private community, up to ten friends. The existing React 19 / Vite 8 / Electron 45 / Fastify 5 / Socket.IO 4 / Drizzle / PostgreSQL 17 / pnpm monorepo is retained. TypeScript 6 remains compatible with typescript-eslint. Existing UI primitives and the community layout are reused.
 
-New dependencies have specific jobs: Argon2 password hashing, Fastify cookies, rate limiting and built-asset serving. Browser verification uses Node's built-in WebSocket client with the [Edge DevTools Protocol](https://learn.microsoft.com/en-us/microsoft-edge/devtools/protocol/), avoiding a browser automation dependency. No messaging, DM, channel persistence, media, deployment or complex roles were added.
+Milestone 2A dependencies have specific jobs: Argon2 password hashing, Fastify cookies, rate limiting and built-asset serving. Browser verification uses Node's built-in WebSocket client with the [Edge DevTools Protocol](https://learn.microsoft.com/en-us/microsoft-edge/devtools/protocol/), avoiding a browser automation dependency. Milestone 2B adds messaging without new dependencies. Media, deployment and complex roles remain out of scope.
 
 ## Account and owner model
 
@@ -18,7 +18,7 @@ A singleton database row designates the owner. An explicitly invoked local CLI c
 
 Account transitions, bootstrap, ownership changes, login and password changes serialize through a PostgreSQL advisory transaction lock. Authorization is rechecked inside transitions, protecting against concurrent approval/ownership races. Removal uses a status tombstone; it does not erase identity or audit history. Critical security configuration remains local operator configuration. No security-settings web API is exposed.
 
-Administrative permissions never imply access to another person's private conversations. Private conversations do not yet exist; future membership and history rules need explicit authorization tests.
+Administrative permissions never imply access to another person's private conversations. DM/group access, membership history and author permissions are checked in the backend and exercised through independent authenticated sessions.
 
 ## Passwords and sessions
 
@@ -54,12 +54,51 @@ Offline/crash termination cannot guarantee server revocation. Temporary cookies 
 
 ## Data preservation and testing
 
-The initial migration and existing users are preserved. The new migration adds rejected/suspended/removed enum values, credential/session/audit tables, singleton owner designation and indexes. No volume or development database is reset. Migration reruns are idempotent.
+The initial migration and existing users are preserved. Milestone 2A migration 0001 added rejected/suspended/removed enum values, credential/session/audit tables, singleton owner designation and indexes. Milestone 2B migration 0002 adds messaging without rewriting 0000 or 0001. No volume or development database is reset. Migration reruns are idempotent.
 
 Foundation database tests use unique disposable rows. Authentication/browser/desktop tests own newly created uniquely named test databases, which they migrate and delete after closing their connections. No test changes your real owner's credentials or role. Browser and Electron tests have isolated temporary profiles and disposable passwords created in memory; credentials are never written to reports. Test profiles are left under the OS temp directory for diagnostics; their server sessions become unusable when the test database is dropped.
 
-The restart probe adds only its own fixture rows to the real local database, verifies persistence after Docker restart, then removes those exact records. It never drops databases, volumes or unrelated records.
+The restart probe creates its own disposable database, verifies messaging/authentication persistence and existing-pool recovery after restarting the PostgreSQL container, then drops only that test database. It also verifies the original development migration journal is unchanged. It never deletes development data or volumes.
 
 ## Before future hosting
 
 Keep loopback binding for this milestone. HTTPS/reverse-proxy configuration, remote Electron origin selection, backups, account recovery, MFA, distributed rate limits/socket coordination, retention of expired sessions, abuse controls and external security review remain future work. In-process socket disconnects assume one API instance. Signed Windows packaging and updates are also outside this milestone.
+
+## Persistent messaging and membership boundaries
+
+Migration 0002 adds conversations, membership periods, invitations and messages; the two applied migrations remain unchanged. A unique index and pair-shape constraint enforce one canonical unordered DM pair. Groups and DMs use explicit membership. Channels are shared by all approved accounts. Archived channels keep history but reject new sends.
+
+A conversation-local bigint sequence orders messages. Acceptance opens a membership period at lastSeq + 1; leaving/removal closes it at lastSeq. Empty periods are valid. History requires current membership and restricts each message to the union of that user's periods. The same predicate applies to pagination, individual IDs and changes. Original timestamps and client clocks never determine visibility. Rejoining grants prior periods, not gaps. Unauthorized private IDs return the same 404 as absent records.
+
+Chat operations reuse the authentication advisory transaction lock and conversation row lock, so status, membership boundaries and sends serialize. This favors correctness for ten friends over throughput. It is not a design for a large public server. A future blocking policy has one contact-check boundary for DM creation/sending and invitations.
+
+The client supplies a UUID for an attempted send; a unique conversation/author/client-ID key makes retries idempotent. A hash of the original request detects conflicting reuse without retaining deleted text. Acknowledgment follows commit. Every new send increments both sequence and change counters; edits/deletes increment change only. Changes return current state, not every historical edit. Deletion clears body and returns only a tombstone during change synchronization; ordinary history/direct lookups never expose deleted content.
+
+## Messaging API and realtime contract
+
+All routes require a live approved session. Mutations retain trusted Origin and session-bound CSRF checks.
+
+| Route                                                       | Behavior                                                                 |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------ |
+| GET/POST /api/conversations                                 | List authorized conversations; create channel/group or open canonical DM |
+| GET/PATCH /api/conversations/:id                            | Read metadata; rename/manage permitted conversations                     |
+| GET/POST /api/conversations/:id/messages                    | Paginated history; persist a send with body/clientId                     |
+| GET/PATCH/DELETE /api/conversations/:id/messages/:messageId | Authorized lookup; author-only edit/delete                               |
+| GET /api/invitations                                        | The caller's pending invitations                                         |
+| POST /api/conversations/:id/invitations                     | Current member invites an approved user                                  |
+| POST /api/invitations/:id                                   | Invitee accepts or declines                                              |
+| POST /api/conversations/:id/membership                      | Leave, manager removal or manager transfer                               |
+
+History uses limit (1–100), before for older sequence pages, or afterChange for ascending revision synchronization; cursors are decimal strings, not JavaScript numbers. Message IDs, sequence and original authorship remain stable. The client merges by ID/revision, handles repeated signals, and resynchronizes on reconnect/focus without resurrecting stale content.
+
+Socket conversation:join authorizes the selected subscription. message:send uses the same transactional send path and returns an explicit success/error acknowledgment. conversation:changed and conversation:closed contain only a conversation ID; inbox:changed is a content-free metadata refresh signal. Actual message content is fetched through authorized history APIs. Delivery checks live status, membership and message-period visibility; a room is never an authorization decision. Pending/rejected sockets retain only the existing account-status flow.
+
+Message text is rendered as React text, never HTML. Message content is limited to 4,000 characters; client author IDs and unknown fields are rejected. The database enforces 30 new messages/minute/author across HTTP and socket transports; retries do not consume that quota. HTTP mutations and socket events have additional 60/minute limits.
+
+## Development lifecycle fixes
+
+Expected idle PostgreSQL restart/disconnect errors are handled without credential-bearing error output; pg discards failed clients and reconnects on the next request. Readiness reflects outages. Writes are never blindly retried. Unexpected idle failures emit a generic warning.
+
+The desktop development supervisor treats the named desktop process as the successful completion condition, while stopping API/Vite helpers. Regression tests exercise normal exit, desktop failure and an early helper failure.
+
+AuthRoot owns one socket. Overlapping auth/me refreshes share one in-flight request, while later refreshes are never cached. Refresh generations prevent stale responses overwriting a newer login/logout. Network failures do not pretend the account logged out; real authorization failures clear access.

@@ -1,58 +1,54 @@
-# Milestone 2A verification
+# Milestone 2B verification
 
-Windows 11, 2026-10-23. Repository: F:\tricord. Foundation commit 1576549 retained.
+Windows 11, 2026-10-24. Repository: F:\tricord. Milestone 2A commit b81b485 retained.
 
-| Check                         | Result                                                                                                                  |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL                    | Existing postgres:17-alpine container healthy, bound only to 127.0.0.1:5432                                             |
-| Migration                     | Original 0000 preserved; additive 0001 applied; five expected public tables and singleton owner constraint verified     |
-| Migration reruns              | Repeated migration execution leaves schema, journal and fixtures unchanged                                              |
-| Database persistence          | Disposable account, Argon2 hash, remembered session, audit entry and migration journal survive actual container restart |
-| Foundation suite              | 4 passing tests                                                                                                         |
-| Database suite                | 7 passing tests                                                                                                         |
-| Authentication/security suite | 29 passing tests                                                                                                        |
-| Total Vitest tests            | **40 passing tests**                                                                                                    |
-| Browser integration           | Actual headless Edge, isolated profile/database; 11 flow checks plus desktop/mobile screenshots                         |
-| Electron integration          | Three actual Electron launches; 13 authentication/lifecycle checks                                                      |
-| Static checks/builds          | Formatting, ESLint, TypeScript and all production builds pass                                                           |
-| Dependency checks             | No peer dependency issues; production dependency audit reports no known vulnerabilities                                 |
+| Check                                         | Result                                                                                                                           |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL                                    | Existing postgres:17-alpine container healthy, bound only to 127.0.0.1:5432                                                      |
+| Migrations                                    | Original 0000/0001 unchanged; additive 0002 applied; nine expected public tables                                                 |
+| Migration reruns                              | Repeated execution leaves schema, journal and fixtures unchanged; generation detects no schema drift                             |
+| Persistence                                   | Channels, DMs, group membership windows, messages, invitations, credentials, sessions and audit survive actual container restart |
+| Foundation suite                              | 4 passing tests                                                                                                                  |
+| Database suite                                | 7 passing tests                                                                                                                  |
+| Authentication/security suite                 | 29 passing tests                                                                                                                 |
+| Messaging suite                               | 29 passing tests                                                                                                                 |
+| Client/pool/development lifecycle regressions | 8 passing tests                                                                                                                  |
+| Total Vitest tests                            | **77 passing tests**                                                                                                             |
+| Browser integration                           | Actual headless Edge; 11 authentication and 11 messaging checks                                                                  |
+| Electron integration                          | Three actual launches; 17 authentication/lifecycle/messaging checks                                                              |
+| Static checks/builds                          | Formatting, ESLint, TypeScript and all production builds pass                                                                    |
+| Dependencies                                  | No dependencies added; peer checks and production audit pass                                                                     |
 
-The built API and Vite development proxy were also started together: PostgreSQL readiness returned 200, anonymous authentication returned 401 through Vite, and login validation reached the backend through the same-origin proxy. Built web assets were served successfully by Fastify.
+## Automated coverage
 
-## Security coverage
+Authentication coverage from Milestone 2A remains: registration, hashing, session/cookie/CSRF/origin checks, approvals, ownership, account state transitions, device revocation, expiry, protected sockets and live suspension.
 
-Successful registration; case-insensitive duplicates; password hashing; input/privilege injection rejection; login failure parity; legacy users without credentials; HttpOnly/SameSite cookie flags; production Secure cookies; temporary/remembered expiry; login session rotation; anonymous/pending/rejected restrictions; Origin and CSRF validation including malformed tokens; self-action and owner protection including uppercase UUIDs; administrator approval/rejection; audit actor/time; concurrent conflicting decisions; owner-only removal/suspension/restoration; safe bootstrap repetition; ownership transfer; logout; expiry; per-device revocation ownership; password-change revocation; protected sockets; live approval; per-event status checks; immediate suspension disconnect; backend restart persistence; authentication rate limits.
+Messaging tests use real PostgreSQL and independent authenticated HTTP/Socket.IO sessions. Coverage includes channel creation/rename/archive, ordered concurrent sends, history pagination, idempotent retries and conflicting IDs, canonical DM pairs and nonparticipant privacy, explicit invitation acceptance/decline, unapproved/wrong-user denial, manager-only removal/transfer, leave/rejoin membership windows, direct-ID and pagination privacy, timestamp-independent ordering, empty membership periods, author-only edits/deletes, deleted-content removal, literal untrusted text, validation, account status, CSRF, persisted socket acknowledgments, unauthorized rooms, stale-room removal, suspension disconnect, missed edits/deletes on reconnect, backend restart and message quotas. A historical edit outside a new member's visible period must neither reveal content nor evict that member from subsequent authorized updates.
 
-Production-mode cookie configuration is tested through API injection. Public HTTPS deployment and reverse-proxy behavior have not been deployed or certified.
+Client regressions cover in-flight auth request coalescing and later refreshes, revision-aware message merging, tombstones, pool error handling, and real supervisor subprocess exit codes for normal desktop exit, desktop failure and early helper failure.
 
 ## Browser evidence
 
-The production web build was exercised in real headless Microsoft Edge through its DevTools protocol, with no personal browser profile involved:
+Real headless Microsoft Edge runs the production build with an isolated temporary profile and disposable database. Existing registration, approval, cookie, account administration, reload and suspension checks remain.
 
-1. Register through the rendered form; sign in with Remember enabled.
-2. Observe pending screen and denied private member API.
-3. Approve through the real API; observe automatic transition and authenticated Socket.IO.
-4. Verify HttpOnly/SameSite persistent cookie and empty localStorage.
-5. Use the member administration UI to approve another pending account.
-6. Reload and retain the session.
-7. Suspend through the owner API and observe the private UI disappear immediately.
-8. Verify the 390-pixel mobile sign-in layout has no horizontal overflow.
+Messaging checks send through the rendered composer, verify persistence, receive a reply from an independent account, render HTML-like input as text, edit/delete as author, open a DM, switch conversations, accept a group invitation, hide pre-join content, preserve history on reload and check responsive layout. Desktop and 390-pixel mobile screenshots are captured and visually reviewed.
 
-Ignored artifacts: auth-browser.json, auth-browser-signin.png, auth-browser-approved.png and auth-browser-mobile.png. Screenshots were visually reviewed. These checks cover Chromium/Edge on Windows; they are not a claim of Safari/Firefox or physical mobile-device testing.
+Ignored reports: artifacts/auth-browser.json and artifacts/messaging-browser.json. Screenshots include messaging-browser-channel.png, messaging-browser-group.png and messaging-browser-mobile.png. This verifies Chromium/Edge on Windows, not Safari/Firefox or a physical mobile device.
 
 ## Electron evidence
 
-The production renderer was exercised in an actual sandboxed Electron process across three launches with a separate temporary profile:
+Three actual sandboxed Electron launches use a temporary profile and disposable database. They verify registration, live approval, account settings, logout, minimize behavior, temporary-session cleanup and remembered-session restoration. The rendered composer sends a persisted message and receives an independent account's reply; both remain after restarting the application.
 
-- Register and sign in pending; receive live approval; enter the private shell and verify the socket; change display name; log out and sign back in without Remember.
-- Minimize and confirm the temporary session remains active. Fully quit and confirm server revocation. Relaunch and require sign-in.
-- Sign in with Remember; fully quit; relaunch and retain the approved account and display name; explicitly log out and confirm revocation.
-- Verify no renderer Node/process access, the narrow platform preload and empty localStorage.
+Renderer Node/process access remains unavailable, the preload remains narrow and localStorage contains no tokens. Ignored report: artifacts/auth-desktop.json. Crash/offline limitations remain documented in README.
 
-Ignored report: artifacts/auth-desktop.json. These are orderly online lifecycle tests; offline/crash limits are documented in README.
+## Restart and preservation
 
-## Reproduction and preservation
+The persistence probe creates its own disposable database and fixture users, channels, DM, group invitation/membership periods and messages. It keeps existing Fastify/pg pools open across an actual Docker Compose PostgreSQL restart, checks readiness recovery, then verifies identity, ordering, privacy, idempotent retries and a subsequent send. It checks that the original development migration journal is unchanged and drops only its own test database.
 
-Use the exact commands in [README](../README.md). Smoke commands use disposable databases and unique temporary profiles, not your development owner/account. PostgreSQL remains running after verification. No existing records, database volumes or migration history were removed. No actual owner credentials were generated for the development database. No cloud deployment, publishing or push occurred.
+The existing development database, users, sessions, audit records, applied migrations and named volume are preserved. PostgreSQL remains running after verification. No production deployment, publishing or push occurred.
 
-Milestone 1's original verification remains recorded in Git at 1576549. Its unauthenticated socket expectation has been replaced by denial; authenticated socket round trips now run in the database-backed security suite.
+Use the exact PowerShell commands in [README](../README.md). Prior milestone evidence remains in Git. Reports contain no credentials.
+
+## Remaining limits
+
+Single API process, intended for ten friends; serialized database authorization favors correctness over throughput. No end-to-end encryption, durable offline message queue, unread counters, blocking UI, uploads, search, voice/video/streaming, cloud deployment or signed installer. A database operator can read stored messages, while application administrators cannot access other participants' private conversations.

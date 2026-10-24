@@ -64,6 +64,15 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     assert.equal(await js("!!document.querySelector('.shell')"), false);
     console.log('TRICORD_SMOKE_PENDING');
     await wait("!!document.querySelector('[data-connection=connected]')");
+
+    await wait("!!document.querySelector('textarea[name=message]')");
+    await js(
+      "(()=>{const input=document.querySelector('textarea[name=message]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Electron says hello');input.dispatchEvent(new Event('input',{bubbles:true}));})()",
+    );
+    await js('document.querySelector(\'button[aria-label="Send message"]\').click()');
+    await wait("document.querySelector('textarea[name=message]').value===''");
+    await wait("document.querySelector('.message-scroll').innerText.includes('Reply to Electron')");
+
     await js("document.querySelector('button[aria-label=Settings]').click()");
     await wait("!!document.querySelector('input[name=displayName]')");
     await fill({ displayName: 'Verified desktop member' });
@@ -90,6 +99,12 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
   } else {
     await wait("!!document.querySelector('[data-connection=connected]')");
     assert.equal(await js("document.body.innerText.includes('Verified desktop member')"), true);
+    await wait(
+      "document.querySelector('.message-scroll')?.innerText.includes('Electron says hello')",
+    );
+    await wait(
+      "document.querySelector('.message-scroll')?.innerText.includes('Reply to Electron')",
+    );
     await js("document.querySelector('button[aria-label=Settings]').click()");
     await wait("!!document.querySelector('[role=dialog]')");
     await click('Sign out of Tricord');

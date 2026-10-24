@@ -1,3 +1,5 @@
+import { ChatService } from './chat/service.js';
+import { registerChat } from './chat/transport.js';
 import { createDatabase } from './db/client.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
@@ -106,7 +108,7 @@ export function createApp({
     void socket.join(['user:' + auth.user.id, 'session:' + auth.sessionId]);
     if (auth.user.status === 'approved')
       socket.emit('connection:welcome', {
-        message: 'Connected to Tricord. Messaging is not implemented yet.',
+        message: 'Connected to Tricord.',
         connectedAt: new Date().toISOString(),
       });
     socket.on('connection:ping', async (ack) => {
@@ -137,8 +139,10 @@ export function createApp({
   }, 15000);
   expiry.unref();
   app.register(async (routes) => {
-    if (database) registerAuth(routes, database.pool, io, secureCookies, rateLimits);
-    else
+    if (database) {
+      registerAuth(routes, database.pool, io, secureCookies, rateLimits);
+      registerChat(routes, new ChatService(database.pool), io, rateLimits);
+    } else
       routes.all('/api/*', async () => {
         throw new HttpError(503, 'Database not configured.');
       });

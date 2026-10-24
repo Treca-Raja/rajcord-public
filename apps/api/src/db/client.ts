@@ -9,6 +9,13 @@ export function createDatabase(connectionString: string) {
     query_timeout: 5000,
     idleTimeoutMillis: 10000,
   });
-  pool.on('error', () => console.error('An idle PostgreSQL connection failed.'));
+  // pg removes failed idle clients itself; never retry writes or log connection strings.
+  // Expected restarts are reflected by /ready and recover through the pool's next connection.
+  pool.on('error', (error: Error & { code?: string }) => {
+    if (
+      !['57P01', '57P02', '57P03', 'ECONNRESET', 'EPIPE', 'ECONNREFUSED'].includes(error.code ?? '')
+    )
+      console.warn('Unexpected idle database connection failure; the pool will reconnect.');
+  });
   return { pool, db: drizzle(pool, { schema }) };
 }

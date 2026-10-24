@@ -1,0 +1,269 @@
+.live-shell .sidebar {
+  overflow-y: auto;
+  min-height: 0;
+}
+.live-shell .section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.live-shell .channels button {
+  width: calc(100% - 24px);
+}
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.new-dm {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0 18px 12px;
+  color: #a9b4c2;
+  padding: 7px 0;
+  text-align: left;
+}
+.live-shell .chat {
+  min-width: 0;
+  min-height: 0;
+}
+.message-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 20px 28px;
+  overflow-anchor: none;
+}
+.conversation-intro {
+  padding: 28px 0 30px;
+}
+.conversation-intro h1 {
+  font-size: 28px;
+  margin: 20px 0 10px;
+}
+.conversation-intro p {
+  color: #9ca8b8;
+  line-height: 1.6;
+}
+.live-message {
+  position: relative;
+  padding: 14px 0;
+  margin: 0;
+  border-top: 1px solid transparent;
+}
+.live-message:hover {
+  background: #ffffff03;
+}
+.message-content {
+  min-width: 0;
+  flex: 1;
+}
+.message-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.message-meta time,
+.message-meta small {
+  font-size: 10px;
+  color: #8f9bab;
+}
+.message-actions {
+  display: flex;
+  align-self: flex-start;
+  gap: 7px;
+  opacity: 0;
+}
+.live-message:hover .message-actions,
+.live-message:focus-within .message-actions {
+  opacity: 1;
+}
+.message-actions button {
+  padding: 5px 8px;
+  font-size: 11px;
+  border-radius: 5px;
+  background: #2c333d;
+}
+.message-actions button:hover {
+  color: #c4e99c;
+}
+.live-composer {
+  align-items: center;
+}
+.live-composer textarea,
+.edit-form textarea {
+  resize: vertical;
+  border: 0;
+  background: transparent;
+  color: #e7e9ef;
+  font: inherit;
+  line-height: 1.6;
+  width: 100%;
+  min-height: 50px;
+  max-height: 160px;
+  padding: 8px;
+  outline: none;
+}
+.live-composer textarea:focus {
+  box-shadow: inset 0 -1px #c4e99c;
+}
+.edit-form textarea {
+  border: 1px solid #515d6b;
+  border-radius: 8px;
+  background: #171b22;
+}
+.edit-form button {
+  margin: 8px 8px 0 0;
+  padding: 7px 12px;
+}
+.chat-status {
+  color: #9ca8b8;
+  padding: 25px 0;
+  text-align: center;
+}
+.load-older {
+  display: block;
+  padding: 10px 16px;
+  background: #2b323c;
+  border-radius: 8px;
+  margin: 0 auto;
+  color: #c4e99c;
+}
+.member-button {
+  width: 100%;
+  text-align: left;
+}
+.member-button:disabled {
+  cursor: default;
+}
+.member-button:not(:disabled):hover {
+  background: #ffffff07;
+}
+.invite-list {
+  padding: 0 18px;
+}
+.invite-list .section-label {
+  padding-left: 0;
+  margin-left: 0;
+}
+.invite-card {
+  border: 1px solid #48543d;
+  border-radius: 8px;
+  background: #252e25;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.invite-card strong,
+.invite-card small {
+  display: block;
+}
+.invite-card small,
+.invite-card p {
+  font-size: 11px;
+  color: #aab6a3;
+  margin-top: 6px;
+}
+.invite-card button {
+  color: #c4e99c;
+  margin-top: 10px;
+  padding: 4px 10px 4px 0;
+}
+.chat-dialog {
+  max-width: 640px;
+}
+.chat-dialog select {
+  width: 100%;
+  border: 1px solid #424a57;
+  background: #171b22;
+  color: #eef1f6;
+  padding: 12px;
+  border-radius: 8px;
+  font: inherit;
+}
+.chat-dialog .check-label {
+  flex-direction: row;
+  align-items: center;
+  font-weight: 400;
+  margin-top: 12px;
+}
+.chat-dialog .check-label input {
+  width: 16px;
+  height: 16px;
+}
+.chat-dialog form {
+  margin: 20px 0;
+}
+.chat-dialog p {
+  line-height: 1.7;
+  color: #aeb7c5;
+  margin: 16px 0;
+}
+.chat-dialog .danger {
+  margin-top: 18px;
+}
+.live-shell .members {
+  overflow: auto;
+}
+.live-shell .profile {
+  margin-top: 20px;
+}
+.live-shell .empty-channel {
+  padding: 70px 28px;
+}
+.live-shell .empty-channel .primary {
+  margin-top: 25px;
+}
+.live-shell .voice-channel {
+  cursor: default;
+}
+@media (max-width: 700px) {
+  .message-scroll {
+    padding: 10px 16px;
+  }
+  .message-actions {
+    opacity: 1;
+    flex-direction: column;
+  }
+  .message-meta {
+    flex-wrap: wrap;
+  }
+  .conversation-intro h1 {
+    font-size: 24px;
+  }
+  .composer-footer {
+    gap: 10px;
+  }
+  .composer-footer > span:first-child {
+    font-size: 9px;
+  }
+  .live-shell .sidebar {
+    position: fixed;
+  }
+  .live-message .avatar {
+    flex-shrink: 0;
+  }
+}
+
+.message-body {
+  font-size: 14px !important;
+}
+.message-meta strong {
+  font-size: 12px;
+}
+.live-composer button:not(:disabled) {
+  color: #c4e99c;
+  opacity: 1;
+}
+.live-shell .composer-footer {
+  font-size: 10px;
+}
+.live-shell .profile > div {
+  min-width: 0;
+}
+.live-shell .profile strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

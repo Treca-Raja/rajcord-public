@@ -1,6 +1,7 @@
+import { singleFlight } from './single-flight';
 import {
   createContext,
-  useCallback,
+  useMemo,
   useContext,
   useRef,
   useEffect,
@@ -8,12 +9,18 @@ import {
   type ReactNode,
   type FormEvent,
 } from 'react';
-import { io } from 'socket.io-client';
-import type { AuthState, AuthUser } from '@tricord/shared';
+import { io, type Socket } from 'socket.io-client';
+import type {
+  AuthState,
+  AuthUser,
+  ServerToClientEvents,
+  ClientToServerEvents,
+} from '@tricord/shared';
 import { ShieldCheck, LogOut, X } from 'lucide-react';
 type Context = {
   state: AuthState;
   connected: boolean;
+  socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
   request: <T>(path: string, method?: string, body?: unknown) => Promise<T>;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
@@ -41,7 +48,8 @@ export async function api<T>(
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Request failed.');
+  if (!response.ok)
+    throw Object.assign(new Error(data.error || 'Request failed.'), { status: response.status });
   return data as T;
 }
 export function AuthRoot({ children }: { children: ReactNode }) {
@@ -50,16 +58,29 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     [connected, setConnected] = useState(false),
     [settings, setSettings] = useState(false),
     [error, setError] = useState('');
-  const refresh = useCallback(async () => {
-    try {
-      setState(await api<AuthState>('/auth/me'));
-    } catch {
-      setState(null);
-      setSettings(false);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [liveSocket, setLiveSocket] = useState<Socket<
+    ServerToClientEvents,
+    ClientToServerEvents
+  > | null>(null);
+  const generation = useRef(0);
+  const refresh = useMemo(
+    () =>
+      singleFlight(async () => {
+        const started = generation.current;
+        try {
+          const next = await api<AuthState>('/auth/me');
+          if (started === generation.current) setState(next);
+        } catch (error) {
+          if (started === generation.current && (error as { status?: number }).status === 401) {
+            setState(null);
+            setSettings(false);
+          }
+        } finally {
+          setLoading(false);
+        }
+      }),
+    [],
+  );
   const broadcast = () => {
     const channel = new BroadcastChannel('tricord-account');
     channel.postMessage('changed');
@@ -71,7 +92,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     channel.onmessage = () => void refresh();
     const focus = () => void refresh();
     window.addEventListener('focus', focus);
-    const timer = setInterval(focus, 30000);
+    const timer = setInterval(focus, 60000);
     return () => {
       channel.close();
       window.removeEventListener('focus', focus);
@@ -80,26 +101,37 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   }, [refresh]);
   useEffect(() => {
     if (!state) return;
-    const socket = io({
+    const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io({
       transports: ['websocket'],
       auth: { csrfToken: state.csrfToken },
       withCredentials: true,
     });
+    let active = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    setLiveSocket(socket);
     socket.on('connect', () => {
       socket.emit('connection:ping', (value: { ok: boolean }) => setConnected(value.ok));
     });
     socket.on('account:changed', () => {
       void refresh();
     });
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
       setConnected(false);
       void refresh();
+      if (reason === 'io server disconnect' && active) socket.connect();
     });
-    socket.on('connect_error', () => {
+    socket.on('connect_error', (error) => {
       setConnected(false);
-      void refresh();
+      if (error.message === 'Sign in required.') void refresh();
+      if (error.message === 'Authentication unavailable.' && active) {
+        clearTimeout(retry);
+        retry = setTimeout(() => socket.connect(), 2000);
+      }
     });
     return () => {
+      active = false;
+      clearTimeout(retry);
+      setLiveSocket(null);
       socket.removeAllListeners();
       socket.disconnect();
       setConnected(false);
@@ -109,6 +141,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     api<T>(path, method, body, state?.csrfToken);
   const logout = async () => {
     try {
+      generation.current++;
       await request('/auth/logout', 'POST');
       setState(null);
       setSettings(false);
@@ -128,6 +161,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     return (
       <SignIn
         onSignedIn={(value) => {
+          generation.current++;
           setState(value);
           setError('');
           broadcast();
@@ -137,6 +171,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   const context: Context = {
     state,
     connected,
+    socket: liveSocket,
     request,
     refresh,
     logout,

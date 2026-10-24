@@ -7,6 +7,7 @@ import {
   text,
   boolean,
   integer,
+  bigint,
   index,
   uniqueIndex,
   check,
@@ -78,3 +79,117 @@ export const approvalHistory = pgTable('approval_history', {
   action: varchar('action', { length: 32 }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const conversationKind = pgEnum('conversation_kind', ['channel', 'dm', 'group']);
+export const conversations = pgTable(
+  'conversations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    kind: conversationKind('kind').notNull(),
+    name: varchar('name', { length: 80 }),
+    creatorId: uuid('creator_id').references(() => users.id),
+    managerId: uuid('manager_id').references(() => users.id),
+    pairLow: uuid('pair_low').references(() => users.id),
+    pairHigh: uuid('pair_high').references(() => users.id),
+    archived: boolean('archived').default(false).notNull(),
+    lastSeq: bigint('last_seq', { mode: 'bigint' })
+      .default(sql`0`)
+      .notNull(),
+    lastChange: bigint('last_change', { mode: 'bigint' })
+      .default(sql`0`)
+      .notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('conversation_dm_pair').on(t.pairLow, t.pairHigh),
+    uniqueIndex('conversation_channel_name')
+      .on(sql`lower(${t.name})`)
+      .where(sql`${t.kind}='channel'`),
+    check(
+      'conversation_pair_shape',
+      sql`(${t.kind}='dm' AND ${t.pairLow} IS NOT NULL AND ${t.pairHigh} IS NOT NULL AND ${t.pairLow}<${t.pairHigh}) OR (${t.kind}<>'dm' AND ${t.pairLow} IS NULL AND ${t.pairHigh} IS NULL)`,
+    ),
+    check('conversation_counters', sql`${t.lastSeq}>=0 AND ${t.lastChange}>=0`),
+  ],
+);
+export const memberships = pgTable(
+  'memberships',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    startSeq: bigint('start_seq', { mode: 'bigint' }).notNull(),
+    endSeq: bigint('end_seq', { mode: 'bigint' }),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
+    leftAt: timestamp('left_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('membership_current')
+      .on(t.conversationId, t.userId)
+      .where(sql`${t.endSeq} IS NULL`),
+    index('membership_history').on(t.conversationId, t.userId, t.startSeq),
+    check(
+      'membership_bounds',
+      sql`${t.startSeq}>0 AND (${t.endSeq} IS NULL OR ${t.endSeq}>=${t.startSeq}-1)`,
+    ),
+  ],
+);
+export const invitations = pgTable(
+  'invitations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id),
+    inviterId: uuid('inviter_id')
+      .notNull()
+      .references(() => users.id),
+    inviteeId: uuid('invitee_id')
+      .notNull()
+      .references(() => users.id),
+    status: varchar('status', { length: 16 }).default('pending').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('invitation_pending')
+      .on(t.conversationId, t.inviteeId)
+      .where(sql`${t.status}='pending'`),
+    index('invitation_inbox').on(t.inviteeId, t.status),
+    check('invitation_status', sql`${t.status} IN ('pending','accepted','declined','revoked')`),
+  ],
+);
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id),
+    clientId: uuid('client_id').notNull(),
+    requestHash: varchar('request_hash', { length: 64 }).notNull(),
+    seq: bigint('seq', { mode: 'bigint' }).notNull(),
+    change: bigint('change', { mode: 'bigint' }).notNull(),
+    body: text('body'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('message_order').on(t.conversationId, t.seq),
+    uniqueIndex('message_idempotency').on(t.conversationId, t.authorId, t.clientId),
+    index('message_changes').on(t.conversationId, t.change),
+    index('message_author_rate').on(t.authorId, t.createdAt),
+    check(
+      'message_content',
+      sql`(${t.deletedAt} IS NULL AND ${t.body} IS NOT NULL AND length(${t.body}) BETWEEN 1 AND 4000) OR (${t.deletedAt} IS NOT NULL AND ${t.body} IS NULL)`,
+    ),
+  ],
+);

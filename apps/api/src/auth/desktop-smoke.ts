@@ -50,6 +50,32 @@ try {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       });
+      let replied = false;
+      const replyPoll = setInterval(() => {
+        if (stage === 'temporary' && !replied) {
+          void (async () => {
+            const row = (
+              await fixture.database.pool.query(
+                "SELECT m.conversation_id FROM messages m JOIN users u ON u.id=m.author_id WHERE u.username=$1 AND m.body='Electron says hello'",
+                [username],
+              )
+            ).rows[0];
+            if (!row) return;
+            replied = true;
+            const result = await app.inject({
+              url: '/api/conversations/' + row.conversation_id + '/messages',
+              method: 'POST',
+              headers: { origin, cookie, 'x-csrf-token': csrf },
+              payload: { body: 'Reply to Electron', clientId: randomUUID() },
+            });
+            assert.equal(result.statusCode, 200);
+          })().catch((error) => {
+            clearInterval(replyPoll);
+            child.kill();
+            reject(error);
+          });
+        }
+      }, 200);
       const approvalPoll = setInterval(() => {
         if (stage === 'temporary' && !approved) {
           void (async () => {
@@ -76,6 +102,7 @@ try {
             assert.equal(res.statusCode, 200);
           })().catch((error) => {
             clearInterval(approvalPoll);
+            clearInterval(replyPoll);
             child.kill();
             reject(error);
           });
@@ -86,6 +113,7 @@ try {
         stderr = '';
       const timer = setTimeout(() => {
         clearInterval(approvalPoll);
+        clearInterval(replyPoll);
         child.kill();
         reject(new Error('Electron smoke timed out. ' + output + stderr));
       }, 60000);
@@ -99,10 +127,12 @@ try {
       child.once('error', (error) => {
         clearTimeout(timer);
         clearInterval(approvalPoll);
+        clearInterval(replyPoll);
         reject(error);
       });
       child.once('exit', (code) => {
         clearInterval(approvalPoll);
+        clearInterval(replyPoll);
         clearTimeout(timer);
         void (async () => {
           const report = JSON.parse(
@@ -140,6 +170,10 @@ try {
       'logout revokes remembered session',
       'renderer isolation',
       'no localStorage tokens',
+      'composer persists message',
+      'independent-session realtime reply',
+      'own history survives app restart',
+      'received history survives app restart',
     ],
     profile,
   };
@@ -150,7 +184,9 @@ try {
     fileURLToPath(new URL('../../../../artifacts/auth-desktop.json', import.meta.url)),
     JSON.stringify(report, null, 2),
   );
-  console.log('PASS: 13 Electron authentication/lifecycle assertions across 3 launches.');
+  console.log(
+    'PASS: 17 Electron authentication, messaging and lifecycle checks across 3 launches.',
+  );
 } finally {
   await app.close();
   await fixture.cleanup();

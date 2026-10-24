@@ -202,6 +202,162 @@ try {
   assert.equal(sessionCookie.sameSite, 'Strict');
   assert.equal(sessionCookie.session, false);
   await screenshot('auth-browser-approved.png');
+
+  // Exercise actual controlled React inputs, not API-only message creation.
+  async function compose(value: string) {
+    await wait("!!document.querySelector('textarea[name=message]')");
+    await js(
+      "(()=>{const input=document.querySelector('textarea[name=message]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input," +
+        JSON.stringify(value) +
+        ");input.dispatchEvent(new Event('input',{bubbles:true}));})()",
+    );
+    await js('document.querySelector(\'button[aria-label="Send message"]\').click()');
+    await wait("document.querySelector('textarea[name=message]').value===''");
+  }
+  const general = (
+    await fixture.database.pool.query(
+      "SELECT id FROM conversations WHERE kind='channel' AND name='general'",
+    )
+  ).rows[0].id;
+  await compose('Browser message <img src=x onerror=window.tricordXss=true>');
+  await wait("document.querySelector('.message-scroll').innerText.includes('Browser message')");
+  assert.equal(await js('window.tricordXss===true'), false);
+  const original = (
+    await fixture.database.pool.query(
+      'SELECT id FROM messages WHERE author_id=$1 AND conversation_id=$2',
+      [user.id, general],
+    )
+  ).rows[0];
+  assert.ok(original);
+  const reply = await app.inject({
+    url: '/api/conversations/' + general + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Reply from independent session', clientId: randomUUID() },
+  });
+  assert.equal(reply.statusCode, 200);
+  await wait(
+    "document.querySelector('.message-scroll').innerText.includes('Reply from independent session')",
+  );
+  await js('document.querySelector(\'button[aria-label="Edit message"]\').click()');
+  await js(
+    "(()=>{const input=document.querySelector('.edit-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Edited in browser');input.dispatchEvent(new Event('input',{bubbles:true}));})()",
+  );
+  await js("document.querySelector('.edit-form').requestSubmit()");
+  await wait("document.querySelector('.message-body')?.innerText==='Edited in browser'");
+  await screenshot('messaging-browser-channel.png');
+  await js(
+    'window.confirm=()=>true;document.querySelector(\'button[aria-label="Delete message"]\').click()',
+  );
+  await wait('!document.querySelector(\'[data-message-id="' + original.id + '"]\')');
+  assert.equal(
+    (await fixture.database.pool.query('SELECT body FROM messages WHERE id=$1', [original.id]))
+      .rows[0].body,
+    null,
+  );
+  await js('document.querySelector(\'button[aria-label="New direct message"]\').click()');
+  await wait("!!document.querySelector('select[name=userId]')");
+  await js("document.querySelector('select[name=userId]').value=" + JSON.stringify(owner.id));
+  await click('Open conversation');
+  await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
+  await compose('Private browser DM');
+  const dm = (
+    await fixture.database.pool.query(
+      "SELECT id FROM conversations WHERE kind='dm' AND (pair_low=$1 OR pair_high=$1)",
+      [user.id],
+    )
+  ).rows[0];
+  const dmHistory = await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    headers: ownerHeaders,
+  });
+  assert.equal(dmHistory.json().messages[0].body, 'Private browser DM');
+  assert.equal(
+    await js(
+      "document.querySelector('.message-scroll').innerText.includes('Reply from independent session')",
+    ),
+    false,
+  );
+  const group = await app.inject({
+    url: '/api/conversations',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { kind: 'group', name: 'Browser invitation group', userIds: [user.id] },
+  });
+  const groupId = group.json().conversation.id;
+  await app.inject({
+    url: '/api/conversations/' + groupId + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Hidden before joining', clientId: randomUUID() },
+  });
+  await wait(
+    "document.querySelector('.invite-list')?.innerText.includes('Browser invitation group')",
+  );
+  await click('Accept');
+  await wait(
+    "document.querySelector('.channel-header strong')?.innerText==='Browser invitation group'",
+  );
+  assert.equal(
+    await js(
+      "document.querySelector('.message-scroll').innerText.includes('Hidden before joining')",
+    ),
+    false,
+  );
+  await compose('Group message from browser');
+  await screenshot('messaging-browser-group.png');
+  assert.equal(
+    await js(
+      "document.querySelector('.sidebar').scrollWidth<=document.querySelector('.sidebar').clientWidth",
+    ),
+    true,
+  );
+  await call('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true,
+  });
+  assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+  await screenshot('messaging-browser-mobile.png');
+  await call('Emulation.setDeviceMetricsOverride', {
+    width: 1360,
+    height: 880,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await call('Page.reload');
+  await wait("!!document.querySelector('textarea[name=message]')");
+  await js(
+    "(()=>{[...document.querySelectorAll('.channels button')].find(b=>b.innerText.includes('Browser invitation group')).click();})()",
+  );
+  await wait(
+    "document.querySelector('.message-scroll')?.innerText.includes('Group message from browser')",
+  );
+  await writeFile(
+    path.join(artifacts, 'messaging-browser.json'),
+    JSON.stringify(
+      {
+        passed: true,
+        checks: [
+          'composer persists',
+          'independent-session realtime reply',
+          'untrusted text stays text',
+          'author edit',
+          'author delete',
+          'private DM UI',
+          'conversation switching',
+          'group invitation acceptance',
+          'pre-join history hidden',
+          'history survives reload',
+          'responsive messaging layout',
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
   const candidate = await service.register({
     username: 'candidate_' + randomUUID().slice(0, 8),
     displayName: 'Approval candidate',
@@ -263,7 +419,9 @@ try {
       2,
     ),
   );
-  console.log('PASS: Browser authentication flow (11 checks) in headless Microsoft Edge.');
+  console.log(
+    'PASS: Browser authentication (11 checks) and messaging (11 checks) in headless Microsoft Edge.',
+  );
 } finally {
   if (ws?.readyState === WebSocket.OPEN) {
     await call('Browser.close').catch(() => {});

@@ -10,7 +10,7 @@
   "scripts": {
     "setup:desktop": "pnpm --filter @tricord/desktop exec install-electron",
     "dev": "pnpm build:packages && concurrently -k -n api,web \"pnpm --filter @tricord/api dev\" \"pnpm --filter @tricord/web dev\"",
-    "dev:desktop": "pnpm build:packages && pnpm --filter @tricord/desktop build && concurrently -k -n api,web,desktop \"pnpm --filter @tricord/api dev\" \"pnpm --filter @tricord/web dev\" \"wait-on http://127.0.0.1:5173 http://127.0.0.1:3001/health && pnpm --filter @tricord/desktop dev\"",
+    "dev:desktop": "pnpm build:packages && pnpm --filter @tricord/desktop build && concurrently -k --success command-desktop -n api,web,desktop \"pnpm --filter @tricord/api dev\" \"pnpm --filter @tricord/web dev\" \"wait-on http://127.0.0.1:5173 http://127.0.0.1:3001/health && pnpm --filter @tricord/desktop dev\"",
     "build:packages": "pnpm --filter @tricord/shared build && pnpm --filter @tricord/ui build",
     "build": "pnpm -r build",
     "typecheck": "pnpm build:packages && pnpm -r typecheck",
