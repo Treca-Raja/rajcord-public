@@ -53,3 +53,44 @@ The Windows development API watcher was observed remaining alive without opening
 The desktop readiness check now has a 30-second deadline, identifies unavailable services, and verifies the API response belongs to Tricord. Tests cover success, an unavailable API and an unrelated service on the API port. Existing normal/failing desktop-supervisor exit tests remain intact. The actual pnpm dev:desktop command was run: Vite and Fastify listened, readiness succeeded after starting PostgreSQL, and the real Tricord Electron window opened.
 
 Four new startup regressions bring the suite to 104 tests (24 unit/regression and 80 database integration). The earlier production-build smoke tests did not cover this watch-mode startup path; the new regression closes that gap.
+
+## Voice reliability and ten-client verification — 2026-10-25
+
+The first capacity run reproduced an HTTP 429 while opening the eighth browser: static assets, channel polling and voice heartbeats consumed one shared IP budget. Static assets are now excluded from API counting, and voice endpoints have independent bounded 120/minute/IP quotas. Tests explicitly verify that API and heartbeat limits still reject excess requests.
+
+Repeated runs also reproduced an intermittent publication race: all clients displayed Unmute as completed, but one server track stayed muted and the other clients received only eight streams. The SDK cannot signal a mute change before publication assigns the track SID. Tracks now publish muted, hold preference changes until publication completes, then apply the latest mute/deafen state.
+
+Further regressions cover lease renewal during a retry without creating duplicate rooms, leaving during microphone acquisition/replacement, failed publication cleanup, obsolete microphone errors after rejoining or choosing another device, delayed output routing after leaving/rejoining, and device-enumeration rejection. Cleanup and error callbacks are fenced by room identity and join generation.
+
+| Check                                  | Result                                                               |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| Unit/regression suite                  | 35 passing                                                           |
+| Database integration suite             | 81 passing                                                           |
+| Total Vitest tests                     | **116 passing**                                                      |
+| Existing Edge authentication/messaging | 22 checks                                                            |
+| Existing Electron                      | 23 checks across three launches                                      |
+| Two-client voice                       | 17 checks with actual synthetic audio                                |
+| Ten-client capacity/recovery           | 9 scenario checks; ten independent Edge processes                    |
+| Static checks and builds               | Formatting, ESLint, TypeScript and production builds pass            |
+| Infrastructure                         | Existing PostgreSQL healthy and LiveKit running; loopback ports only |
+
+The capacity test uses approved disposable accounts, a temporary database, a unique LiveKit room prefix, synthetic microphones and production rate limits. It requires nine incoming audio streams, two active peer connections and one live microphone per connected client. A 65-second steady phase checks advancing audio counters, health responsiveness and reservation count. An eleventh account is rejected. All ten clients recover after simultaneous signaling loss and after an actual restart of the isolated API. A freed slot is reusable, and leaving closes all peer connections and captured microphones. HTTP 429 responses are forbidden throughout recovery as well as steady operation.
+
+The harness removes only its own browser profiles, media rooms and database, and records cleanup failure as a failed run. It does not restart the shared LiveKit/PostgreSQL containers or change development accounts, applied migrations or volumes. Reports are ignored under artifacts/voice-load.json; failed runs also include diagnostics from the disposable clients.
+
+These are local synthetic-audio results on one Windows 11 host, not a remote ten-person call or listening-quality certification. API memory includes the Node test harness and excludes browsers/Docker. Physical microphone/speaker quality, real USB/Bluetooth removal, long calls, WAN/TURN and hosting remain unverified. The existing approximately 532 kB lazy LiveKit chunk still produces a non-failing build-size advisory. No dependency, deployment, publication or push was added.
+
+### Final recorded capacity run
+
+| Measurement                                               | Observed result           |
+| --------------------------------------------------------- | ------------------------- |
+| Steady phase                                              | 65.3 seconds, ten clients |
+| Maximum sampled API health response                       | 17.0 ms                   |
+| Highest sampled event-loop p95 (20 ms monitor resolution) | 32.4 ms                   |
+| Highest sampled Node API/test-process RSS                 | 230.1 MiB                 |
+| Highest sampled inbound audio jitter                      | 2.0 ms                    |
+| Cumulative received packets at end of steady phase        | 330794                    |
+| Reported lost packets at end of steady phase              | 0                         |
+| HTTP 429 responses, including recovery                    | 0                         |
+
+All nine capacity/recovery checks passed, followed by successful test-resource cleanup. Expected HTTP 410 heartbeat responses after restarting the isolated API trigger fresh reservations; they are not failed authentication or throttling. These measurements describe this short local run and are not production service guarantees.

@@ -1,7 +1,5 @@
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -10,6 +8,7 @@ import { testDatabase } from '../db/test-database.js';
 import { AuthService } from '../auth/service.js';
 import { createApp } from '../app.js';
 import { voiceConfig } from './config.js';
+import { launch, setup, type Browser } from './browser-harness.js';
 const origin = 'http://127.0.0.1:3004',
   config = voiceConfig();
 if (!config) throw new Error('Run voice:setup and voice:up.');
@@ -25,200 +24,7 @@ const appOptions = {
 let server = createApp(appOptions);
 const artifacts = fileURLToPath(new URL('../../../../artifacts/', import.meta.url));
 await mkdir(artifacts, { recursive: true });
-type Browser = Awaited<ReturnType<typeof launch>>;
 const browsers: Browser[] = [];
-async function launch() {
-  const profile = await mkdtemp(path.join(tmpdir(), 'tricord-voice-browser-'));
-  const wav = Buffer.alloc(44 + 48000 * 2 * 4);
-  wav.write('RIFF');
-  wav.writeUInt32LE(wav.length - 8, 4);
-  wav.write('WAVEfmt ', 8);
-  wav.writeUInt32LE(16, 16);
-  wav.writeUInt16LE(1, 20);
-  wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(48000, 24);
-  wav.writeUInt32LE(96000, 28);
-  wav.writeUInt16LE(2, 32);
-  wav.writeUInt16LE(16, 34);
-  wav.write('data', 36);
-  wav.writeUInt32LE(wav.length - 44, 40);
-  for (let i = 0; i < 48000 * 4; i++)
-    wav.writeInt16LE(
-      Math.round(5000 * Math.sin((i * 2 * Math.PI * 440) / 48000) * (Math.floor(i / 12000) % 2)),
-      44 + i * 2,
-    );
-  const audio = path.join(profile, 'tone.wav');
-  await writeFile(audio, wav);
-  const child = spawn(
-    process.env.TRICORD_BROWSER_PATH ||
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    [
-      '--headless=new',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-networking',
-      '--remote-debugging-address=127.0.0.1',
-      '--remote-debugging-port=0',
-      '--user-data-dir=' + profile,
-      '--use-fake-ui-for-media-stream',
-      '--use-fake-device-for-media-stream',
-      '--use-file-for-fake-audio-capture=' + audio,
-      '--autoplay-policy=no-user-gesture-required',
-      'about:blank',
-    ],
-    { windowsHide: true, stdio: 'ignore' },
-  );
-  let launchError: Error | undefined;
-  child.on('error', (error) => {
-    launchError = error;
-  });
-  let port = '';
-  for (let i = 0; i < 100; i++) {
-    if (launchError) throw launchError;
-    try {
-      port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]!;
-      break;
-    } catch {
-      await delay(100);
-    }
-  }
-  assert.match(port, /^\d+$/);
-  const pages = (await (await fetch('http://127.0.0.1:' + port + '/json/list')).json()) as {
-    type: string;
-    webSocketDebuggerUrl: string;
-  }[];
-  const ws = new WebSocket(pages.find((p) => p.type === 'page')!.webSocketDebuggerUrl);
-  let sequence = 0;
-  const pending = new Map<
-    number,
-    {
-      resolve: (value: unknown) => void;
-      reject: (error: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
-  >();
-  ws.addEventListener('message', (event) => {
-    const data = JSON.parse(String(event.data));
-    const request = pending.get(data.id);
-    if (!request) return;
-    clearTimeout(request.timer);
-    pending.delete(data.id);
-    if (data.error) request.reject(new Error(data.error.message));
-    else request.resolve(data.result);
-  });
-  await new Promise<void>((resolve, reject) => {
-    ws.addEventListener('open', () => resolve(), { once: true });
-    ws.addEventListener('error', () => reject(new Error('CDP failed')), { once: true });
-  });
-  const call = (
-    method: string,
-    params: Record<string, unknown> = {},
-  ): Promise<Record<string, unknown>> =>
-    new Promise((resolve, reject) => {
-      const id = ++sequence,
-        timer = setTimeout(() => {
-          pending.delete(id);
-          reject(new Error('CDP timeout: ' + method));
-        }, 20000);
-      pending.set(id, {
-        resolve: (value) => resolve(value as Record<string, unknown>),
-        reject,
-        timer,
-      });
-      ws.send(JSON.stringify({ id, method, params }));
-    });
-  const js = async (expression: string) => {
-    const result = await call('Runtime.evaluate', {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-      userGesture: true,
-    });
-    if (result.exceptionDetails)
-      throw new Error('Browser JS failed: ' + JSON.stringify(result.exceptionDetails));
-    return (result.result as { value: unknown }).value;
-  };
-  const wait = async (expression: string) => {
-    for (let i = 0; i < 200; i++) {
-      if (await js(expression)) return;
-      await delay(100);
-    }
-    console.error(
-      await js(
-        'JSON.stringify((window.__peers??[]).map(p=>({state:p.connectionState,candidates:p.__candidates})))',
-      ),
-    );
-    throw new Error(
-      'Voice browser timeout: ' + expression + '; UI: ' + (await js('document.body.innerText')),
-    );
-  };
-  const click = async (label: string) =>
-    js(
-      "(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===" +
-        JSON.stringify(label) +
-        ");if(!b)throw Error('Missing button');b.click()})()",
-    );
-  await call('Page.enable');
-  await call('Page.addScriptToEvaluateOnNewDocument', {
-    source:
-      "window.__voiceOpens=0;const Socket=window.WebSocket;window.WebSocket=class extends Socket{constructor(...args){super(...args);if(String(args[0]).includes('/media/'))this.addEventListener('open',()=>window.__voiceOpens++)}};window.__peers=[];const Original=window.RTCPeerConnection;window.RTCPeerConnection=class extends Original{constructor(...args){super(...args);window.__peers.push(this);this.__candidates=[];const add=this.addIceCandidate.bind(this);this.addIceCandidate=(candidate)=>{this.__candidates.push(candidate);return add(candidate)}}};window.__captureCount=0;const capture=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=(...args)=>{window.__captureCount++;return capture(...args)};",
-  });
-  return {
-    child,
-    ws,
-    call,
-    js,
-    wait,
-    click,
-    close: async () => {
-      try {
-        await call('Browser.close');
-      } catch {
-        child.kill();
-      }
-      ws.close();
-      for (const entry of pending.values()) clearTimeout(entry.timer);
-    },
-  };
-}
-async function setup(browser: Browser, token: string) {
-  await browser.call('Network.setCookie', {
-    name: 'tricord_session',
-    value: token,
-    url: origin,
-    httpOnly: true,
-    sameSite: 'Strict',
-  });
-  await browser.call('Emulation.setDeviceMetricsOverride', {
-    width: 1360,
-    height: 980,
-    deviceScaleFactor: 1,
-    mobile: false,
-  });
-  await browser.call('Page.navigate', { url: origin });
-  await browser.wait("!!document.querySelector('.voice-settings-toggle')");
-  await browser.js("document.querySelector('.voice-settings-toggle').click()");
-  await browser.click('Find audio devices');
-  await browser.wait(
-    'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
-  );
-  for (const label of ['Voice microphone', 'Voice speakers']) {
-    await browser.js(
-      "(()=>{const s=document.querySelector('select[aria-label=" +
-        JSON.stringify(label) +
-        "]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
-    );
-  }
-  await browser.wait(
-    '!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled',
-  );
-  await browser.js(
-    "(()=>{const s=document.querySelector('select[aria-label=\"Join voice channel\"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
-  );
-  await browser.wait(
-    "document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'",
-  );
-}
 const received =
   "Promise.all(window.__peers.map(p=>p.getStats())).then(reports=>reports.flatMap(r=>[...r.values()]).filter(s=>s.type==='inbound-rtp'&&s.kind==='audio').reduce((sum,s)=>sum+(s.bytesReceived||0),0))";
 try {
@@ -240,8 +46,8 @@ try {
   browsers.push(a);
   const b = await launch();
   browsers.push(b);
-  await setup(a, first.token);
-  await setup(b, second.token);
+  await setup(a, first.token, origin);
+  await setup(b, second.token, origin);
   for (const browser of [a, b]) {
     await browser.wait("document.querySelectorAll('.voice-members li').length===2");
     await browser.js('document.querySelector(\'button[aria-label="Unmute microphone"]\').click()');

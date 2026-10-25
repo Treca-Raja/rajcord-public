@@ -14,7 +14,8 @@
     "owner:bootstrap": "tsx --env-file-if-exists=.env src/auth/bootstrap.ts",
     "test:desktop": "tsx --env-file-if-exists=.env src/auth/desktop-smoke.ts",
     "test:browser": "tsx --env-file-if-exists=.env src/auth/browser-smoke.ts",
-    "test:voice": "tsx --env-file-if-exists=.env src/voice/browser-smoke.ts"
+    "test:voice": "tsx --env-file-if-exists=.env src/voice/browser-smoke.ts",
+    "test:voice:load": "tsx --env-file-if-exists=.env src/voice/load-smoke.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.3",

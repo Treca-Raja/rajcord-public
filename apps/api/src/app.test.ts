@@ -50,3 +50,27 @@ describe('foundation', () => {
     }
   });
 });
+
+it('static assets cannot exhaust API quotas, and API quotas remain enforced', async () => {
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const root = await mkdtemp(path.join(tmpdir(), 'tricord-static-quota-'));
+  if (
+    path.dirname(root) !== path.resolve(tmpdir()) ||
+    !path.basename(root).startsWith('tricord-static-quota-')
+  )
+    throw new Error('Refusing unexpected test directory cleanup');
+  const instance = createApp({ staticRoot: root });
+  try {
+    await writeFile(path.join(root, 'index.html'), '<p>Tricord test</p>');
+    for (let i = 0; i < 130; i++) expect((await instance.app.inject('/')).statusCode).toBe(200);
+    for (let i = 0; i < 120; i++)
+      expect((await instance.app.inject('/api/unavailable')).statusCode).toBe(503);
+    expect((await instance.app.inject('/api/unavailable')).statusCode).toBe(429);
+    expect((await instance.app.inject('/')).statusCode).toBe(200);
+  } finally {
+    await instance.app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

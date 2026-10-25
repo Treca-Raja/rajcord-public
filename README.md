@@ -116,13 +116,14 @@ pnpm build
 pnpm --filter @tricord/api test:browser
 pnpm --filter @tricord/api test:desktop
 pnpm --filter @tricord/api test:voice
+pnpm --filter @tricord/api test:voice:load
 pnpm db:verify-persistence
 pnpm db:migrate
 pnpm peers check
 pnpm audit --prod
 ```
 
-There are **104 passing Vitest tests**: 4 foundation, 7 database, 29 authentication/security, 29 messaging, 15 voice integration and 20 client/pool/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
+There are **116 passing Vitest tests**: 5 foundation/API, 7 database, 29 authentication/security, 29 messaging, 16 voice integration and 30 client/pool/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
 
 - `test:db` checks the existing development schema with unique disposable rows. Authentication and messaging tests create uniquely named temporary databases, migrate it, then drop **only the database created by that test run**. Your development database, owner, migration history and volume are preserved. The local development database role must have CREATEDB permission for these tests.
 - The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 11 messaging checks. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.
@@ -165,7 +166,7 @@ Removed accounts become tombstones, preserving audit and identity history. They 
 
 Crash/offline quits cannot guarantee immediate server revocation. Electron discards temporary local cookies at startup, and remaining server sessions expire within 12 hours or can be revoked from another device. Browser session restoration may preserve session cookies according to browser settings. No password recovery, MFA, email verification, TLS deployment, signed installer or multi-process socket adapter is implemented. HTTP/socket event limits are in-process; the message-send quota is persisted in PostgreSQL. This implementation targets a single API process and up to ten friends. Login errors are generic; registration necessarily reveals whether a username can be used.
 
-See [security decisions](docs/decisions.md) and [verification evidence](docs/verification.md). Recommended next: validate real headsets and ten-person voice load, then add private/group calling and blocking rules. Leave video/streaming and cloud deployment for later.
+See [security decisions](docs/decisions.md) and [verification evidence](docs/verification.md). Recommended next: validate real headsets and hardware disconnection behavior, then add private/group calling and blocking rules. Leave video/streaming and cloud deployment for later.
 
 ## Local voice channels (Milestone 2C)
 
@@ -199,4 +200,23 @@ pnpm build
 pnpm --filter @tricord/api test:voice
 ```
 
-This test covers actual received audio, independent sessions, mute/deafen, selected output, volume, disconnect/reconnect, API restart, simulated device loss and revocation. Electron tests also publish a synthetic microphone track and deny camera capture. Physical microphones, unplugging real USB/Bluetooth hardware, listening quality, ten-person load and WAN/TURN behavior still need manual validation.
+This test covers actual received audio, independent sessions, mute/deafen, selected output, volume, disconnect/reconnect, API restart, simulated device loss and revocation. Electron tests also publish a synthetic microphone track and deny camera capture. Physical microphones, unplugging real USB/Bluetooth hardware, listening quality and WAN/TURN behavior still need manual validation.
+
+## Ten-client voice reliability test
+
+With PostgreSQL and LiveKit running:
+
+```powershell
+Set-Location F:\tricord
+pnpm db:up
+pnpm voice:up
+pnpm test:voice:load
+```
+
+This command builds first, then launches ten isolated headless Edge processes with synthetic microphones. It runs a 65-second steady audio test, rejects an eleventh account, drops all signaling connections, restarts only its disposable Fastify instance, verifies recovery, frees and reuses a slot, then checks that leaving closes peer connections and microphone tracks. Each connected client must receive nine audio streams and retain exactly two active peer connections (publisher/subscriber). Audio byte counts must advance at every sample. Production HTTP rate limits stay enabled, with no HTTP 429 responses allowed.
+
+The test binds to **127.0.0.1:3005** and uses a temporary database and unique LiveKit room prefix. It cleans up its own browser profiles and resources; development accounts, database volumes, the main API and other voice rooms are preserved. Allow several minutes and enough memory for ten browser processes. It never opens physical microphones. The ignored report **artifacts/voice-load.json** includes checks, per-client WebRTC counters, API health latency, event-loop delay and API/test-process memory. That memory measurement excludes Docker and browser processes.
+
+Static files no longer consume the API rate budget. Each voice endpoint has its own 120-request/minute/IP budget, so ten clients sharing one address can heartbeat and poll without blocking each other. Authentication limits, approval checks, CSRF, origin checks and room capacity remain enforced.
+
+This is ten real software clients on one Windows host using loopback networking, not ten people on different networks. Physical headset quality, Bluetooth/USB changes, long calls and remote networking remain unverified. See [verification evidence](docs/verification.md) for measured results.

@@ -121,4 +121,14 @@ Exact user-selected input IDs are captured as user-provided tracks, preventing S
 
 Electron keeps its sandbox, isolated context, disabled renderer Node integration and restrictive navigation. Only top-frame audio requests from the exact app origin may prompt for native microphone consent. Camera/display capture and foreign/subframe requests remain denied. Permission is remembered only for the running process. Fake media is enabled solely by the existing isolated smoke harness. The [Electron permission documentation](https://www.electronjs.org/docs/latest/api/session) defines the request/check handlers used here.
 
-Current scope excludes private/group calls, ringing, voice channel rename/archive UI, push-to-talk, advanced processing controls, global hotkeys, recording, streaming, mobile browser certification, TURN/WAN, cloud hosting and E2EE. Two synthetic clients verify transport and controls, not human listening quality or ten-user capacity benchmarks.
+Current scope excludes private/group calls, ringing, voice channel rename/archive UI, push-to-talk, advanced processing controls, global hotkeys, recording, streaming, mobile browser certification, TURN/WAN, cloud hosting and E2EE. Two synthetic clients verify transport and controls; a separate ten-client test verifies local capacity and recovery. Neither establishes human listening quality or remote-network performance.
+
+## Voice reliability and local capacity
+
+Static-file wildcard requests are excluded from the API rate budget. Voice routes use independent, bounded 120/minute/IP quotas. Ten participants sharing an address normally produce 60 heartbeats and 40 channel polls per minute. The earlier shared budget included all asset requests and could reject a new browser before it loaded the app. The separate budgets preserve throttling and all authentication/CSRF checks; quotas remain in-process.
+
+A controller owns at most one active or connecting Room. A lease renewal can replace a scheduled retry, and retry callbacks cancel that replacement before connecting. Room identity and capture-attempt counters fence asynchronous microphone acquisition/publication. Leaving stops the owned track even while replacement/unpublication is pending; failed or stale captures stop their tracks. The current mute/deafen preference is reapplied after publication.
+
+Output routing is serialized per audio element. Late routing completions cannot play elements from an earlier room or a prior join generation. Device enumeration failures are reported without selecting fallback devices.
+
+The shared Edge harness supplies synthetic WAV audio, isolated profiles, CDP instrumentation and bounded startup waits. Capacity testing uses production rate limits, ten sessions, nine incoming streams per session, steady audio counters, deliberate signaling interruption and an actual API restart. Only the test's room prefix, database and temporary profiles are cleaned up.

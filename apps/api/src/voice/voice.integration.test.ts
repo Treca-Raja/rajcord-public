@@ -258,3 +258,32 @@ it('unauthorized signaling handshakes fail before reaching LiveKit', async () =>
   });
   expect(result).toBe(401);
 });
+
+it('voice endpoint quotas remain bounded and independent for clients sharing an IP', async () => {
+  const config = voiceConfig()!;
+  const limited = createApp({
+    databaseUrl: fixture.url,
+    rateLimits: true,
+    voiceConfig: { ...config, prefix: 'tricord-quota-' + randomUUID() + '-' },
+  });
+  const send = (path: string, payload?: Record<string, unknown>) =>
+    limited.app.inject({
+      url: '/api/voice' + path,
+      method: payload ? 'POST' : 'GET',
+      payload,
+      headers: { origin, cookie: owner.cookie, 'x-csrf-token': owner.csrf },
+    });
+  try {
+    // Unused reservation IDs exercise the authenticated heartbeat path without media mutation.
+    const leaseId = randomUUID();
+    for (let i = 0; i < 120; i++)
+      expect((await send('/heartbeat', { leaseId })).statusCode).toBe(410);
+    expect((await send('/heartbeat', { leaseId })).statusCode).toBe(429);
+    expect((await send('/channels')).statusCode).toBe(200);
+    expect((await limited.app.inject('/health')).statusCode).toBe(200);
+    expect((await send('/leave', { leaseId })).statusCode).toBe(200);
+    expect((await limited.app.inject('/api/voice/channels')).statusCode).toBe(401);
+  } finally {
+    await limited.app.close();
+  }
+});

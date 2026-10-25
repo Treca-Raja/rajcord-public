@@ -31,7 +31,8 @@
     "voice:setup": "node scripts/voice-setup.mjs",
     "voice:up": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice up -d",
     "voice:down": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice down",
-    "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice"
+    "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice",
+    "test:voice:load": "pnpm build && pnpm --filter @tricord/api test:voice:load"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

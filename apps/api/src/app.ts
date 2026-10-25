@@ -76,7 +76,13 @@ export function createApp({
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-CSRF-Token'],
   });
-  app.register(rateLimit, { global: rateLimits, max: 120, timeWindow: 60000 });
+  app.register(rateLimit, {
+    global: rateLimits,
+    max: 120,
+    timeWindow: 60000,
+    // Static-file requests must not consume the authenticated API budget.
+    allowList: (req) => req.routeOptions.url === '/*',
+  });
   app.addHook('onRequest', async (req, reply) => {
     reply
       .header('X-Content-Type-Options', 'nosniff')
@@ -150,7 +156,7 @@ export function createApp({
     if (database) {
       registerAuth(routes, database.pool, io, secureCookies, rateLimits);
       registerChat(routes, new ChatService(database.pool), io, rateLimits);
-      routes.register(async (child) => registerVoice(child, voice));
+      routes.register(async (child) => registerVoice(child, voice, rateLimits));
     } else
       routes.all('/api/*', async () => {
         throw new HttpError(503, 'Database not configured.');
