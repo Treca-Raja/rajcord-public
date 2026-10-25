@@ -1,6 +1,6 @@
 # Hosted alpha preparation
 
-This repository is prepared for private GitHub storage and automated verification. The server image is tested locally. No cloud server, TLS endpoint or internet-facing deployment has been provisioned yet. The selected direction is IP-only hosting with free, automatically renewed public-IP certificates; no domain purchase is planned.
+The active source repository is public at [fakebane/tricord-public](https://github.com/fakebane/tricord-public), with automated verification. The previous private repository is retained as an archived predecessor. The server image is tested locally. No cloud server, TLS endpoint or internet-facing deployment has been provisioned yet. The selected direction is IP-only hosting with free, automatically renewed public-IP certificates; no domain purchase is planned.
 
 ## What is ready
 
@@ -78,4 +78,4 @@ Price/availability research on 2026-10-25 found that [Hetzner's cost-optimized p
 
 Before the first GitHub upload, seven existing commits and 182 unique historical file blobs were checked for tracked environment/profile files, configured database/LiveKit secret values, private keys and high-confidence credential patterns. No matches were found. This is a scoped review, not a guarantee that arbitrary historical secrets can be detected.
 
-The private repository preserves existing Git history. Local environment files and generated credentials stay on the workstation. Do not make the repository public or add collaborators without an explicit decision.
+At the user's request, the active project moved to a new public repository with its existing Git history. Before publication, all nine preceding commits and 202 historical file versions were checked again for the configured database/LiveKit secret values, private runtime paths, private keys and high-confidence credential patterns; no matches were found. Commit email addresses use GitHub's noreply format. The predecessor remains private and archived. Local environment files and generated credentials stay on the workstation.

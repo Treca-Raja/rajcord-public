@@ -1,5 +1,7 @@
 # Tricord
 
+Active public repository: [fakebane/tricord-public](https://github.com/fakebane/tricord-public).
+
 Milestone 2C adds local community voice channels to the authenticated React/Electron application, alongside persistent shared text channels, private DMs and group DMs. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
 
 ## Windows prerequisites
