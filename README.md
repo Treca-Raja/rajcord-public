@@ -123,7 +123,7 @@ pnpm peers check
 pnpm audit --prod
 ```
 
-There are **121 passing Vitest tests**: 5 foundation/API, 7 database, 29 authentication/security, 29 messaging, 16 voice integration and 35 client/pool/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
+There are **127 passing Vitest tests**: 5 foundation/API, 7 database, 29 authentication/security, 29 messaging, 16 voice integration and 41 client/pool/configuration/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
 
 - `test:db` checks the existing development schema with unique disposable rows. Authentication and messaging tests create uniquely named temporary databases, migrate it, then drop **only the database created by that test run**. Your development database, owner, migration history and volume are preserved. The local development database role must have CREATEDB permission for these tests.
 - The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 11 messaging checks. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.
@@ -144,7 +144,7 @@ pnpm --filter @tricord/desktop start
 
 The backend serves built web assets at **http://127.0.0.1:3001**. You can also open that address in a browser. Built Electron loads this same origin instead of file URLs. The API must be running.
 
-These commands test production **build artifacts on local HTTP**. They do not deploy production infrastructure. Future HTTPS deployment must use `NODE_ENV=production` and an explicit HTTPS-only `WEB_ORIGINS` list; this enables Secure cookies and rejects HTTP origin configuration. Reverse proxy, TLS, distributed rate limits and remote desktop-server configuration are not configured in this milestone.
+These commands test production **build artifacts on local HTTP**. They do not deploy production infrastructure. Future HTTPS deployment must use `NODE_ENV=production` and an explicit HTTPS-only `WEB_ORIGINS` list; this enables Secure cookies and rejects HTTP origin configuration. Reverse proxy, TLS and distributed rate limits are not deployed. An exact HTTPS desktop-server URL can now be configured; see the hosting preparation guide.
 
 ## Database migrations
 
@@ -222,3 +222,7 @@ The test binds to **127.0.0.1:3005** and uses a temporary database and unique Li
 Static files no longer consume the API rate budget. Each voice endpoint has its own 120-request/minute/IP budget, so ten clients sharing one address can heartbeat and poll without blocking each other. Authentication limits, approval checks, CSRF, origin checks and room capacity remain enforced.
 
 This is ten real software clients on one Windows host using loopback networking, not ten people on different networks. Physical headset quality, Bluetooth/USB changes, long calls and remote networking remain unverified. See [verification evidence](docs/verification.md) for measured results.
+
+## GitHub and hosted alpha preparation
+
+See [hosting preparation](docs/hosting.md) for the tested server image, automated GitHub checks, HTTPS desktop configuration and remaining deployment steps. Local development commands remain unchanged.

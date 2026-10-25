@@ -102,3 +102,15 @@ A user rerun failed with ECONNREFUSED at 127.0.0.1:5432 because Docker Desktop w
 The stopped-database path was reproduced with the actual root command: it exited before building and instructed the user to start Docker Desktop and run pnpm db:up. Docker Desktop and the existing Compose services were then started without replacing credentials or volumes. Five new regressions cover readiness, stopped PostgreSQL, stopped LiveKit, missing voice configuration and rejection of remote databases. They bring the suite to 121 tests (40 unit/regression and 81 database integration).
 
 After startup, the exact root command pnpm test:voice:load passed its readiness checks, production build, all nine capacity/recovery scenarios and cleanup. All 40 unit/regression tests, lint, API TypeScript checking and repository formatting also passed. The existing LiveKit bundle-size advisory remains unrelated to service availability.
+
+## GitHub and hosted-alpha preparation — 2026-10-25
+
+All 127 Vitest tests pass (46 unit/regression, 81 database integration), along with formatting, lint, TypeScript and production builds. The existing Electron smoke still passes all 23 scenarios across three launches; the real two-browser voice smoke passes all 17 scenarios after adding hosted configuration.
+
+A pinned multi-stage Linux server image was built and run as the non-root node user. Its isolated smoke verified migrations twice, web asset serving, PostgreSQL readiness, real registration/login with native password hashing, Secure/HttpOnly/SameSite cookies, pending-account restrictions, private Docker-network LiveKit room control, opaque hosted voice leases and an actual pg_dump/pg_restore round trip. The PostgreSQL fixture uses tmpfs; cleanup removes only test containers, their network and generated temporary files.
+
+New configuration regressions enforce exact HTTPS desktop origins, preserve local/test origins, reject public LiveKit control hosts, require production voice credentials and allow server-supplied ICE/TURN configuration only for hosted leases. Temporary desktop-session cleanup now selects cookies only for its configured server.
+
+GitHub Actions uses pinned official actions and read-only repository permissions. It runs the standard suites, production build, image build and backup/restore smoke without deploying. The initial history review covered all seven prior commits and 182 unique file blobs; configured secret values and sensitive-path/credential-pattern checks found no matches.
+
+Cloud provisioning, DNS, trusted TLS termination, TURN/TLS, operational backup scheduling and cross-network voice testing still require a chosen server/domain and access. See hosting.md for the deployment boundary and remaining work. The existing LiveKit lazy-chunk advisory remains.

@@ -1,3 +1,4 @@
+import { serverUrl } from './server-url.js';
 import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
 import { app, BrowserWindow, session, dialog } from 'electron';
 import path from 'node:path';
@@ -21,13 +22,13 @@ app.on('second-instance', () => {
 if (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1') {
   app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 }
-const dev = process.env.TRICORD_DEV_URL;
-if (dev && dev !== 'http://127.0.0.1:5173')
-  throw new Error('Only the local development origin is permitted.');
-const target = authSmoke ? 'http://127.0.0.1:3002' : dev || 'http://127.0.0.1:3001';
+const target = serverUrl(process.env, authSmoke);
 let quitting = false;
 async function clearTemporarySession() {
-  const cookies = await session.defaultSession.cookies.get({ name: 'tricord_session' });
+  const cookies = await session.defaultSession.cookies.get({
+    name: 'tricord_session',
+    url: target,
+  });
   if (!cookies.some((cookie) => cookie.session)) return;
   try {
     const response = await session.defaultSession.fetch(target + '/api/auth/me', {

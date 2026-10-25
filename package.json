@@ -32,7 +32,9 @@
     "voice:up": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice up -d",
     "voice:down": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice down",
     "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice",
-    "test:voice:load": "pnpm --filter @tricord/api test:voice:check && pnpm build && pnpm --filter @tricord/api test:voice:load"
+    "test:voice:load": "pnpm --filter @tricord/api test:voice:check && pnpm build && pnpm --filter @tricord/api test:voice:load",
+    "server:build": "docker build -f infrastructure/server/Dockerfile -t tricord-server:alpha .",
+    "test:server-image": "node scripts/server-image-smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

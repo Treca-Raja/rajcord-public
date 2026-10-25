@@ -288,3 +288,18 @@ it('a superseded microphone request cannot mark its successful replacement missi
   expect(controller.state.inputMissing).toBe(false);
   expect(controller.state.error).toBe('');
 });
+
+it('hosted leases allow the media server to provide ICE servers while local leases stay local', async () => {
+  const { request } = setup();
+  await controller.join('room');
+  expect(sdk.rooms[0]!.connect.mock.calls[0]![2].rtcConfig.iceServers).toEqual([]);
+  await controller.leave();
+  request.mockResolvedValue({
+    id: 'hosted',
+    credential: 'hosted',
+    channelId: 'room',
+    useServerIceServers: true,
+  });
+  await controller.join('room');
+  expect(sdk.rooms[1]!.connect.mock.calls[0]![2].rtcConfig).not.toHaveProperty('iceServers');
+});

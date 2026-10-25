@@ -123,7 +123,12 @@ export class VoiceService {
     });
   }
   publicLease(lease: Lease) {
-    return { id: lease.id, channelId: lease.channelId, credential: lease.id };
+    return {
+      id: lease.id,
+      channelId: lease.channelId,
+      credential: lease.id,
+      useServerIceServers: this.config.useServerIceServers === true,
+    };
   }
   async authorize(token: string, credential: string) {
     const auth = approved(await identity(this.pool, token));

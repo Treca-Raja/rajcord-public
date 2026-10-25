@@ -10,3 +10,10 @@ artifacts/
 *.log
 
 /experiments/
+
+/backups/
+/infrastructure/server/secrets/
+*.pem
+*.key
+*.p12
+*.pfx

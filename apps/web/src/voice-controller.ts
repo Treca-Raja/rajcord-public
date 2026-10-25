@@ -17,7 +17,7 @@ export type VoiceState = {
   participants: { id: string; name: string; speaking: boolean; muted: boolean; volume: number }[];
 };
 type Request = <T>(path: string, method?: string, body?: unknown) => Promise<T>;
-type Lease = { id: string; channelId: string; credential: string };
+type Lease = { id: string; channelId: string; credential: string; useServerIceServers?: boolean };
 export const concreteDevices = (devices: MediaDeviceInfo[], kind: MediaDeviceKind) =>
   devices.filter(
     (d) => d.kind === kind && d.deviceId && !['default', 'communications'].includes(d.deviceId),
@@ -304,7 +304,10 @@ export class VoiceController {
       await room.connect(url.toString(), this.lease.credential, {
         autoSubscribe: true,
         maxRetries: 2,
-        rtcConfig: { iceTransportPolicy: 'all', iceServers: [] },
+        rtcConfig: {
+          iceTransportPolicy: 'all',
+          ...(this.lease.useServerIceServers ? {} : { iceServers: [] }),
+        },
         peerConnectionTimeout: 10000,
       });
       if (!current()) {

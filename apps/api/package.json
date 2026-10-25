@@ -39,5 +39,9 @@
     "drizzle-kit": "^0.31.11",
     "socket.io-client": "^4.8.1",
     "tsx": "^4.20.0"
-  }
+  },
+  "files": [
+    "dist",
+    "drizzle"
+  ]
 }
