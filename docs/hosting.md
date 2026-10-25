@@ -1,6 +1,6 @@
 # Hosted alpha preparation
 
-This repository is prepared for private GitHub storage and automated verification. The server image is tested locally. No cloud server, domain, TLS endpoint or internet-facing deployment has been provisioned yet.
+This repository is prepared for private GitHub storage and automated verification. The server image is tested locally. No cloud server, TLS endpoint or internet-facing deployment has been provisioned yet. The selected direction is IP-only hosting with free, automatically renewed public-IP certificates; no domain purchase is planned.
 
 ## What is ready
 
@@ -41,12 +41,12 @@ flowchart LR
 
 Only the reverse proxy and required media/relay ports should be public. PostgreSQL, the API's direct port and LiveKit control must remain on the private container network. Do not deploy the development Compose files unchanged.
 
-Production API configuration will supply NODE_ENV=production, WEB_ORIGINS=https://the-chosen-domain, DATABASE_URL for the private postgres service, and LIVEKIT_URL=http://livekit:7880 with freshly generated API credentials. Production never loads the workstation's infrastructure/.env.voice. Do not reuse development passwords or commit generated configuration.
+Production API configuration will supply NODE_ENV=production, WEB_ORIGINS=https://the-public-ip, DATABASE_URL for the private postgres service, and LIVEKIT_URL=http://livekit:7880 with freshly generated API credentials. Production never loads the workstation's infrastructure/.env.voice. Do not reuse development passwords or commit generated configuration.
 
 After the server exists, desktop can target it with:
 
 ```powershell
-$env:TRICORD_SERVER_URL = "https://your-chosen-domain"
+$env:TRICORD_SERVER_URL = "https://YOUR_PUBLIC_IP"
 pnpm --filter @tricord/desktop start
 ```
 
@@ -54,15 +54,25 @@ Use the built desktop command for this; dev:desktop deliberately continues to us
 
 ## Required before inviting friends
 
-1. Choose the monthly budget, cloud account/region and domain name; review the actual recurring cost.
+1. Select a low-cost Linux VPS, region and stable public IPv4 address; review the actual checkout total and billing term.
 2. Provision the server and SSH access, with an explicit deployment firewall.
-3. Configure DNS, a trusted TLS reverse proxy, public RTC addressing and TURN/TLS fallback. Keep LiveKit control behind the existing authorization gateway.
+3. Configure a trusted TLS reverse proxy for the public IP, automatic certificate renewal with service reload and expiry monitoring, public RTC addressing and TURN/TLS fallback. Keep LiveKit control behind the existing authorization gateway.
 4. Generate separate production secrets and initialize the production owner locally on the server.
 5. Schedule PostgreSQL dumps to private storage outside the VPS, define retention, and test restoration there. The local image smoke proves dump compatibility, not off-site backup automation.
 6. Configure restart policies, disk monitoring, log rotation and the update/rollback procedure.
 7. Test HTTPS cookies, desktop connectivity, unauthorized media access and real voice between separate networks. Then expand from two or three users to ten.
 
-No hosting purchase or deployment is performed by the CI workflow. Server/domain choices and access are still required to finish these steps.
+No hosting purchase or deployment is performed by the CI workflow. A cloud account, selected server and server access are still required to finish these steps.
+
+## Low-cost IP-only direction
+
+The user selected free certificates and the lowest practical recurring cost while preserving voice performance. No paid domain, commercial certificate, managed database or extra server is planned for the first alpha. The cloud VM remains a paid service; no purchase has been authorized at a final checkout price or made.
+
+Use a single x86-64 Linux VPS near the group. A 4-vCPU/8-GB configuration is a candidate with useful headroom for the API, PostgreSQL, LiveKit and operating system. This is a sizing estimate, not a guarantee: CPU sharing, network routing and loss can matter more than advertised RAM. Validate two or three remote participants first, then ten; monitor CPU, memory, audio loss/jitter, reconnects and API responsiveness. Preserve audio quality and user capacity rather than reducing them to fit an undersized server.
+
+Price/availability research on 2026-10-25 found that [Hetzner's cost-optimized plans](https://www.hetzner.com/cloud/cost-optimized/) were advertised as unavailable. [OVHcloud's Ireland VPS page](https://www.ovhcloud.com/en-ie/vps/) advertises VPS-2 with 4 vCores, 8 GB RAM, 75 GB NVMe, 1 Gbps public bandwidth, unlimited traffic and a daily previous-24-hour backup from EUR 7.21/month excluding VAT. This is an advertised starting price, not a validated order or a reservation; check regional availability, IPv4 inclusion, billing commitment, renewal price and taxes at checkout. Keep application-consistent PostgreSQL backups in addition to a VM backup.
+
+[Let's Encrypt public-IP certificates](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability) are free and valid for 160 hours. Use an ACME client that supports public IPs and the shortlived profile. [Certbot's IP-certificate guide](https://letsencrypt.org/2026/03/11/shorter-certs-certbot) documents webroot validation and the need for a deployment hook to reload services. Renewal, reload and expiry checks must be automated before real users depend on the server. These operations still need verification against the chosen public IP and deployed reverse proxy/relay.
 
 ## Repository publication review
 
