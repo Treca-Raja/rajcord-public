@@ -123,7 +123,7 @@ pnpm peers check
 pnpm audit --prod
 ```
 
-There are **116 passing Vitest tests**: 5 foundation/API, 7 database, 29 authentication/security, 29 messaging, 16 voice integration and 30 client/pool/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
+There are **121 passing Vitest tests**: 5 foundation/API, 7 database, 29 authentication/security, 29 messaging, 16 voice integration and 35 client/pool/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
 
 - `test:db` checks the existing development schema with unique disposable rows. Authentication and messaging tests create uniquely named temporary databases, migrate it, then drop **only the database created by that test run**. Your development database, owner, migration history and volume are preserved. The local development database role must have CREATEDB permission for these tests.
 - The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 11 messaging checks. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.
@@ -204,16 +204,18 @@ This test covers actual received audio, independent sessions, mute/deafen, selec
 
 ## Ten-client voice reliability test
 
-With PostgreSQL and LiveKit running:
+Start Docker Desktop and the existing services first:
 
 ```powershell
 Set-Location F:\tricord
+docker desktop start
 pnpm db:up
+pnpm voice:setup
 pnpm voice:up
 pnpm test:voice:load
 ```
 
-This command builds first, then launches ten isolated headless Edge processes with synthetic microphones. It runs a 65-second steady audio test, rejects an eleventh account, drops all signaling connections, restarts only its disposable Fastify instance, verifies recovery, frees and reuses a slot, then checks that leaving closes peer connections and microphone tracks. Each connected client must receive nine audio streams and retain exactly two active peer connections (publisher/subscriber). Audio byte counts must advance at every sample. Production HTTP rate limits stay enabled, with no HTTP 429 responses allowed.
+This command checks PostgreSQL and authenticated LiveKit readiness before building, then launches ten isolated headless Edge processes with synthetic microphones. If a service is stopped, it exits with startup instructions before spending time on the build. The direct API test command also checks readiness. It runs a 65-second steady audio test, rejects an eleventh account, drops all signaling connections, restarts only its disposable Fastify instance, verifies recovery, frees and reuses a slot, then checks that leaving closes peer connections and microphone tracks. Each connected client must receive nine audio streams and retain exactly two active peer connections (publisher/subscriber). Audio byte counts must advance at every sample. Production HTTP rate limits stay enabled, with no HTTP 429 responses allowed.
 
 The test binds to **127.0.0.1:3005** and uses a temporary database and unique LiveKit room prefix. It cleans up its own browser profiles and resources; development accounts, database volumes, the main API and other voice rooms are preserved. Allow several minutes and enough memory for ten browser processes. It never opens physical microphones. The ignored report **artifacts/voice-load.json** includes checks, per-client WebRTC counters, API health latency, event-loop delay and API/test-process memory. That memory measurement excludes Docker and browser processes.
 

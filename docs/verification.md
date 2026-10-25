@@ -94,3 +94,11 @@ These are local synthetic-audio results on one Windows 11 host, not a remote ten
 | HTTP 429 responses, including recovery                    | 0                         |
 
 All nine capacity/recovery checks passed, followed by successful test-resource cleanup. Expected HTTP 410 heartbeat responses after restarting the isolated API trigger fresh reservations; they are not failed authentication or throttling. These measurements describe this short local run and are not production service guarantees.
+
+## Voice-test startup prerequisite fix — 2026-10-25
+
+A user rerun failed with ECONNREFUSED at 127.0.0.1:5432 because Docker Desktop was stopped. The capacity command now performs a read-only PostgreSQL query and an authenticated LiveKit readiness call before building. Direct API invocation repeats the check before creating disposable fixtures. Missing services produce startup instructions without printing connection strings or raw driver errors.
+
+The stopped-database path was reproduced with the actual root command: it exited before building and instructed the user to start Docker Desktop and run pnpm db:up. Docker Desktop and the existing Compose services were then started without replacing credentials or volumes. Five new regressions cover readiness, stopped PostgreSQL, stopped LiveKit, missing voice configuration and rejection of remote databases. They bring the suite to 121 tests (40 unit/regression and 81 database integration).
+
+After startup, the exact root command pnpm test:voice:load passed its readiness checks, production build, all nine capacity/recovery scenarios and cleanup. All 40 unit/regression tests, lint, API TypeScript checking and repository formatting also passed. The existing LiveKit bundle-size advisory remains unrelated to service availability.

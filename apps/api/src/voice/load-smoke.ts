@@ -7,12 +7,14 @@ import assert from 'node:assert/strict';
 import { testDatabase } from '../db/test-database.js';
 import { AuthService } from '../auth/service.js';
 import { createApp } from '../app.js';
-import { voiceConfig } from './config.js';
+import { checkVoiceTestServices } from './test-services.js';
 import { launch, setup, type Browser } from './browser-harness.js';
 
 const origin = 'http://127.0.0.1:3005',
-  config = voiceConfig();
-if (!config) throw new Error('Run voice:setup and voice:up.');
+  config = await checkVoiceTestServices().catch((error: Error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
 const fixture = await testDatabase(),
   auth = new AuthService(fixture.database.pool);
 const options = {
