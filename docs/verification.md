@@ -126,3 +126,15 @@ Notifications are opt-in per account/browser/device, cover private messages and 
 Validation: 139 Vitest tests (51 unit/regression and 88 PostgreSQL integration), including cursor validation/monotonicity, cross-device synchronization, pre-join/absent membership privacy, suspension and recipient authorization. Formatting, ESLint, TypeScript and production builds pass. The expanded Edge smoke covers 30 authentication/messaging/unread/notification scenarios, including persistence after reload, controlled unfocused reading, notification navigation and reading history. Electron passes 26 scenarios across three launches; two-browser synthetic voice passes 17 scenarios. Visual inspection confirms badges and controls fit the existing desktop layout.
 
 The production image and isolated backup/restore smoke are verified with the additive schema. Test accounts/databases and media resources remain disposable. No authentication, messaging or voice permissions are broadened; no dependencies, hosting deployment or GitHub push are introduced. The existing lazy LiveKit bundle-size advisory and legacy pnpm deploy warning remain non-failing. Physical microphone quality and remote ten-person voice remain outside this local verification.
+
+## Repository agent guidance — 2026-10-26
+
+Added root AGENTS.md, MEMORY.md and SKILLS.md, plus repository-local skills for verification, database work, voice and hosting. README links the entry points. Memory records dated evidence and unresolved work; it does not grant permissions or claim automatic persistent memory.
+
+Three independent review passes completed:
+
+1. Source and command accuracy: corrected call-microphone wording to preserve the user-triggered device-discovery probe, and documented the test role's CREATEDB prerequisite.
+2. Instruction quality, discovery and privacy: no material findings; checked scope, relative references, fixture ownership, data preservation and approval boundaries.
+3. Forward-testing against five scenarios: documentation-only work, refused PostgreSQL connections, hosting preparation, authorized publication and additive migrations. Added explicit review of all outgoing commits, including earlier unpushed work. The reviewer rechecked the correction and reported no remaining findings.
+
+Validation: all four manifests pass the Skill Creator validator; 43 local links and 33 root-command references across the guidance and README resolve correctly. Repository formatting and git diff whitespace checks pass. The official validator's YAML dependency was installed only in a temporary tooling directory, with no project dependency changes. No runtime suites or local services were started for these documentation-only changes; the application results above remain separately dated evidence.
