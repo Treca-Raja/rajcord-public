@@ -676,3 +676,206 @@ it('does not evict a new member when an inaccessible older message is edited', a
   expect(closed).toBe(false);
   expect((await history(b!, c)).messages.map((m) => m.body)).toEqual(['New visible message']);
 });
+
+async function summary(user: Person, c: Conversation) {
+  return (await request(user, '/api/conversations/' + c.id)).json().conversation as Conversation;
+}
+it('persists monotonic account-scoped read cursors without marking new or own messages unread', async () => {
+  const [a, b] = await people(),
+    c = await channel(a!);
+  await send(b!, c, 'Own message');
+  const first = await send(a!, c, 'First unread');
+  const second = await send(a!, c, 'Hey @' + b!.username.toUpperCase() + '!');
+  expect(await summary(b!, c)).toMatchObject({ unreadCount: 2, mentionCount: 1, lastReadSeq: '0' });
+  expect((await history(b!, c)).messages).toHaveLength(3);
+  expect((await summary(b!, c)).unreadCount).toBe(2); // Fetching history never marks it read.
+  const path = '/api/conversations/' + c.id + '/read';
+  expect((await request(b, path, 'POST', { seq: first.seq })).statusCode).toBe(200);
+  expect(await summary(b!, c)).toMatchObject({
+    unreadCount: 1,
+    mentionCount: 1,
+    lastReadSeq: first.seq,
+  });
+  await request(b, path, 'POST', { seq: second.seq });
+  await request(b, path, 'POST', { seq: first.seq });
+  const anotherSession = await login(b!.username);
+  expect(await summary(anotherSession, c)).toMatchObject({
+    unreadCount: 0,
+    mentionCount: 0,
+    lastReadSeq: second.seq,
+  });
+  await send(a!, c, 'After reading');
+  expect((await summary(anotherSession, c)).unreadCount).toBe(1);
+  expect((await summary(a!, c)).unreadCount).toBe(1); // Only b's original message.
+});
+it('unread mentions respect token boundaries and current message edits/deletions', async () => {
+  const [a, b] = await people(),
+    c = await channel(a!);
+  await send(a!, c, 'email@' + b!.username + '.test @' + b!.username + '_extra');
+  const mention = await send(a!, c, 'Hello @' + b!.username + ' @' + b!.username);
+  expect(await summary(b!, c)).toMatchObject({ unreadCount: 2, mentionCount: 1 });
+  await request(a, '/api/conversations/' + c.id + '/messages/' + mention.id, 'PATCH', {
+    body: 'Mention removed',
+  });
+  expect((await summary(b!, c)).mentionCount).toBe(0);
+  await request(a, '/api/conversations/' + c.id + '/messages/' + mention.id, 'DELETE');
+  expect((await summary(b!, c)).unreadCount).toBe(1);
+});
+it('read cursors reject missing, future or invalid values and require CSRF and approval', async () => {
+  const a = await person(),
+    pending = await person(false),
+    c = await channel(a);
+  await send(a, c);
+  const path = '/api/conversations/' + c.id + '/read';
+  for (const body of [
+    {},
+    { seq: '-1' },
+    { seq: '2' },
+    { seq: 1 },
+    { seq: '9223372036854775808' },
+    { seq: '1', userId: owner.id },
+  ])
+    expect((await request(a, path, 'POST', body)).statusCode).toBe(400);
+  expect((await request(undefined, path, 'POST', { seq: '1' })).statusCode).toBe(401);
+  expect((await request(pending, path, 'POST', { seq: '1' })).statusCode).toBe(403);
+  expect(
+    (
+      await server.app.inject({
+        url: path,
+        method: 'POST',
+        headers: { origin, cookie: a.cookie },
+        payload: { seq: '1' },
+      })
+    ).statusCode,
+  ).toBe(403);
+  expect((await request(a, path, 'POST', { seq: '1' })).statusCode).toBe(200);
+});
+it('private unread counts exclude pre-join and absent membership periods and reject former members', async () => {
+  const [a, b, outsider] = await people(),
+    c = await create(a!, { kind: 'group', name: 'Unread boundaries' });
+  const hidden = await send(a!, c, '@' + b!.username + ' before joining');
+  await accept(b!, await invite(a!, b!, c));
+  expect((await summary(b!, c)).unreadCount).toBe(0);
+  expect(
+    (await request(b, '/api/conversations/' + c.id + '/read', 'POST', { seq: hidden.seq }))
+      .statusCode,
+  ).toBe(404);
+  await send(a!, c, '@' + b!.username + ' visible');
+  expect(await summary(b!, c)).toMatchObject({ unreadCount: 1, mentionCount: 1 });
+  await request(a, '/api/conversations/' + c.id + '/membership', 'POST', {
+    action: 'remove',
+    userId: b!.id,
+  });
+  await send(a!, c, '@' + b!.username + ' during absence');
+  expect(
+    (await request(b, '/api/conversations/' + c.id + '/read', 'POST', { seq: '2' })).statusCode,
+  ).toBe(404);
+  expect(
+    (await request(outsider, '/api/conversations/' + c.id + '/read', 'POST', { seq: '2' }))
+      .statusCode,
+  ).toBe(404);
+  await accept(b!, await invite(a!, b!, c));
+  expect(await summary(b!, c)).toMatchObject({ unreadCount: 1, mentionCount: 1 });
+});
+it('delivers notices for unselected private conversations only to authorized recipients, once per message', async () => {
+  const [a, b, outsider] = await people(),
+    c = await create(a!, { kind: 'dm', userId: b!.id });
+  const recipient = connectSocket(b!),
+    stranger = connectSocket(outsider!);
+  await Promise.all([ready(recipient), ready(stranger)]);
+  const notices: unknown[] = [],
+    leaks: unknown[] = [];
+  recipient.on('message:created', (value) => notices.push(value));
+  stranger.on('message:created', (value) => leaks.push(value));
+  let inbox = 0;
+  recipient.on('unread:changed', () => inbox++);
+  const key = randomUUID();
+  const first = await send(a!, c, '@' + b!.username + ' private secret', key);
+  await send(a!, c, '@' + b!.username + ' private secret', key);
+  await request(a, '/api/conversations/' + c.id + '/messages/' + first.id, 'PATCH', {
+    body: 'edited secret',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(notices).toEqual([
+    {
+      conversationId: c.id,
+      messageId: first.id,
+      seq: first.seq,
+      authorId: a!.id,
+      kind: 'dm',
+      mention: true,
+    },
+  ]);
+  expect(leaks).toEqual([]);
+  expect(inbox).toBeGreaterThan(0);
+  await auth.changeStatus(owner.token, b!.id, 'suspend');
+  await send(a!, await channel(a!), '@' + b!.username + ' no suspended delivery');
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(notices).toHaveLength(1);
+});
+
+it('synchronizes read progress only to the same approved account across devices', async () => {
+  const [a, b] = await people(),
+    c = await channel(a!);
+  const latest = await send(a!, c);
+  const second = await login(b!.username);
+  const reader = connectSocket(b!),
+    otherDevice = connectSocket(second),
+    bystander = connectSocket(a!);
+  await Promise.all([ready(reader), ready(otherDevice), ready(bystander)]);
+  let own = 0,
+    remote = 0,
+    unrelated = 0;
+  reader.on('unread:changed', () => own++);
+  otherDevice.on('unread:changed', () => remote++);
+  bystander.on('unread:changed', () => unrelated++);
+  await request(b, '/api/conversations/' + c.id + '/read', 'POST', { seq: latest.seq });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(own).toBe(1);
+  expect(remote).toBe(1);
+  expect(unrelated).toBe(0);
+  expect((await summary(second, c)).unreadCount).toBe(0);
+});
+
+it('acknowledges reads for ten accounts over authenticated sockets with production budgets unchanged', async () => {
+  const accounts: Person[] = [];
+  for (let i = 0; i < 10; i++) accounts.push(await person());
+  const c = await channel(owner),
+    latest = await send(owner, c);
+  const limited = createApp({ databaseUrl: fixture.url, rateLimits: true });
+  const clients: Socket[] = [];
+  const httpReads: string[] = [];
+  limited.app.addHook('onRequest', async (req) => {
+    if (req.url.startsWith('/api/conversations')) httpReads.push(req.url);
+  });
+  try {
+    const endpoint = await limited.app.listen({ host: '127.0.0.1', port: 0 });
+    for (const user of accounts) {
+      const client = connect(endpoint, {
+        transports: ['websocket'],
+        reconnection: false,
+        extraHeaders: { origin, cookie: user.cookie },
+        auth: { csrfToken: user.csrf },
+      });
+      clients.push(client);
+      await ready(client);
+    }
+    for (let round = 0; round < 10; round++) {
+      for (const client of clients) {
+        const ack = await client
+          .timeout(5000)
+          .emitWithAck('conversation:read', { conversationId: c.id, seq: latest.seq });
+        expect(ack).toEqual({ ok: true, data: { lastReadSeq: latest.seq } });
+      }
+    }
+    expect(httpReads).toEqual([]);
+    for (const user of accounts) expect((await summary(user, c)).unreadCount).toBe(0);
+    const denied = await clients[0]!
+      .timeout(3000)
+      .emitWithAck('conversation:read', { conversationId: c.id, seq: '999' });
+    expect(denied).toMatchObject({ ok: false, status: 400 });
+  } finally {
+    for (const client of clients) client.disconnect();
+    await limited.app.close();
+  }
+});

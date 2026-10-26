@@ -65,6 +65,15 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     console.log('TRICORD_SMOKE_PENDING');
     await wait("!!document.querySelector('[data-connection=connected]')");
 
+    assert.equal(
+      await js("window.tricordDesktop.notify({conversationId:'https://evil.test',mention:true})"),
+      false,
+    );
+    assert.equal(await js('window.tricordDesktop.enableNotifications()'), true);
+    assert.equal(
+      await js('window.tricordDesktop.notify({conversationId:crypto.randomUUID(),mention:false})'),
+      true,
+    );
     await wait("!!document.querySelector('textarea[name=message]')");
     await js(
       "(()=>{const input=document.querySelector('textarea[name=message]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Electron says hello');input.dispatchEvent(new Event('input',{bubbles:true}));})()",

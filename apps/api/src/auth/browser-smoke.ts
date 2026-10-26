@@ -9,10 +9,14 @@ import assert from 'node:assert/strict';
 import { testDatabase } from '../db/test-database.js';
 import { AuthService } from './service.js';
 import { createApp } from '../app.js';
+import { voiceConfig } from '../voice/config.js';
 const origin = 'http://127.0.0.1:3003';
 const fixture = await testDatabase(),
   service = new AuthService(fixture.database.pool);
+const config = voiceConfig();
+if (!config) throw new Error('Run voice:setup and voice:up.');
 const app = createApp({
+  voiceConfig: { ...config, prefix: 'tricord-browser-smoke-' + randomUUID() + '-' },
   databaseUrl: fixture.url,
   allowedOrigins: [origin],
   rateLimits: false,
@@ -161,6 +165,7 @@ try {
     deviceScaleFactor: 1,
     mobile: false,
   });
+  await call('Emulation.setFocusEmulationEnabled', { enabled: true });
   await call('Page.navigate', { url: origin });
   await wait("!!document.querySelector('input[name=username]')");
   await screenshot('auth-browser-signin.png');
@@ -278,6 +283,114 @@ try {
     ),
     false,
   );
+
+  // Unselected unread counts survive a full browser reload, then clear after focused reading.
+  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
+  const unreadReply = await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Unread ping @' + username, clientId: randomUUID() },
+  });
+  assert.equal(unreadReply.statusCode, 200);
+  const badge = `document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent==='1'`;
+  await wait(badge);
+  await wait(
+    `document.querySelector('[data-conversation-id="${dm.id}"] .mention-badge')?.textContent==='@1'`,
+  );
+  await call('Page.reload');
+  await wait("!!document.querySelector('[data-connection=connected]')");
+  await wait(badge);
+  await screenshot('unread-browser-badges.png');
+  await js(`document.querySelector('[data-conversation-id="${dm.id}"]').click()`);
+  await wait("document.querySelector('.message-scroll')?.innerText.includes('Unread ping')");
+  await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
+  const storedRead = (
+    await fixture.database.pool.query(
+      'SELECT last_seq FROM conversation_reads WHERE user_id=$1 AND conversation_id=$2',
+      [user.id, dm.id],
+    )
+  ).rows[0];
+  assert.equal(storedRead.last_seq, unreadReply.json().message.seq);
+  // Controlled background/focus transitions exercise read gating without stealing the user's window.
+  await js('document.hasFocus=()=>false');
+  await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'While unfocused', clientId: randomUUID() },
+  });
+  await wait("document.querySelector('.message-scroll')?.innerText.includes('While unfocused')");
+  await wait(badge);
+  await js("delete document.hasFocus;window.dispatchEvent(new Event('focus'))");
+  await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
+
+  // Mock only the OS notification adapter; socket delivery, React handlers and navigation are real.
+  await js(`window.notificationCalls=[]; window.Notification=class {
+    static permission='granted'; static requestPermission(){return Promise.resolve('granted')}
+    constructor(title,options){this.title=title;this.options=options;window.notificationCalls.push(this)}
+    close(){this.onclose?.()}
+  }`);
+  await click('Enable notifications');
+  await wait(
+    "document.querySelector('.notification-settings button')?.getAttribute('aria-pressed')==='true'",
+  );
+  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
+  await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Secret alert body @' + username, clientId: randomUUID() },
+  });
+  await wait('window.notificationCalls.length===1');
+  assert.equal(
+    await js('window.notificationCalls[0].options.body'),
+    'You were mentioned. Open Tricord to read it.',
+  );
+  await js('window.notificationCalls[0].onclick()');
+  await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
+  await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
+  await click('Disable notifications');
+  await wait(
+    "document.querySelector('.notification-settings button')?.getAttribute('aria-pressed')==='false'",
+  );
+  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
+  await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Disabled alert', clientId: randomUUID() },
+  });
+  await wait(badge);
+  assert.equal(await js('window.notificationCalls.length'), 1);
+
+  // Reading older messages must neither jump to the bottom nor acknowledge newly arrived text.
+  for (let i = 0; i < 6; i++)
+    await app.inject({
+      url: '/api/conversations/' + dm.id + '/messages',
+      method: 'POST',
+      headers: ownerHeaders,
+      payload: { body: ('History line ' + i + '\n').repeat(12), clientId: randomUUID() },
+    });
+  await js(`document.querySelector('[data-conversation-id="${dm.id}"]').click()`);
+  await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
+  await js(
+    `(()=>{const area=document.querySelector('.message-scroll');area.scrollTop=0;area.dispatchEvent(new Event('scroll'))})()`,
+  );
+  await wait("!!document.querySelector('.jump-latest')");
+  await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Arrived while reading history', clientId: randomUUID() },
+  });
+  await wait(badge);
+  assert.equal(await js("document.querySelector('.message-scroll').scrollTop < 100"), true);
+  await click('Jump to latest messages');
+  await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
   const group = await app.inject({
     url: '/api/conversations',
     method: 'POST',
@@ -351,6 +464,14 @@ try {
           'pre-join history hidden',
           'history survives reload',
           'responsive messaging layout',
+          'unselected unread and mention badges',
+          'unread progress survives reload',
+          'focused reading clears unread',
+          'unfocused conversation stays unread',
+          'notification opt-in and privacy-safe body (OS adapter mocked)',
+          'notification click opens conversation',
+          'disabled notifications stay silent',
+          'reading history keeps new messages unread until jump to latest',
         ],
       },
       null,
@@ -420,7 +541,7 @@ try {
     ),
   );
   console.log(
-    'PASS: Browser authentication (11 checks) and messaging (11 checks) in headless Microsoft Edge.',
+    'PASS: Browser authentication (11 checks) and messaging/unread/notification (19 checks) in headless Microsoft Edge.',
   );
 } finally {
   if (ws?.readyState === WebSocket.OPEN) {

@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Server } from 'socket.io';
-import type { ClientToServerEvents, ServerToClientEvents } from '@tricord/shared';
+import type { ClientToServerEvents, ServerToClientEvents, Conversation } from '@tricord/shared';
 import { SESSION_COOKIE, identity, approved, equal } from '../auth/service.js';
 import { HttpError, input, uuid } from '../auth/validation.js';
+import { mentionsUser } from '@tricord/shared';
 import { ChatService } from './service.js';
 export function registerChat(
   app: FastifyInstance,
@@ -19,8 +20,27 @@ export function registerChat(
     )
       throw new HttpError(403, 'Invalid CSRF token.');
   }
+  const unread = (conversation: Conversation) => ({
+    id: conversation.id,
+    unreadCount: conversation.unreadCount,
+    mentionCount: conversation.mentionCount,
+    lastReadSeq: conversation.lastReadSeq,
+    activity: conversation.activity,
+  });
+  async function publishRead(token: string, id: string) {
+    const reader = await identity(service.pool, token);
+    for (const socket of io.sockets.sockets.values()) {
+      try {
+        const auth = await identity(service.pool, socket.data.token);
+        if (auth?.user.status === 'approved' && auth.user.id === reader?.user.id)
+          socket.emit('unread:changed', unread(await service.get(socket.data.token, id)));
+      } catch {
+        /* Reconnect reloads persisted read progress. */
+      }
+    }
+  }
   // Rooms are subscriptions, never authorization. Every delivery is checked again.
-  async function publish(conversationId?: string, messageId?: string) {
+  async function publish(conversationId?: string, messageId?: string, created = false) {
     for (const socket of io.sockets.sockets.values()) {
       try {
         const auth = await identity(service.pool, socket.data.token);
@@ -28,7 +48,24 @@ export function registerChat(
         if (!messageId) socket.emit('inbox:changed');
         if (conversationId) {
           try {
-            await service.get(socket.data.token, conversationId);
+            const conversation = await service.get(socket.data.token, conversationId);
+            if (messageId) {
+              const message = await service
+                .one(socket.data.token, conversationId, messageId, true)
+                .catch(() => null);
+              // A historical edit outside this membership period must not evict a current subscriber.
+              if (!message) continue;
+              socket.emit('unread:changed', unread(conversation));
+              if (created && !message.deleted && message.author.id !== auth.user.id)
+                socket.emit('message:created', {
+                  conversationId,
+                  messageId,
+                  seq: message.seq,
+                  authorId: message.author.id,
+                  kind: conversation.kind,
+                  mention: mentionsUser(message.body ?? '', auth.user.username),
+                });
+            }
             if (socket.rooms.has('conversation:' + conversationId)) {
               if (messageId) {
                 try {
@@ -73,6 +110,11 @@ export function registerChat(
     await publish(conversation.id);
     return { conversation };
   });
+  app.post<{ Params: { id: string } }>('/api/conversations/:id/read', mutation, async (req) => {
+    const result = await service.markRead(token(req), uuid(req.params.id), req.body);
+    await publishRead(token(req), uuid(req.params.id));
+    return result;
+  });
   app.get('/api/invitations', { preHandler: guard }, async (req) => ({
     invitations: await service.invites(token(req)),
   }));
@@ -113,8 +155,12 @@ export function registerChat(
     }),
   );
   app.post<{ Params: { id: string } }>('/api/conversations/:id/messages', mutation, async (req) => {
-    const message = await service.send(token(req), uuid(req.params.id), req.body);
-    await publish(message.conversationId, message.id);
+    const { message, created } = await service.sendResult(
+      token(req),
+      uuid(req.params.id),
+      req.body,
+    );
+    await publish(message.conversationId, message.id, created);
     return { message };
   });
   app.patch<{ Params: { id: string; messageId: string } }>(
@@ -175,17 +221,38 @@ export function registerChat(
         });
       }
     });
+    socket.on('conversation:read', async (data, ack) => {
+      if (typeof ack !== 'function') return;
+      try {
+        budget();
+        const body = input(data, ['conversationId', 'seq']);
+        const id = uuid(body.conversationId);
+        const result = await service.markRead(socket.data.token, id, { seq: body.seq });
+        ack({ ok: true, data: result });
+        await publishRead(socket.data.token, id);
+      } catch (error) {
+        ack({
+          ok: false,
+          status: error instanceof HttpError ? error.statusCode : 503,
+          error: error instanceof HttpError ? error.message : 'Messaging temporarily unavailable.',
+        });
+      }
+    });
     socket.on('message:send', async (data, ack) => {
       if (typeof ack !== 'function') return;
       try {
         budget();
         const body = input(data, ['conversationId', 'clientId', 'body']);
-        const result = await service.send(socket.data.token, uuid(body.conversationId), {
-          body: body.body,
-          clientId: body.clientId,
-        });
+        const { message: result, created } = await service.sendResult(
+          socket.data.token,
+          uuid(body.conversationId),
+          {
+            body: body.body,
+            clientId: body.clientId,
+          },
+        );
         ack({ ok: true, data: result });
-        await publish(result.conversationId, result.id);
+        await publish(result.conversationId, result.id, created);
       } catch (error) {
         ack({
           ok: false,

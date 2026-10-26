@@ -25,6 +25,8 @@ export interface ServerToClientEvents {
   'connection:welcome': (payload: ConnectionWelcome) => void;
   'account:changed': () => void;
   'inbox:changed': () => void;
+  'unread:changed': (data: ConversationUnread) => void;
+  'message:created': (data: MessageNotice) => void;
   'conversation:changed': (data: { conversationId: string }) => void;
   'conversation:closed': (data: { conversationId: string }) => void;
 }
@@ -32,6 +34,10 @@ export interface ClientToServerEvents {
   'conversation:join': (
     data: { conversationId: string },
     ack: (result: ChatAck<{ joined: true }>) => void,
+  ) => void;
+  'conversation:read': (
+    data: { conversationId: string; seq: string },
+    ack: (result: ChatAck<{ lastReadSeq: string }>) => void,
   ) => void;
   'message:send': (
     data: { conversationId: string; clientId: string; body: string },
@@ -45,6 +51,10 @@ export interface Conversation {
   kind: 'channel' | 'dm' | 'group';
   name: string;
   archived: boolean;
+  unreadCount: number;
+  mentionCount: number;
+  lastReadSeq: string;
+  activity: string;
   managerId: string | null;
   members: { id: string; displayName: string; username: string; status: AccountStatus }[];
 }
@@ -73,3 +83,22 @@ export interface Invitation {
   inviter: string;
 }
 export type ChatAck<T> = { ok: true; data: T } | { ok: false; error: string; status: number };
+
+export interface MessageNotice {
+  conversationId: string;
+  messageId: string;
+  seq: string;
+  authorId: string;
+  kind: Conversation['kind'];
+  mention: boolean;
+}
+// Usernames are ASCII letters, digits and underscores. Email-like text is not a mention.
+export function mentionsUser(body: string, username: string): boolean {
+  if (!/^[a-z0-9_]{3,32}$/i.test(username)) return false;
+  return new RegExp('(^|[^a-zA-Z0-9_@])@' + username + '($|[^a-zA-Z0-9_])', 'i').test(body);
+}
+
+export type ConversationUnread = Pick<
+  Conversation,
+  'id' | 'unreadCount' | 'mentionCount' | 'lastReadSeq' | 'activity'
+>;

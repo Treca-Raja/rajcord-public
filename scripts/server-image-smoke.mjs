@@ -226,6 +226,28 @@ try {
     ).status,
     200,
   );
+
+  const createdText = await fetch(origin + '/api/conversations', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ kind: 'channel', name: 'image-read-progress' }),
+  });
+  assert.equal(createdText.status, 201);
+  const textId = (await createdText.json()).conversation.id;
+  const sentText = await fetch(origin + '/api/conversations/' + textId + '/messages', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ body: 'Disposable read progress', clientId: crypto.randomUUID() }),
+  });
+  assert.equal(sentText.status, 200);
+  const textMessage = (await sentText.json()).message;
+  const markedRead = await fetch(origin + '/api/conversations/' + textId + '/read', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ seq: textMessage.seq }),
+  });
+  assert.equal(markedRead.status, 200);
+  assert.equal((await markedRead.json()).lastReadSeq, textMessage.seq);
   const sql = (database, query) =>
     docker(['exec', name + '-db', 'psql', '-U', 'tricord', '-d', database, '-Atc', query])
       .toString()
@@ -255,8 +277,15 @@ try {
     sql('tricord_restorecheck', 'SELECT count(*) FROM drizzle.__drizzle_migrations'),
     before,
   );
+  assert.equal(
+    sql(
+      'tricord_restorecheck',
+      "SELECT r.last_seq FROM conversation_reads r JOIN users u ON u.id=r.user_id JOIN conversations c ON c.id=r.conversation_id WHERE u.username='image_owner' AND c.name='image-read-progress'",
+    ),
+    textMessage.seq,
+  );
   console.log(
-    'PASS: non-root production image, migrations twice, web assets, database readiness, registration/login, Secure cookies, pending-account denial, private LiveKit control and backup/restore.',
+    'PASS: non-root production image, migrations twice, web assets, database readiness, registration/login, Secure cookies, pending-account denial, private LiveKit control and backup/restore including read progress.',
   );
 } catch (error) {
   // Never dump docker inspect/environment output, HTTP cookies or connection strings.

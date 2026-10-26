@@ -1,6 +1,7 @@
+import { validNotice, trustedNoticeFrame } from './notification-policy.js';
 import { serverUrl } from './server-url.js';
 import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
-import { app, BrowserWindow, session, dialog } from 'electron';
+import { app, BrowserWindow, session, dialog, ipcMain, Notification, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { runAuthSmoke } from './smoke.js';
@@ -124,6 +125,103 @@ app
         webSecurity: true,
         backgroundThrottling: false,
       },
+    });
+    const notificationAppId = app.isPackaged ? 'Tricord' : process.execPath;
+    app.setAppUserModelId(notificationAppId);
+    const trustedSender = (event: Electron.IpcMainInvokeEvent) =>
+      event.sender === win.webContents &&
+      trustedNoticeFrame(
+        target,
+        event.senderFrame?.url ?? '',
+        event.senderFrame === win.webContents.mainFrame,
+      );
+    ipcMain.handle('notifications:enable', (event) => {
+      if (!trustedSender(event) || !Notification.isSupported()) return false;
+      if (process.platform !== 'win32' || app.isPackaged) return true;
+      // Windows associates development toasts with a Start Menu shortcut, as documented by Electron.
+      const shortcut = path.join(
+        app.getPath('appData'),
+        'Microsoft',
+        'Windows',
+        'Start Menu',
+        'Programs',
+        'Tricord development.lnk',
+      );
+      try {
+        if (fs.existsSync(shortcut)) {
+          const existing = shell.readShortcutLink(shortcut);
+          if (existing.target !== process.execPath || existing.appUserModelId !== notificationAppId)
+            return false;
+        }
+        return shell.writeShortcutLink(shortcut, fs.existsSync(shortcut) ? 'update' : 'create', {
+          target: process.execPath,
+          args: '"' + path.join(__dirname, 'main.js') + '"',
+          cwd: path.resolve(__dirname, '../../..'),
+          appUserModelId: notificationAppId,
+          description: 'Tricord development app notification registration',
+        });
+      } catch {
+        return false;
+      }
+    });
+    const notices = new Set<Notification>();
+    let lastAlert = 0;
+    ipcMain.handle('notifications:show', async (event, value: unknown) => {
+      if (
+        event.sender !== win.webContents ||
+        !trustedNoticeFrame(
+          target,
+          event.senderFrame?.url ?? '',
+          event.senderFrame === win.webContents.mainFrame,
+        ) ||
+        !validNotice(value) ||
+        !Notification.isSupported()
+      )
+        return false;
+      if (Date.now() - lastAlert < 3000) return true;
+      lastAlert = Date.now();
+      try {
+        const notification = new Notification({
+          title: 'Tricord',
+          body: value.mention
+            ? 'You were mentioned. Open Tricord to read it.'
+            : 'New private message. Open Tricord to read it.',
+          silent: true,
+        });
+        notices.add(notification);
+        notification.on('close', () => notices.delete(notification));
+        notification.on('failed', () => notices.delete(notification));
+        notification.on('click', () => {
+          if (win.isDestroyed()) return;
+          if (win.isMinimized()) win.restore();
+          win.show();
+          win.focus();
+          win.webContents.send('notifications:open', value.conversationId);
+          notification.close();
+        });
+        return await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => {
+            notification.close();
+            resolve(false);
+          }, 4000);
+          notification.once('show', () => {
+            clearTimeout(timer);
+            resolve(true);
+          });
+          notification.once('failed', () => {
+            clearTimeout(timer);
+            resolve(false);
+          });
+          notification.show();
+        });
+      } catch {
+        return false;
+      }
+    });
+    win.on('closed', () => {
+      ipcMain.removeHandler('notifications:show');
+      ipcMain.removeHandler('notifications:enable');
+      for (const notice of notices) notice.close();
     });
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', (event) => event.preventDefault());

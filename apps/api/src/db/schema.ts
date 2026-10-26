@@ -1,5 +1,6 @@
 import {
   pgTable,
+  primaryKey,
   uuid,
   varchar,
   timestamp,
@@ -202,4 +203,23 @@ export const voiceChannels = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex('voice_channel_name').on(sql`lower(${t.name})`)],
+);
+
+export const conversationReads = pgTable(
+  'conversation_reads',
+  {
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    lastSeq: bigint('last_seq', { mode: 'bigint' })
+      .default(sql`0`)
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.conversationId, t.userId] }),
+    check('read_cursor_nonnegative', sql`${t.lastSeq}>=0`),
+  ],
 );

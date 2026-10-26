@@ -1,3 +1,5 @@
+import { Notifications } from './Notifications';
+import { mentionsUser } from '@tricord/shared';
 import { VoicePanel } from './VoicePanel';
 import { mergeMessages } from './message-state';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
@@ -22,6 +24,7 @@ import type {
   Invitation,
   AuthUser,
   ChatAck,
+  ConversationUnread,
 } from '@tricord/shared';
 import { AuthRoot, useAuth } from './Auth';
 import './auth.css';
@@ -45,13 +48,16 @@ function Community() {
     [busy, setBusy] = useState(false);
   const requestRef = useRef(request);
   requestRef.current = request;
+  const reloadVersion = useRef(0);
   const reload = useCallback(async () => {
+    const version = ++reloadVersion.current;
     try {
       const [data, inbox, people] = await Promise.all([
         requestRef.current<{ conversations: Conversation[] }>('/conversations'),
         requestRef.current<{ invitations: Invitation[] }>('/invitations'),
         requestRef.current<{ users: AuthUser[] }>('/members'),
       ]);
+      if (version !== reloadVersion.current) return;
       setConversations(data.conversations);
       setInvites(inbox.invitations);
       setMembers(people.users);
@@ -70,15 +76,38 @@ function Community() {
   useEffect(() => {
     if (!socket) return;
     const changed = () => void reload();
+    const unreadChanged = (data: ConversationUnread) =>
+      setConversations((previous) =>
+        previous.map((c) => {
+          if (
+            c.id !== data.id ||
+            BigInt(data.lastReadSeq) < BigInt(c.lastReadSeq) ||
+            BigInt(data.activity) < BigInt(c.activity)
+          )
+            return c;
+          return { ...c, ...data };
+        }),
+      );
+    socket.on('unread:changed', unreadChanged);
     socket.on('inbox:changed', changed);
     socket.on('connect', changed);
     socket.on('conversation:closed', changed);
+    window.addEventListener('focus', changed);
     return () => {
+      socket.off('unread:changed', unreadChanged);
       socket.off('inbox:changed', changed);
       socket.off('connect', changed);
       socket.off('conversation:closed', changed);
+      window.removeEventListener('focus', changed);
     };
   }, [socket, reload]);
+  const unreadTotal = conversations.reduce((total, c) => total + c.unreadCount, 0);
+  useEffect(() => {
+    document.title = (unreadTotal ? '(' + unreadTotal + ') ' : '') + 'Tricord';
+    return () => {
+      document.title = 'Tricord';
+    };
+  }, [unreadTotal]);
   const current = conversations.find((c) => c.id === selected);
   async function action(work: () => Promise<unknown>) {
     setBusy(true);
@@ -161,11 +190,24 @@ function Community() {
             .map((c) => (
               <button
                 key={c.id}
-                className={selected === c.id ? 'selected' : ''}
+                className={
+                  (selected === c.id ? 'selected ' : '') + (c.unreadCount ? 'has-unread' : '')
+                }
+                data-conversation-id={c.id}
                 onClick={() => choose(c.id)}
               >
                 <Hash size={18} />
                 <span className="truncate">{c.name}</span>
+                {c.unreadCount > 0 && (
+                  <span className="unread-badge" aria-label={c.unreadCount + ' unread messages'}>
+                    {c.unreadCount > 99 ? '99+' : c.unreadCount}
+                  </span>
+                )}
+                {c.mentionCount > 0 && (
+                  <span className="mention-badge" aria-label={c.mentionCount + ' unread mentions'}>
+                    @{c.mentionCount}
+                  </span>
+                )}
                 {c.archived && <small>Archived</small>}
               </button>
             ))}
@@ -185,11 +227,24 @@ function Community() {
             .map((c) => (
               <button
                 key={c.id}
-                className={selected === c.id ? 'selected' : ''}
+                className={
+                  (selected === c.id ? 'selected ' : '') + (c.unreadCount ? 'has-unread' : '')
+                }
+                data-conversation-id={c.id}
                 onClick={() => choose(c.id)}
               >
                 {c.kind === 'group' ? <Users size={18} /> : <MessageCircle size={18} />}
                 <span className="truncate">{c.name}</span>
+                {c.unreadCount > 0 && (
+                  <span className="unread-badge" aria-label={c.unreadCount + ' unread messages'}>
+                    {c.unreadCount > 99 ? '99+' : c.unreadCount}
+                  </span>
+                )}
+                {c.mentionCount > 0 && (
+                  <span className="mention-badge" aria-label={c.mentionCount + ' unread mentions'}>
+                    @{c.mentionCount}
+                  </span>
+                )}
               </button>
             ))}
         </div>
@@ -226,6 +281,7 @@ function Community() {
             ))}
           </div>
         )}
+        <Notifications key={state.user.id} selected={selected} onOpen={choose} />
         <VoicePanel />
         <div className="grow" />
         <div className="profile">
@@ -272,7 +328,7 @@ function Community() {
           </div>
         )}
         {current ? (
-          <Messages key={current.id} conversation={current} />
+          <Messages key={current.id} conversation={current} readingAllowed={!mobile && !modal} />
         ) : (
           <div className="empty-channel">
             <MessageCircle size={34} />
@@ -318,7 +374,7 @@ function Community() {
                   : person.id === state.user.id
                     ? 'You'
                     : person.status === 'approved'
-                      ? 'Send a message'
+                      ? '@' + person.username
                       : 'Unavailable'}
               </small>
             </div>
@@ -589,7 +645,13 @@ function Community() {
     </div>
   );
 }
-function Messages({ conversation }: { conversation: Conversation }) {
+function Messages({
+  conversation,
+  readingAllowed,
+}: {
+  conversation: Conversation;
+  readingAllowed: boolean;
+}) {
   const { state, request, socket, connected } = useAuth();
   const [items, setItems] = useState<ChatMessage[]>([]),
     [before, setBefore] = useState<string | null>(null),
@@ -610,6 +672,76 @@ function Messages({ conversation }: { conversation: Conversation }) {
   const requestRef = useRef(request);
   requestRef.current = request;
   const path = '/conversations/' + conversation.id;
+  const scroll = useRef<HTMLDivElement>(null),
+    pinned = useRef(true),
+    readSeq = useRef(conversation.lastReadSeq);
+  const [atBottom, setAtBottom] = useState(true);
+  const lastReadRequest = useRef(0);
+  const latestSeq = items.reduce(
+    (max, item) => (BigInt(item.seq) > BigInt(max) ? item.seq : max),
+    '0',
+  );
+  useEffect(() => {
+    let active = true,
+      pending = false;
+    const mark = () => {
+      if (
+        !active ||
+        pending ||
+        Date.now() - lastReadRequest.current < (socket?.connected ? 5000 : 15000) ||
+        loading ||
+        !readingAllowed ||
+        !!document.querySelector('[role="dialog"]') ||
+        !pinned.current ||
+        document.visibilityState !== 'visible' ||
+        !document.hasFocus() ||
+        BigInt(latestSeq) <= BigInt(readSeq.current)
+      )
+        return;
+      pending = true;
+      lastReadRequest.current = Date.now();
+      const result = socket?.connected
+        ? new Promise<{ lastReadSeq: string }>((resolve, reject) => {
+            socket
+              .timeout(10000)
+              .emit(
+                'conversation:read',
+                { conversationId: conversation.id, seq: latestSeq },
+                (timeout, ack) => {
+                  if (timeout) reject(new Error('Read acknowledgement timed out.'));
+                  else if (!ack.ok) reject(new Error(ack.error));
+                  else resolve(ack.data);
+                },
+              );
+          })
+        : requestRef.current<{ lastReadSeq: string }>(path + '/read', 'POST', { seq: latestSeq });
+      void result
+        .then((result) => {
+          readSeq.current = result.lastReadSeq;
+        })
+        .catch(() => {
+          /* Retry on focus or the next visible update. */
+        })
+        .finally(() => {
+          pending = false;
+        });
+    };
+    mark();
+    window.addEventListener('focus', mark);
+    document.addEventListener('visibilitychange', mark);
+    const retry = setTimeout(
+      mark,
+      Math.max(0, (socket?.connected ? 5000 : 15000) - (Date.now() - lastReadRequest.current)),
+    );
+    const timer = setInterval(mark, 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+      clearTimeout(retry);
+      window.removeEventListener('focus', mark);
+      document.removeEventListener('visibilitychange', mark);
+    };
+  }, [latestSeq, loading, atBottom, path, readingAllowed, socket, connected, conversation.id]);
   const synchronize = useCallback(() => {
     if (running.current) {
       again.current = true;
@@ -688,7 +820,7 @@ function Messages({ conversation }: { conversation: Conversation }) {
     };
   }, [socket, conversation.id, synchronize]);
   useEffect(() => {
-    if (!olderBusy) bottom.current?.scrollIntoView({ block: 'nearest' });
+    if (!olderBusy && pinned.current) bottom.current?.scrollIntoView({ block: 'nearest' });
   }, [items.length]);
   async function older() {
     if (!before) return;
@@ -761,7 +893,18 @@ function Messages({ conversation }: { conversation: Conversation }) {
   }
   return (
     <>
-      <div className="message-scroll" aria-live="polite">
+      <div
+        className="message-scroll"
+        aria-live="polite"
+        ref={scroll}
+        onScroll={() => {
+          const area = scroll.current;
+          if (area) {
+            pinned.current = area.scrollHeight - area.scrollTop - area.clientHeight < 48;
+            setAtBottom(pinned.current);
+          }
+        }}
+      >
         {loading ? (
           <p className="chat-status" role="status">
             Loading conversation…
@@ -792,7 +935,14 @@ function Messages({ conversation }: { conversation: Conversation }) {
             {items
               .filter((item) => !item.deleted)
               .map((item) => (
-                <article className="message live-message" key={item.id} data-message-id={item.id}>
+                <article
+                  className={
+                    'message live-message' +
+                    (mentionsUser(item.body ?? '', state.user.username) ? ' mentions-you' : '')
+                  }
+                  key={item.id}
+                  data-message-id={item.id}
+                >
                   <Avatar>{item.author.displayName.slice(0, 1)}</Avatar>
                   <div className="message-content">
                     <div className="message-meta">
@@ -895,11 +1045,22 @@ function Messages({ conversation }: { conversation: Conversation }) {
             <Send size={18} />
           </button>
         </form>
+        {!atBottom && (
+          <button
+            type="button"
+            className="jump-latest"
+            onClick={() => {
+              pinned.current = true;
+              setAtBottom(true);
+              bottom.current?.scrollIntoView({ block: 'nearest' });
+            }}
+          >
+            Jump to latest messages
+          </button>
+        )}
         <div className="composer-footer">
           <span>
-            {sending
-              ? 'Saving…'
-              : draft.length + '/4000 · Enter to send · Shift+Enter for a new line'}
+            {sending ? 'Saving…' : draft.length + '/4000 · @username to mention · Enter to send'}
           </span>
           <span
             data-connection={connected ? 'connected' : 'disconnected'}

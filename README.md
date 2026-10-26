@@ -97,11 +97,25 @@ New group members see messages sent after acceptance. Leaving or removal immedia
 
 Messages are plain text, limited to 4,000 characters. Enter sends; Shift+Enter adds a newline. Only the author can edit/delete, including in archived channels; administrators have no override. Deletion clears content and retains a stable tombstone for synchronization. History otherwise has no automatic expiry. “Load older messages” uses server sequence pagination.
 
-The composer keeps its draft on connection/send failure and retries with the same idempotency ID. Reconnection synchronizes missed sends, edits and deletions. There is no durable offline queue; reloading or switching conversations can discard an unsent draft. No uploads, search, unread counters or blocking UI are included. Community voice is described below.
+The composer keeps its draft on connection/send failure and retries with the same idempotency ID. Reconnection synchronizes missed sends, edits and deletions. There is no durable offline queue; reloading or switching conversations can discard an unsent draft. No uploads, search or blocking UI are included. Community voice is described below.
+
+## Unread messages, mentions and notifications
+
+Unread counts and @mention badges appear beside channels, DMs and groups, and the window title shows the total unread count. Read progress is saved per account in PostgreSQL and shared across devices. Authenticated sockets carry unread summaries and read acknowledgements without extra HTTP inbox polling; read acknowledgements are coalesced while reading continuously, and existing request limits remain unchanged. Your own messages and deleted messages do not count as unread. Group counts follow the same membership-history rules as message access. Existing history starts unread until you open it.
+
+Opening a conversation at its latest messages marks earlier accessible messages read only while the window is focused and visible, with no dialog or mobile navigation covering it. Scrolling up preserves unread status for new arrivals and does not jump you away from history; use **Jump to latest messages** to catch up. Simply fetching history never marks it read. These are private account read cursors, not read receipts shown to other members.
+
+Write **@username** to mention someone (case-insensitive, complete usernames). Usernames appear in the people list. Matching messages are highlighted for the mentioned user. Repeating a mention in one message counts once; edits and deletions update unread mention counts without generating a fresh alert. There are no @everyone/@here broadcasts or mention autocomplete yet.
+
+Choose **Enable notifications** in the sidebar on each browser/device. Alerts cover private messages and mentions away from the focused conversation. Notification previews contain no message text or participant names; clicking opens the conversation. Turn them off with **Disable notifications**. Only this per-account notification preference is stored in localStorage; authentication remains in HttpOnly cookies.
+
+On Windows, enabling alerts registers a **Tricord development** Start Menu shortcut for Electron notifications. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
+
+Notifications require Tricord to stay open (minimized is fine). There is no push delivery after closing the browser/app and no replay of old alerts on reconnect; persisted unread counts catch up instead. Multiple open browsers/devices may each alert if enabled. Public browser hosting requires trusted HTTPS.
 
 ## Verification
 
-With Docker Desktop running (the database suite and Electron smoke now also require the local voice service):
+With Docker Desktop running (the database suite and browser/Electron smoke also require the local voice service):
 
 ```powershell
 Set-Location F:\tricord
@@ -125,11 +139,11 @@ pnpm peers check
 pnpm audit --prod
 ```
 
-There are **127 passing Vitest tests**: 5 foundation/API, 7 database, 29 authentication/security, 29 messaging, 16 voice integration and 41 client/pool/configuration/desktop-permission/development-lifecycle regressions. The browser and Electron commands are additional integration scenarios, separate from that count.
+There are **139 passing Vitest tests**: 51 unit/regression tests and 88 database integration tests, including unread persistence, mention boundaries, membership privacy, read-cursor validation and notification delivery authorization. The browser and Electron commands are additional integration scenarios, separate from that count.
 
 - `test:db` checks the existing development schema with unique disposable rows. Authentication and messaging tests create uniquely named temporary databases, migrate it, then drop **only the database created by that test run**. Your development database, owner, migration history and volume are preserved. The local development database role must have CREATEDB permission for these tests.
-- The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 11 messaging checks. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.
-- The Electron smoke uses three real launches with an isolated temporary profile. It verifies registration, live approval, account settings, logout, minimization, temporary-session cleanup and remembered-session restoration, plus renderer isolation and absence of localStorage tokens. Sending, receiving from an independent account and restored message history plus voice device selection, microphone publication, camera denial, mute/deafen and leave bring the total to 23 checks.
+- The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 19 messaging/unread/notification checks (30 total); OS notifications are mocked for deterministic permission, preview and click tests. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.
+- The Electron smoke uses three real launches with an isolated temporary profile. It verifies registration, live approval, account settings, logout, minimization, temporary-session cleanup and remembered-session restoration, plus renderer isolation and absence of localStorage tokens. Sending, receiving from an independent account and restored message history plus voice device selection, microphone publication, camera denial, mute/deafen and leave bring the total to 26 checks, including notification IPC validation, Windows registration and a real native notification show event.
 - Browser/Electron smoke servers bind to **127.0.0.1:3003 / :3002**, respectively. Reports/screenshots go to ignored `artifacts/`. Their temporary profiles are separate from your real browser and desktop profile.
 - `db:verify-persistence` restarts the existing PostgreSQL container, uses its own disposable database to verify accounts, sessions, audit records, invitations, channels, DMs, group history boundaries, idempotent retries and message persistence. Existing Fastify/pg pools must recover. It then drops only its own test database and verifies the development migration journal is unchanged. Run it when interrupting development connections is acceptable.
 - `pnpm test:browser` and `pnpm test:desktop` are convenience commands that build first. Tests fail when required infrastructure is missing; they do not silently skip.

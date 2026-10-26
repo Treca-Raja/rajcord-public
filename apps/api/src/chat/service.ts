@@ -62,7 +62,24 @@ export class ChatService extends AuthService {
         row.kind === 'channel' ? [] : [id],
       )
     ).rows;
+    const unread = (
+      await db.query(
+        `SELECT coalesce(r.last_seq,0)::text last_read_seq,
+        count(m.id)::int unread_count,
+        count(m.id) FILTER (WHERE m.body ~* ('(^|[^a-zA-Z0-9_@])@' || u.username || '($|[^a-zA-Z0-9_])'))::int mention_count
+      FROM users u LEFT JOIN conversation_reads r ON r.user_id=u.id AND r.conversation_id=$1
+      LEFT JOIN messages m ON m.conversation_id=$1 AND m.seq>coalesce(r.last_seq,0)
+        AND m.author_id<>u.id AND m.deleted_at IS NULL
+        AND ($3='channel' OR EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=m.conversation_id AND h.user_id=u.id AND m.seq>=h.start_seq AND (h.end_seq IS NULL OR m.seq<=h.end_seq)))
+      WHERE u.id=$2 GROUP BY r.last_seq`,
+        [id, userId, row.kind],
+      )
+    ).rows[0];
     return {
+      unreadCount: unread.unread_count,
+      mentionCount: unread.mention_count,
+      lastReadSeq: unread.last_read_seq,
+      activity: String(row.last_change),
       id: row.id,
       kind: row.kind,
       name:
@@ -90,6 +107,33 @@ export class ChatService extends AuthService {
       const result: Conversation[] = [];
       for (const row of rows) result.push(await this.detail(db, user.id, row.id));
       return result;
+    });
+  }
+  async markRead(token: string, id: string, value: unknown) {
+    const body = input(value, ['seq']);
+    const seq = cursor(body.seq);
+    if (seq === undefined) throw new HttpError(400, 'A message cursor is required.');
+    return this.run(token, async (db, user) => {
+      const c = await this.access(db, user.id, uuid(id));
+      if (BigInt(seq) > BigInt(c.last_seq))
+        throw new HttpError(400, 'Cursor is ahead of this conversation.');
+      if (
+        BigInt(seq) !== 0n &&
+        !(
+          await db.query(
+            `SELECT m.id FROM messages m WHERE m.conversation_id=$1 AND m.seq=$4 AND ($3='channel' OR ` +
+              visible +
+              ')',
+            [id, user.id, c.kind, seq],
+          )
+        ).rowCount
+      )
+        throw missing();
+      const result = await db.query(
+        'INSERT INTO conversation_reads(conversation_id,user_id,last_seq) VALUES($1,$2,$3) ON CONFLICT(conversation_id,user_id) DO UPDATE SET last_seq=greatest(conversation_reads.last_seq,EXCLUDED.last_seq) RETURNING last_seq',
+        [id, user.id, seq],
+      );
+      return { lastReadSeq: String(result.rows[0].last_seq) };
     });
   }
   async get(token: string, id: string) {
@@ -379,6 +423,13 @@ export class ChatService extends AuthService {
     });
   }
   async send(token: string, id: string, value: unknown): Promise<ChatMessage> {
+    return (await this.sendResult(token, id, value)).message;
+  }
+  async sendResult(
+    token: string,
+    id: string,
+    value: unknown,
+  ): Promise<{ message: ChatMessage; created: boolean }> {
     const body = input(value, ['body', 'clientId']);
     const raw = content(body.body),
       clientId = uuid(body.clientId);
@@ -396,7 +447,7 @@ export class ChatService extends AuthService {
       if (previous) {
         if (previous.request_hash !== digest(raw))
           throw new HttpError(409, 'This message identifier was already used.');
-        return message(previous);
+        return { message: message(previous), created: false };
       }
       const count = Number(
         (
@@ -419,7 +470,10 @@ export class ChatService extends AuthService {
           [id, user.id, clientId, digest(raw), counters.last_seq, counters.last_change, raw],
         )
       ).rows[0];
-      return message({ ...row, username: user.username, display_name: user.displayName });
+      return {
+        message: message({ ...row, username: user.username, display_name: user.displayName }),
+        created: true,
+      };
     });
   }
   async edit(

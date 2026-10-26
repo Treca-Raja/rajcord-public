@@ -194,6 +194,9 @@ try {
       'microphone reaches LiveKit',
       'deafen control',
       'manual voice leave',
+      'notification IPC rejects invalid payload',
+      'Windows development notification registration',
+      'native notification reports show event',
     ],
     profile,
   };
@@ -205,7 +208,7 @@ try {
     JSON.stringify(report, null, 2),
   );
   console.log(
-    'PASS: 23 Electron authentication, messaging, voice and lifecycle checks across 3 launches.',
+    'PASS: 26 Electron authentication, messaging, voice, notification and lifecycle checks across 3 launches.',
   );
 } finally {
   await app.close();
