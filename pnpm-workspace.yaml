@@ -5,3 +5,6 @@ allowBuilds:
   argon2: true
   electron: true
   esbuild: true
+
+overrides:
+  'drizzle-kit@0.31.11>@esbuild-kit/esm-loader': '-'
