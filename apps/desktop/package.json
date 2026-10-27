@@ -2,18 +2,27 @@
   "name": "@tricord/desktop",
   "version": "0.1.0",
   "private": true,
+  "productName": "Rajcord",
+  "description": "Rajcord private community desktop client",
+  "author": "Rajcord contributors",
+  "repository": "https://github.com/Treca-Raja/tricord-public",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "dev": "cross-env TRICORD_DEV_URL=http://127.0.0.1:5173 electron .",
     "start": "electron .",
-    "smoke": "electron . --smoke"
+    "smoke": "electron . --smoke",
+    "package:win": "pnpm build && electron-builder --config electron-builder.cjs --win nsis --x64 --publish never"
   },
   "dependencies": {
-    "@tricord/shared": "workspace:*"
+    "@tricord/shared": "workspace:*",
+    "electron-updater": "6.8.11",
+    "js-yaml": "4.3.2"
   },
   "devDependencies": {
-    "electron": "45.0.0"
+    "@types/js-yaml": "4.0.9",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
   }
 }

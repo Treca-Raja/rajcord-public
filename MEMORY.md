@@ -7,7 +7,7 @@ Last reconciled: 2026-10-27. Application baseline: `1ae691c`. This is maintained
 - One private community, initially up to ten people. Text and voice have equal priority.
 - Browser and Windows 11 desktop share the React UI. The maintainer prefers clear explanations and progress on routine authorized work without repeated confirmation.
 - Work continues in the existing repository. The maintainer's checkout is `F:\tricord`.
-- Active public source: [fakebane/tricord-public](https://github.com/fakebane/tricord-public). The previous repository was retired. Source being public does not expose the private community's database or accounts.
+- Active public source: [Treca-Raja/tricord-public](https://github.com/Treca-Raja/tricord-public), transferred from fakebane (same GitHub repository ID, verified 2026-10-28). The previous repository was retired. Source being public does not expose the private community's database or accounts.
 
 ## Implemented and verified baseline
 
@@ -26,7 +26,7 @@ The verification record for baseline `1ae691c` reports **139 Vitest tests** (51 
 - Existing local settings live in ignored `apps/api/.env`, `infrastructure/.env` and `infrastructure/.env.voice`. Setup scripts preserve initialized configuration. Do not regenerate an initialized database password.
 - Docker Desktop must be running before database/media work. A connection refusal usually calls for checking services/configuration first, not modifying application code or deleting data.
 - `pnpm dev:desktop` waits for Vite and the Tricord health endpoint; an idle watch process normally stays running. Built desktop supports an exact HTTPS `TRICORD_SERVER_URL`; the development command deliberately targets the local UI.
-- Closing Electron quits it; minimizing keeps it running. There is no tray mode. Windows development notification opt-in registers a Start Menu shortcut. The preference is per account/device.
+- Closing development Electron quits it; minimizing keeps it running. Packaged Rajcord closes to tray; Quit/Ctrl+Q exits. Windows development notification opt-in registers a Start Menu shortcut. The preference is per account/device.
 
 ## Hosting direction and remaining work
 
@@ -49,7 +49,8 @@ Hosting initialization supports separate web/TURN DNS identities while preservin
 ## Limits and follow-up candidates
 
 - Single API instance; multi-instance voice/session coordination is not implemented.
-- Uploads, message search, screen sharing, closed-app push, tray support and signed desktop distribution remain future work, not authorization to implement them automatically.
+- Uploads, message search, screen sharing and closed-app push remain future work, not authorization to implement them automatically.
+- Rajcord desktop distribution implementation (2026-10-28, dedicated distribution branch): NSIS x64, `com.rajcord.desktop`, per-user `%APPDATA%\Rajcord`, pinned production HTTPS and tray lifecycle. `pnpm desktop:package` builds unsigned/manual-install output by default; signed builds require an exact publisher DN and certificate and enable fail-closed Authenticode-verified GitHub updates. Stable electron-builder/updater are pinned to 26.18.0/6.8.11; the newer v27/v7 documentation is not their security contract. The new Windows workflow builds review artifacts automatically but only creates draft Releases after explicit dispatch and a verified protected `desktop-release` environment. No remote environment/signing credential/release has been configured. Real signed two-release updating and installed physical/WAN media acceptance remain outstanding. See `docs/desktop-distribution.md` and dated verification evidence.
 - The lazy LiveKit client bundle triggers a non-failing size advisory. The server image uses the existing pnpm legacy-deploy path, which reports a warning. Check new failures independently of these known advisories.
 - Detailed architecture rationale is in [docs/decisions.md](docs/decisions.md). Early statements about platform-only preload, no hosted origin or no client ICE configuration were superseded by later voice/hosting/notification work; consult source and the newer verification entries.
 
