@@ -46,6 +46,73 @@ describe('chat hyperlinks', () => {
     ]);
   });
 
+  it('supports nested destination parentheses without leaving partial Markdown links', () => {
+    expect(messageParts('[wiki](https://example.com/a_(b_(c)))')).toEqual([
+      { text: 'wiki', href: 'https://example.com/a_(b_(c))' },
+    ]);
+  });
+
+  it.each([
+    '[space](https://example.com/a b)',
+    '[title](https://example.com "title")',
+    '[missing](https://example.com/a_(b)',
+    '[bad](https://example.com/a_(javascript:alert(1)) trailing)',
+    '![image](https://example.com/a_(b_(c)))',
+  ])('keeps unsupported or incomplete Markdown literal: %s', (body) => {
+    expect(messageParts(body)).toEqual([{ text: body }]);
+  });
+
+  it('continues link detection on the next line after incomplete Markdown', () => {
+    expect(links('[broken](https://example.com\nhttps://github.com')).toEqual([
+      { text: 'https://github.com', href: 'https://github.com/' },
+    ]);
+  });
+
+  it.each(['*', '**', '_', '__', '~~', '**_'])('excludes paired emphasis markers: %s', (marker) => {
+    const closing = [...marker].reverse().join('');
+    const body = marker + 'https://example.com/path' + closing + '.';
+    expect(links(body)).toEqual([
+      { text: 'https://example.com/path', href: 'https://example.com/path' },
+    ]);
+    expect(
+      messageParts(body)
+        .map((part) => part.text)
+        .join(''),
+    ).toBe(body);
+  });
+
+  it('preserves legitimate trailing URL markers when they are not paired formatting', () => {
+    for (const suffix of ['*', '~', '_', '%2A', '?q=x_']) {
+      const url = 'https://example.com/path' + suffix;
+      expect(links(url)).toEqual([{ text: url, href: url }]);
+    }
+    expect(links('**https://example.com/path_**')).toEqual([
+      { text: 'https://example.com/path_', href: 'https://example.com/path_' },
+    ]);
+  });
+
+  it('preserves maximum-length repeated brackets and malformed link prefixes', () => {
+    for (const body of ['['.repeat(4000), '[x]('.repeat(1000)]) {
+      expect(links(body)).toEqual([]);
+      expect(
+        messageParts(body)
+          .map((part) => part.text)
+          .join(''),
+      ).toBe(body);
+    }
+  });
+
+  it('shows the actual normalized destination in titles for URL labels and Unicode domains', () => {
+    for (const [body, destination] of [
+      ['[https://paypal.com](https://evil.example)', 'https://evil.example/'],
+      ['https://ex\u0430mple.com', 'https://xn--exmple-4nf.com/'],
+    ]) {
+      const html = renderToStaticMarkup(createElement(MessageBody, { body: body! }));
+      expect(html).toContain('title="' + destination + '"');
+      expect(html).toContain('href="' + destination + '"');
+    }
+  });
+
   it('keeps code and image syntax literal', () => {
     expect(
       links('`https://example.com`\n```\nhttps://github.com\n```\n![x](https://example.com)'),

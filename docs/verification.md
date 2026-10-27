@@ -1,3 +1,14 @@
+# Chat hyperlink review fixes — 2026-10-28
+
+Addressed PR #9 feedback on `feature/chat-hyperlinks`. The reported duplicate-message failure was a misreading of removed/added lines; the browser smoke now selects the persisted message by ID to remove text-match ambiguity. Sequential smoke operations remain sequential because their UI and server state depend on earlier steps.
+
+Automatic links exclude paired emphasis without stripping legitimate unpaired URL characters. Anchors expose the normalized destination in `title` and have an explicit keyboard focus outline. Markdown destinations use a balanced scan; unsupported titles, whitespace and incomplete destinations remain literal. Label matching no longer rescans repeated opening brackets; maximum-length hostile bracket cases are tested. The API already limits message bodies to 4,000 characters.
+
+- Full `pnpm test`: **113 tests passed in 20 files**, including 30 additional review regressions (16 parser/rendering and 14 Electron handler cases).
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: passed; only the known LiveKit chunk-size advisory remains.
+- Real Electron `pnpm --filter @tricord/desktop test:links`: passed on Windows with a separate profile, sandbox/context isolation and renderer Node disabled. Actual renderer-created window-open events delegate valid HTTPS to a recording OS adapter; unsafe destinations and an untrusted app-page origin cause no external action or additional window. Unit cases also cover HTTP, malformed URLs, credentials, origin/port mismatches and rejected OS launches. The smoke script clears the inherited `ELECTRON_RUN_AS_NODE` flag.
+- The system default browser itself is not launched by this smoke. Authenticated Edge chat, database integration and the full authenticated Electron smoke remain unrun because local PostgreSQL/LiveKit configuration and Docker are absent.
+
 # Chat hyperlinks — 2026-10-27
 
 Feature branch: `feature/chat-hyperlinks`, based on `origin/main` at `613b367`. Shared React rendering adds HTTP(S) autolinks and simple Markdown links without changing stored text or API behavior. Electron delegates validated HTTP(S) links to the default browser and continues denying new renderer windows and navigation. No dependencies added.

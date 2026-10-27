@@ -224,23 +224,23 @@ try {
       "SELECT id FROM conversations WHERE kind='channel' AND name='general'",
     )
   ).rows[0].id;
-  await compose(
-    'Browser message <img src=x onerror=window.tricordXss=true> https://github.com, [Docs](https://example.com/docs) [bad](javascript:alert(1))',
-  );
+  const browserMessage =
+    'Browser message <img src=x onerror=window.tricordXss=true> https://github.com, [Docs](https://example.com/docs) [bad](javascript:alert(1))';
+  await compose(browserMessage);
   await wait("document.querySelector('.message-scroll').innerText.includes('Browser message')");
   assert.equal(await js('window.tricordXss===true'), false);
-  const secureLinks = `(()=>{const body=[...document.querySelectorAll('.message-body')].find(p=>p.textContent.includes('Browser message'));const links=[...body.querySelectorAll('a')];return links.length===2 && links[0].textContent==='https://github.com' && links[1].textContent==='Docs' && links.every(a=>a.target==='_blank' && a.rel==='noopener noreferrer' && /^https:/.test(a.href)) && !body.querySelector('img') && body.textContent.includes('[bad](javascript:alert(1))')})()`;
-  assert.equal(await js(secureLinks), true);
-  await call('Page.reload');
-  await wait("document.querySelector('.message-scroll')?.innerText.includes('Browser message')");
-  assert.equal(await js(secureLinks), true);
   const original = (
     await fixture.database.pool.query(
-      'SELECT id FROM messages WHERE author_id=$1 AND conversation_id=$2',
-      [user.id, general],
+      'SELECT id FROM messages WHERE author_id=$1 AND conversation_id=$2 AND body=$3 ORDER BY seq DESC LIMIT 1',
+      [user.id, general, browserMessage],
     )
   ).rows[0];
   assert.ok(original);
+  const messageSelector = '[data-message-id="' + original.id + '"]';
+  const secureLinks = `(()=>{const body=document.querySelector('${messageSelector} .message-body');if(!body)return false;const links=[...body.querySelectorAll('a')];return links.length===2 && links[0].textContent==='https://github.com' && links[1].textContent==='Docs' && links.every(a=>a.target==='_blank' && a.rel==='noopener noreferrer' && a.title===a.href && /^https:/.test(a.href)) && !body.querySelector('img') && body.textContent.includes('[bad](javascript:alert(1))')})()`;
+  await wait(secureLinks);
+  await call('Page.reload');
+  await wait(secureLinks);
   const reply = await app.inject({
     url: '/api/conversations/' + general + '/messages',
     method: 'POST',

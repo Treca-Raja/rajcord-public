@@ -74,6 +74,11 @@
 .message-body a:focus-visible {
   color: #c4e99c;
 }
+.message-body a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 2px;
+}
 .message-meta time,
 .message-meta small {
   font-size: 10px;
