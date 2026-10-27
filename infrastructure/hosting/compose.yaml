@@ -1,0 +1,115 @@
+name: tricord-${TRICORD_ENVIRONMENT:?Set staging or production}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  postgres:
+    image: postgres:17.11-alpine3.24@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    restart: unless-stopped
+    env_file: ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/postgres.env
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tricord -d tricord']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *logging
+    security_opt: ['no-new-privileges:true']
+
+  app:
+    image: ${TRICORD_IMAGE:?Set the tested image digest}
+    restart: unless-stopped
+    init: true
+    env_file: ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/app.env
+    networks:
+      database:
+      control:
+      frontend:
+        ipv4_address: 172.30.241.3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    stop_grace_period: 30s
+    logging: *logging
+
+  livekit:
+    image: livekit/livekit-server:v1.13.10@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
+    restart: unless-stopped
+    command: ['--config', '/etc/livekit.yaml']
+    volumes:
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/livekit.yaml:/etc/livekit.yaml:ro
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/letsencrypt:/etc/letsencrypt:ro
+    networks: [control, media]
+    ports:
+      - '7881:7881/tcp'
+      - '7882:7882/udp'
+      - '3478:3478/udp'
+      - '5349:5349/tcp'
+      # Embedded TURN relay sockets; the bridge must route these back to LiveKit.
+      - '50000-50199:50000-50199/udp'
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    stop_grace_period: 30s
+    logging: *logging
+
+  proxy:
+    image: nginx:1.30.6-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+    restart: unless-stopped
+    volumes:
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/acme:/var/www/acme:ro
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/letsencrypt:/etc/letsencrypt:ro
+    networks:
+      frontend:
+        ipv4_address: 172.30.241.2
+      edge:
+    ports: ['80:80/tcp', '443:443/tcp']
+    depends_on:
+      app:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    security_opt: ['no-new-privileges:true']
+    logging: *logging
+
+  certbot:
+    image: certbot/certbot:v5.4.0@sha256:c23159d30afdd9c97960578aa4654f5901de6cae394958f894074dedd55e599d
+    profiles: [tools]
+    volumes:
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/acme:/var/www/acme
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/letsencrypt:/etc/letsencrypt
+    networks: [edge]
+    tmpfs: [/var/lib/letsencrypt, /var/log/letsencrypt]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    logging: *logging
+
+volumes:
+  postgres:
+
+networks:
+  database:
+    internal: true
+  control:
+    internal: true
+  frontend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.241.0/28
+  media:
+  edge:

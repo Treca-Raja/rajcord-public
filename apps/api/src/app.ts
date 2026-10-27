@@ -15,6 +15,7 @@ import type { HealthResponse, ServerToClientEvents, ClientToServerEvents } from 
 import { identity, equal, SESSION_COOKIE } from './auth/service.js';
 import { registerAuth } from './auth/routes.js';
 import { HttpError } from './auth/validation.js';
+import { isIP } from 'node:net';
 
 export function createApp({
   logger = false,
@@ -22,6 +23,8 @@ export function createApp({
   allowedOrigins = ['http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:3001'],
   secureCookies = false,
   rateLimits = true,
+  trustProxyHops = 0,
+  trustedProxyAddress,
   staticRoot,
   voiceConfig,
 }: {
@@ -30,6 +33,8 @@ export function createApp({
   allowedOrigins?: string[];
   secureCookies?: boolean;
   rateLimits?: boolean;
+  trustProxyHops?: 0 | 1;
+  trustedProxyAddress?: string;
   staticRoot?: string;
   voiceConfig?: VoiceConfig;
 } = {}) {
@@ -48,7 +53,21 @@ export function createApp({
     })
   )
     throw new Error('WEB_ORIGINS must contain exact HTTP origins (HTTPS in production).');
-  const app = Fastify({ logger, bodyLimit: 16384, requestTimeout: 15000 });
+  if (trustProxyHops !== 0 && trustProxyHops !== 1)
+    throw new Error('Only one trusted reverse proxy is supported.');
+  if (trustProxyHops === 1 && (!trustedProxyAddress || isIP(trustedProxyAddress) !== 4))
+    throw new Error('TRUST_PROXY_ADDRESS must be the exact private proxy IPv4 address.');
+  const app = Fastify({
+    logger,
+    bodyLimit: 16384,
+    requestTimeout: 15000,
+    trustProxy:
+      trustProxyHops === 1
+        ? (address, hop) =>
+            hop === 0 &&
+            (address === trustedProxyAddress || address === '::ffff:' + trustedProxyAddress)
+        : false,
+  });
   const database = databaseUrl ? createDatabase(databaseUrl) : null;
   const voice = database && voiceConfig ? new VoiceService(database.pool, voiceConfig) : undefined;
   app.setErrorHandler((error, req, reply) => {
@@ -75,6 +94,17 @@ export function createApp({
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'X-CSRF-Token'],
+  });
+  app.addHook('onRequest', async (req) => {
+    // The hosted proxy replaces this header; it must never append a client-supplied chain.
+    // Requests without it include the container's direct readiness check.
+    const forwarded = req.headers['x-forwarded-for'];
+    if (
+      trustProxyHops === 1 &&
+      forwarded !== undefined &&
+      (typeof forwarded !== 'string' || !isIP(forwarded))
+    )
+      throw new HttpError(400, 'Invalid forwarding address.');
   });
   app.register(rateLimit, {
     global: rateLimits,

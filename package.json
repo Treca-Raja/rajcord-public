@@ -34,7 +34,9 @@
     "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice",
     "test:voice:load": "pnpm --filter @tricord/api test:voice:check && pnpm build && pnpm --filter @tricord/api test:voice:load",
     "server:build": "docker build -f infrastructure/server/Dockerfile -t tricord-server:alpha .",
-    "test:server-image": "node scripts/server-image-smoke.mjs"
+    "test:server-image": "node scripts/server-image-smoke.mjs",
+    "hosting:init": "node scripts/hosting/init.mjs",
+    "test:hosting": "node scripts/hosting/smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

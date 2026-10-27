@@ -7,11 +7,12 @@ permissions:
   contents: read
 concurrency:
   group: verify-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a running main deployment or a job waiting for approval.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
@@ -25,6 +26,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
+      - name: Validate workflow and operator scripts
+        run: |
+          docker run --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" --workdir /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 .github/workflows/verify.yml
+          docker run --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" --workdir /repo koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d -x scripts/hosting/*.sh
       - run: pnpm typecheck
       - run: pnpm test
       - name: Start disposable CI services
@@ -37,11 +42,117 @@ jobs:
       - run: pnpm test:db
       - run: pnpm build
       - name: Build deployable server image
-        run: docker build -f infrastructure/server/Dockerfile -t tricord-ci .
+        run: docker build --label org.opencontainers.image.revision="$GITHUB_SHA" -f infrastructure/server/Dockerfile -t tricord-ci .
       - name: Verify image and backup restore
         run: node scripts/server-image-smoke.mjs tricord-ci
+      - name: Verify hosted proxy and service configuration
+        run: node scripts/hosting/smoke.mjs tricord-ci
+      - name: Save the tested image for publication
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.HOSTING_ENABLED == 'true'
+        run: |
+          mkdir -p artifacts
+          docker save tricord-ci | gzip > artifacts/tricord-image.tar.gz
+      - name: Upload the exact tested image
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.HOSTING_ENABLED == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-image
+          path: artifacts/tricord-image.tar.gz
+          retention-days: 2
+          if-no-files-found: error
+          compression-level: 0 # The image tar is already compressed.
       - name: Stop CI services
         if: always()
         run: |
           if test -f infrastructure/.env.voice; then pnpm voice:down; fi
           if test -f infrastructure/.env; then pnpm db:down; fi
+
+  publish:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.HOSTING_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Reject superseded releases
+        run: node scripts/ci/policy.mjs main
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tested-image
+          path: artifacts
+      - name: Publish the tested image by digest
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gzip -dc artifacts/tricord-image.tar.gz | docker load
+          test "$(docker inspect tricord-ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          tag="ghcr.io/fakebane/tricord-public:$GITHUB_SHA"
+          docker tag tricord-ci "$tag"
+          docker push "$tag"
+          image=$(docker inspect "$tag" --format '{{index .RepoDigests 0}}')
+          TRICORD_IMAGE="$image" node scripts/ci/policy.mjs main
+          printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+
+  production-policy:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Require production approvals before entering its environment
+        run: node scripts/ci/policy.mjs production
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  production:
+    needs: [publish, production-policy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # GitHub waits for the configured reviewer before releasing production secrets.
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Deploy the exact CI-tested image and check production
+        run: node scripts/ci/deploy.mjs production
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRICORD_IMAGE: ${{ needs.publish.outputs.image }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_HTTPS_HOST: ${{ vars.DEPLOY_HTTPS_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}

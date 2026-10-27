@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Tricord %i health certificate backups and disk
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/bin/bash /opt/tricord/%i-current/scripts/hosting/check.sh %i
+TimeoutStartSec=12min

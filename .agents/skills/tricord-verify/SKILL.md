@@ -18,6 +18,7 @@ Work from the existing repository root. Read [AGENTS.md](../../../AGENTS.md), th
 | Electron lifecycle, preload, permissions or notifications | `pnpm test:desktop`                                                                         |
 | Voice transport/devices/recovery                          | `pnpm test:voice`; add `pnpm test:voice:load` for capacity, recovery or rate-budget changes |
 | Server packaging, migrations or backup compatibility      | `pnpm server:build` then `pnpm test:server-image`                                           |
+| Hosted proxy, service configuration or delivery scripts   | Above plus `pnpm test:hosting`; run workflow and shell validators as CI does                |
 
 Combine rows that apply. Do not start services or rerun unrelated runtime suites for a documentation-only change. After a focused failure is fixed, rerun the affected check; repeat broader checks only when the fix or unresolved evidence justifies it.
 
@@ -39,6 +40,6 @@ Root smoke commands build first. After an already verified build, the matching `
 
 Check the actual process exit status and complete test summary. A container being running does not establish database readiness or working voice. Missing Docker/services should be fixed or reported as prerequisites, not represented as application-test failures or passing checks.
 
-The image smoke owns disposable containers, a network and a tmpfs database. Other integration fixtures use uniquely named temporary databases/profiles and media prefixes; clean only their owned resources. Never use volume deletion as cleanup. Service shutdown uses `pnpm voice:down` and `pnpm db:down` only when appropriate to the task, without `-v`.
+The image and hosted-stack smokes own disposable containers/networks and tmpfs databases. The hosted smoke also uses a temporary fixture certificate and a networkless container with mocked operator commands for deployment failure checks; it does not contact a real backup backend or SSH host. Other integration fixtures use uniquely named temporary databases/profiles and media prefixes; clean only their owned resources. Never use volume deletion as cleanup. Service shutdown uses `pnpm voice:down` and `pnpm db:down` only when appropriate to the task, without `-v`.
 
 Report new failures separately from the known lazy LiveKit bundle/legacy deploy advisories. Record substantial new evidence in [docs/verification.md](../../../docs/verification.md), with its limits. Claim neither physical-device nor internet-wide voice coverage from synthetic local tests.

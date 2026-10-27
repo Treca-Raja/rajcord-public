@@ -1,0 +1,10 @@
+[Unit]
+Description=Restore Tricord %i off-server backup in an isolated container
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/bin/bash /opt/tricord/%i-current/scripts/hosting/restore-check.sh %i
+TimeoutStartSec=30min
