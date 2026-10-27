@@ -95,6 +95,8 @@ This preserves the database volume. Never use `down -v`, volume removal or pruni
 
 ## Messaging behavior
 
+Explicit `http://` and `https://` URLs become clickable links, as do simple Markdown links such as `[GitHub](https://github.com)`. Links open in a new browser tab (the default browser from Electron). Common trailing sentence punctuation is excluded. Only HTTP(S) destinations without embedded credentials are accepted; HTML stays escaped. Backtick code spans and fenced blocks remain literal, and other Markdown formatting is not interpreted. This applies to stored, incoming and edited messages without changing their stored text.
+
 Approved members can create, rename, archive and reopen shared channels. Use the sidebar plus buttons to open a DM or create a group; clicking a community member opens the same persistent DM for that pair. Groups start with the creator as manager. Any current member can invite approved users, but invitees must accept in their inbox. Only the manager can remove members, rename the group or transfer management. A manager must transfer before leaving a nonempty group.
 
 New group members see messages sent after acceptance. Leaving or removal immediately denies group access. Rejoining restores messages from earlier membership periods plus new messages, while messages sent during the absence remain hidden. These rules apply to history pages, direct message IDs and realtime synchronization.

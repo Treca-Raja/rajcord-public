@@ -102,3 +102,4 @@ export type ConversationUnread = Pick<
   Conversation,
   'id' | 'unreadCount' | 'mentionCount' | 'lastReadSeq' | 'activity'
 >;
+export { safeHttpUrl } from './http-url.js';

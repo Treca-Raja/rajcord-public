@@ -64,6 +64,7 @@ async function clearTemporarySession() {
 app
   .whenReady()
   .then(async () => {
+    const { safeHttpUrl } = await import('@tricord/shared');
     await clearTemporarySession();
     let microphoneAllowed = authSmoke && process.env.TRICORD_VOICE_SMOKE === '1';
     session.defaultSession.setPermissionRequestHandler(
@@ -223,7 +224,15 @@ app
       ipcMain.removeHandler('notifications:enable');
       for (const notice of notices) notice.close();
     });
-    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      const href = safeHttpUrl(url);
+      if (href && trustedNoticeFrame(target, win.webContents.getURL(), true)) {
+        void shell.openExternal(href).catch(() => {
+          console.warn('Could not open web link in the default browser.');
+        });
+      }
+      return { action: 'deny' };
+    });
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.webContents.on('will-attach-webview', (event) => event.preventDefault());
     await win.loadURL(target);

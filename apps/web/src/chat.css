@@ -65,6 +65,15 @@
   overflow-wrap: anywhere;
   line-height: 1.7;
 }
+.message-body a {
+  color: #99c9ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.message-body a:hover,
+.message-body a:focus-visible {
+  color: #c4e99c;
+}
 .message-meta time,
 .message-meta small {
   font-size: 10px;

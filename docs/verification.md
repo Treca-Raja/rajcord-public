@@ -1,3 +1,14 @@
+# Chat hyperlinks — 2026-10-27
+
+Feature branch: `feature/chat-hyperlinks`, based on `origin/main` at `613b367`. Shared React rendering adds HTTP(S) autolinks and simple Markdown links without changing stored text or API behavior. Electron delegates validated HTTP(S) links to the default browser and continues denying new renderer windows and navigation. No dependencies added.
+
+- `pnpm test`: **83 tests passed in 19 files**, including 18 new parser, escaped-rendering and shared URL validation cases. The initial sandbox run failed four existing Windows process startup/cleanup checks; the complete rerun outside the sandbox passed.
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: passed. The existing lazy LiveKit chunk-size advisory remains.
+- `pnpm format:check`: flags 123 untouched files in this Windows checkout, where `core.autocrlf=true` gives them CRLF line endings. Changed files pass the default Prettier check; `pnpm exec prettier --check . --end-of-line auto` passes for the entire checkout. Unrelated files were preserved.
+- Database integration, Edge authenticated messaging and Electron runtime smokes were not run: Docker and local PostgreSQL/LiveKit configuration are absent. The browser smoke now contains assertions for sent, reloaded, received and edited hyperlinks, but those new assertions have not been executed here. Actual external-browser launches remain unverified.
+
+Only explicit HTTP(S) URLs without credentials are linked. Common trailing punctuation and excess closing brackets are excluded. Markdown support is limited to simple labeled links; backtick code spans/fences, HTML and image syntax remain literal. There is no full Markdown renderer.
+
 # Milestone 2C verification
 
 Windows 11, 2026-10-24. Active repository: F:\tricord. Milestone 2B commit d298aa9 retained.
