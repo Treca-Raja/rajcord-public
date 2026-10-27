@@ -94,6 +94,9 @@ try {
         target: /var/lib/postgresql/data
   livekit:
     ports: !reset []
+    # Linux fixture files belong to the runner; production files belong to root.
+    # Match that owner without granting DAC override or relaxing mode 600.
+    user: '${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}'
   proxy:
     ports: !override ['127.0.0.1::443/tcp']
 volumes: !reset {}
@@ -206,7 +209,7 @@ volumes: !reset {}
   }
   console.error(
     error instanceof assert.AssertionError
-      ? error.message
+      ? 'A hosted fixture assertion failed; response headers and cookies were not printed.'
       : 'Hosted-stack verification failed. Raw container configuration and credentials were not printed.',
   );
   process.exitCode = 1;
