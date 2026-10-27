@@ -39,6 +39,7 @@ const composeArgs = [
 const compose = (args, options = {}) =>
   run('docker', [...composeArgs, ...args], { env: environment, ...options });
 let started = false;
+let phase = 'operator fixtures';
 try {
   const root = path.resolve(import.meta.dirname, '../..');
   const operations = run('docker', [
@@ -59,6 +60,7 @@ try {
     'bash /fixture/scripts/hosting/operations-test.sh && bash /fixture/scripts/hosting/ssh-test.sh',
   ]);
   process.stdout.write(operations);
+  phase = 'fixture configuration and certificate';
   initialize('staging', ip, config, publicHost, turnHost);
   const certs = path.join(config, 'letsencrypt', 'live', 'tricord');
   mkdirSync(certs, { recursive: true });
@@ -98,15 +100,20 @@ volumes: !reset {}
 `,
   );
   // Parse without printing expanded env_file secrets, and enforce no named fixture volumes.
+  phase = 'Compose configuration';
   const parsed = JSON.parse(compose(['config', '--format', 'json']));
   assert.equal(Object.keys(parsed.volumes ?? {}).length, 0);
   assert.equal(parsed.services.postgres.ports, undefined);
   assert.equal(parsed.services.app.ports, undefined);
   assert.equal(parsed.services.livekit.ports?.length ?? 0, 0);
   started = true;
+  phase = 'database startup';
   compose(['up', '-d', '--wait', '--wait-timeout', '120', 'postgres']);
+  phase = 'migrations';
   compose(['run', '--rm', '--no-deps', 'app', 'node', 'dist/migrate.js']);
+  phase = 'application and proxy startup';
   compose(['up', '-d', '--wait', '--wait-timeout', '180', 'app', 'proxy']);
+  phase = 'proxy syntax';
   compose(['exec', '-T', 'proxy', 'nginx', '-t']);
   const port = compose(['port', 'proxy', '443']).toString().trim().split(':').at(-1);
   assert.match(port, /^[0-9]+$/);
@@ -129,6 +136,7 @@ volumes: !reset {}
       ...extra,
       `https://${publicHost}:${port}${route}`,
     ]).toString();
+  phase = 'trusted HTTPS readiness';
   assert.equal(JSON.parse(request('/ready')).database, 'connected');
   assert.match(request('/'), /<title>Tricord/);
   assert.equal(
@@ -136,6 +144,7 @@ volumes: !reset {}
     'ok',
   );
   const password = randomBytes(24).toString('hex');
+  phase = 'registration and secure login cookies';
   const post = (route, body) =>
     request(route, [
       '--header',
@@ -155,6 +164,7 @@ volumes: !reset {}
   assert.match(headers, /set-cookie:.*; Secure/i);
   assert.match(headers, /set-cookie:.*; HttpOnly/i);
   assert.match(headers, /set-cookie:.*SameSite=Strict/i);
+  phase = 'TURN TLS and private voice control';
   compose(['exec', '-T', 'app', 'node', '--input-type=module'], {
     input: `
     import assert from 'node:assert/strict';
@@ -175,6 +185,25 @@ volumes: !reset {}
     'PASS: isolated hosted Compose, tmpfs database, migrations, domain HTTPS and TURN TLS identities, forwarding-header replacement, Secure login cookies and private LiveKit control.',
   );
 } catch (error) {
+  console.error(`Hosted-stack verification failed during ${phase}.`);
+  if (Number.isInteger(error.status)) console.error(`Command exit status: ${error.status}.`);
+  if (started) {
+    try {
+      const states = compose(['ps', '--all', '--format', 'json']).toString().trim();
+      const services = states.startsWith('[')
+        ? JSON.parse(states)
+        : states
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line));
+      for (const service of services)
+        console.error(
+          `Fixture service ${service.Service}: state=${service.State}, health=${service.Health || 'none'}, exit=${service.ExitCode}.`,
+        );
+    } catch {
+      console.error('Fixture service state could not be read.');
+    }
+  }
   console.error(
     error instanceof assert.AssertionError
       ? error.message
