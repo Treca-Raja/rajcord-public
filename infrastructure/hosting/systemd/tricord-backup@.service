@@ -1,0 +1,10 @@
+[Unit]
+Description=Tricord %i encrypted off-server database backup
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/bin/bash /opt/tricord/%i-current/scripts/hosting/backup.sh %i
+TimeoutStartSec=30min

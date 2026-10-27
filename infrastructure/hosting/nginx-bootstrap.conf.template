@@ -1,0 +1,18 @@
+user nginx;
+worker_processes auto;
+pid /var/run/nginx.pid;
+error_log /dev/null;
+events { worker_connections 128; }
+http {
+  server_tokens off;
+  access_log off;
+  server {
+    listen 80;
+    server_name __PUBLIC_IP__;
+    location ^~ /.well-known/acme-challenge/ {
+      root /var/www/acme;
+      try_files $uri =404;
+    }
+    location / { return 503; }
+  }
+}

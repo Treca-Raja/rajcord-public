@@ -2,6 +2,7 @@ import { voiceConfig } from './voice/config.js';
 import { createApp } from './app.js';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
+import { parseTrustProxyHops } from './proxy-config.js';
 const root = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 const { app } = createApp({
   logger: true,
@@ -11,6 +12,8 @@ const { app } = createApp({
     process.env.WEB_ORIGINS || 'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:3001'
   ).split(','),
   secureCookies: process.env.NODE_ENV === 'production',
+  trustProxyHops: parseTrustProxyHops(process.env.TRUST_PROXY_HOPS),
+  trustedProxyAddress: process.env.TRUST_PROXY_ADDRESS,
   staticRoot: existsSync(root) ? root : undefined,
 });
 try {

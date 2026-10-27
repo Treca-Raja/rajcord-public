@@ -1,0 +1,9 @@
+[Unit]
+Description=Tricord %i operational health check
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target

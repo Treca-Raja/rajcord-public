@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew Tricord %i public IP certificate and reload services
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/bin/bash /opt/tricord/%i-current/scripts/hosting/renew.sh %i
+TimeoutStartSec=15min

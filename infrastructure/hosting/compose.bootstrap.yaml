@@ -1,0 +1,28 @@
+# Standalone initial HTTP-01 certificate bootstrap. Use the same project name,
+# stop this proxy afterwards, then start compose.yaml with the issued certificate.
+name: tricord-${TRICORD_ENVIRONMENT:?Set staging or production}
+services:
+  proxy:
+    image: nginx:1.30.6-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+    restart: unless-stopped
+    ports: ['80:80/tcp']
+    volumes:
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/nginx-bootstrap.conf:/etc/nginx/nginx.conf:ro
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/acme:/var/www/acme:ro
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    security_opt: ['no-new-privileges:true']
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+  certbot:
+    image: certbot/certbot:v5.4.0@sha256:c23159d30afdd9c97960578aa4654f5901de6cae394958f894074dedd55e599d
+    profiles: [tools]
+    volumes:
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/acme:/var/www/acme
+      - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/letsencrypt:/etc/letsencrypt
+    tmpfs: [/var/lib/letsencrypt, /var/log/letsencrypt]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
