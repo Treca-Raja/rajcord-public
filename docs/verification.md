@@ -1,3 +1,16 @@
+# Authenticated hyperlink verification — 2026-10-28
+
+Windows verification on `feature/chat-hyperlinks` after `a11e3be`. Installed Docker was confirmed running Linux containers. Existing setup commands generated ignored local credentials without printing them; loopback-only PostgreSQL/LiveKit started and additive migrations applied. Test suites used disposable databases and isolated Edge/Electron profiles. Existing data and volumes were preserved.
+
+- **113 unit/regression tests passed** (`pnpm test`).
+- **65 authentication/chat database tests passed** (`pnpm exec vitest run --config vitest.database.config.ts apps/api/src/chat/chat.integration.test.ts apps/api/src/auth/auth.integration.test.ts`). Unrelated voice/database suites were not selected.
+- **31 Edge checks passed** (`pnpm --filter @tricord/api test:browser`): 11 authentication and 20 messaging/unread/notification checks. Hyperlinks were verified after sending, reloading stored history, receiving another account's message and editing. HTML remained escaped and unsafe Markdown destinations stayed literal.
+- **21 authenticated Electron checks passed across three launches** (`pnpm --filter @tricord/api test:desktop --chat-only`). Added explicit autolink/Markdown-link assertions for sent, received and restored messages, including new-tab/security attributes and normalized destination titles. The new chat-only mode skips camera, microphone and voice checks; the default combined suite remains available.
+- The isolated real Electron window-open smoke passed (`pnpm --filter @tricord/desktop test:links`), with OS launches recorded rather than actually opening a system browser.
+- `pnpm lint`, `pnpm build` and formatting checks passed; only the known LiveKit chunk-size advisory remains. TypeScript compilation covered both updated harnesses.
+
+This closes the earlier authenticated chat verification gap. No microphone capture, voice joins, audio publication, voice/load tests, server-image tests or production changes were needed or performed. LiveKit was only a prerequisite of the existing chat harnesses. The actual default-browser application launch remains outside the recording-adapter check.
+
 # Chat hyperlink review fixes — 2026-10-28
 
 Addressed PR #9 feedback on `feature/chat-hyperlinks`. The reported duplicate-message failure was a misreading of removed/added lines; the browser smoke now selects the persisted message by ID to remove text-match ambiguity. Sequential smoke operations remain sequential because their UI and server state depend on earlier steps.

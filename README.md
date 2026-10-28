@@ -99,6 +99,8 @@ Explicit `http://` and `https://` URLs become clickable links, as do simple Mark
 
 After `pnpm build` and `pnpm setup:desktop`, run `pnpm --filter @tricord/desktop test:links` for an isolated Electron link smoke that needs no database or LiveKit. It exercises real window-open events with a recording OS adapter; it does not launch an external browser. The test profile is separate from the normal desktop profile.
 
+For authenticated desktop chat verification after building, run `pnpm --filter @tricord/api test:desktop --chat-only`. It checks links in sent, received and restored messages across three launches, along with authentication and session regressions, without microphone access or voice tests. PostgreSQL and the harness's LiveKit prerequisite must be configured and running. Omitting `--chat-only` retains the existing combined desktop/voice suite.
+
 Approved members can create, rename, archive and reopen shared channels. Use the sidebar plus buttons to open a DM or create a group; clicking a community member opens the same persistent DM for that pair. Groups start with the creator as manager. Any current member can invite approved users, but invitees must accept in their inbox. Only the manager can remove members, rename the group or transfer management. A manager must transfer before leaving a nonempty group.
 
 New group members see messages sent after acceptance. Leaving or removal immediately denies group access. Rejoining restores messages from earlier membership periods plus new messages, while messages sent during the absence remain hidden. These rules apply to history pages, direct message IDs and realtime synchronization.
