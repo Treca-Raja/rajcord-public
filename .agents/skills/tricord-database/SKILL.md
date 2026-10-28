@@ -1,26 +1,21 @@
 ---
 name: tricord-database
-description: Change or troubleshoot Tricord's PostgreSQL/Drizzle persistence, additive migrations, database integration fixtures and recovery checks while preserving existing data.
+description: Use for Tricord PostgreSQL/Drizzle persistence, migrations, database fixtures or recovery; preserve existing data.
 ---
 
 # Tricord database work
 
-Read [AGENTS.md](../../../AGENTS.md), [schema.ts](../../../apps/api/src/db/schema.ts), the affected service and the existing migration journal under apps/api/drizzle/meta. Keep current development data and credentials intact.
+Inspect the affected service/query; read [schema](../../../apps/api/src/db/schema.ts) and migration journal only where relevant. Keep current data and credentials.
 
 ## Schema and migration changes
 
-Change the Drizzle schema, run `pnpm db:generate` and inspect the generated SQL, snapshot and journal together. Add a migration rather than editing applied files. Check defaults, foreign keys, uniqueness and existing-row compatibility; a generated destructive statement is not permission to execute it. Design an explicitly requested destructive data change separately with a concrete backup/recovery plan.
-
-Apply with `pnpm db:migrate` against the configured local database only after inspecting the target and migration. Verify expected tables/constraints, disposable insert/read/delete behavior and a second migration run with no unintended changes. Keep current-migration expectations in [database.integration.test.ts](../../../apps/api/src/db/database.integration.test.ts) consistent with intentional schema additions.
-
-Membership sequence ranges define private message visibility. Persisted read cursors advance monotonically per user/conversation and must not count own, deleted or inaccessible messages. Preserve these semantics when changing queries, indexes or synchronization; timestamps and cached socket membership are not authorization substitutes.
+- Change schema, run `pnpm db:generate`, and inspect SQL, snapshot and journal together. Add migrations; never edit applied ones. Check defaults, foreign keys, uniqueness and existing-row compatibility. Generated destructive SQL is not permission to execute it; destructive work needs explicit scope and backup/recovery.
+- Inspect the local target and migration before `pnpm db:migrate`. Verify constraints, disposable read/write behavior and a second migration run. Update [migration expectations](../../../apps/api/src/db/database.integration.test.ts) when intentionally changed.
+- Preserve membership-period visibility and monotonic per-account unread cursors excluding own/deleted/inaccessible messages. Timestamps or cached socket membership never replace authorization.
 
 ## Test ownership and recovery
 
-[The testDatabase helper](../../../apps/api/src/db/test-database.ts) validates loopback access, creates a random `tricord_test_` database and drops only that fixture after closing connections. Use it for integration scenarios; the foundation suite owns and deletes only its unique rows in the configured development database. Do not substitute truncation, dropping the development database or recreating a Docker volume.
-
-Use [tricord-verify](../tricord-verify/SKILL.md) for prerequisites and relevant checks. The full database suite also exercises LiveKit, so start both local services. If connection is refused, check Docker and service readiness before attempting schema repair. Do not print DATABASE_URL or expanded Compose environment values.
-
-`pnpm db:verify-persistence` deliberately restarts the existing PostgreSQL container; use it when restart recovery is part of the task and coordinate around any active local work. It owns a disposable database and verifies that the development migration journal is preserved. It is unnecessary for routine documentation edits.
-
-For deployment/backup compatibility, use `pnpm server:build` and `pnpm test:server-image`. The image smoke checks real dump/restore, including a saved read cursor, in disposable containers. These local checks do not create scheduled off-server production backups. Record that distinction in the handoff.
+- Reuse [testDatabase](../../../apps/api/src/db/test-database.ts): loopback-only random `tricord_test_` fixtures, closed before dropping. The foundation suite deletes only its own unique rows in the development database. Never truncate/drop development data or recreate volumes.
+- Run relevant regressions; the full `pnpm test:db` suite needs PostgreSQL and LiveKit. Use the verification skill's prerequisite section only when needed. Connection refusal calls for service/readiness checks, not schema repair. Do not print DATABASE_URL or expanded Compose secrets.
+- `pnpm db:verify-persistence` restarts the existing PostgreSQL container: use only for restart-recovery work and coordinate with active users. It must preserve the development journal.
+- Backup/deployment compatibility needs `pnpm server:build` and `pnpm test:server-image`. Disposable dump/restore evidence is not a scheduled production backup or live restore.

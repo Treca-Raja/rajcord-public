@@ -1,12 +1,14 @@
 # Tricord
 
-Active public repository: [fakebane/tricord-public](https://github.com/fakebane/tricord-public).
+Active public repository: [Treca-Raja/tricord-public](https://github.com/Treca-Raja/tricord-public).
 
 Milestone 2C adds local community voice channels to the authenticated React/Electron application, alongside persistent shared text channels, private DMs and group DMs. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
 
 ## Working with coding agents
 
-Start with [AGENTS.md](AGENTS.md) for project rules, [MEMORY.md](MEMORY.md) for dated context and [SKILLS.md](SKILLS.md) for reusable verification, database, voice and hosting workflows.
+Start with [AGENTS.md](AGENTS.md) for project rules, [MEMORY.md](MEMORY.md) for dated context and [SKILLS.md](SKILLS.md) for reusable planning, documentation, verification, database, voice and hosting workflows. Repository skills can be used with Copilot/VS Code or Codex; check discovery in the selected tool.
+
+Changes follow `feature/* -> develop -> main`: create feature branches from `develop`, target `develop` with feature PRs, and release through a `develop`-to-`main` PR. See [CONTRIBUTING.md](CONTRIBUTING.md). The deployment-option skill describes future component switches; those switches are not implemented yet.
 
 ## Windows prerequisites
 

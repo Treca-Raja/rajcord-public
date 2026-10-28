@@ -1,16 +1,16 @@
 # Tricord repository skills
 
-These workflows live in `.agents/skills/` and travel with the repository. Each skill has a valid SKILL.md manifest. This file is an index; [AGENTS.md](AGENTS.md) supplies common rules and [MEMORY.md](MEMORY.md) supplies dated context. Neither this index nor MEMORY.md needs a custom global Codex configuration.
+Optional discovery index, not a startup checklist. Use the existing skill metadata first; load a body only for the current task/phase. Links are references, not instructions to recursively read every document or invoke every linked skill.
 
-| Skill                                                        | Use when                                                                                           |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| [tricord-verify](.agents/skills/tricord-verify/SKILL.md)     | Choosing and running checks for a Tricord change, or diagnosing a failed project check             |
-| [tricord-database](.agents/skills/tricord-database/SKILL.md) | Changing PostgreSQL/Drizzle persistence, generating migrations or testing data recovery            |
-| [tricord-voice](.agents/skills/tricord-voice/SKILL.md)       | Working on LiveKit, device routing, permissions, reconnects or voice capacity                      |
-| [tricord-hosting](.agents/skills/tricord-hosting/SKILL.md)   | Preparing the server image, evaluating deployment readiness or performing an authorized deployment |
+- [Plan](.agents/skills/tricord-plan-change/SKILL.md): substantial designs, not routine fixes.
+- [Ticket](.agents/skills/tricord-ticket/SKILL.md): ticket drafts, creation or substantial rewrites.
+- [Document](.agents/skills/tricord-document-change/SKILL.md): changed features, commands or decisions.
+- [Verify](.agents/skills/tricord-verify/SKILL.md): choose/run relevant checks or diagnose failures.
+- [Database](.agents/skills/tricord-database/SKILL.md): persistence, migrations and recovery.
+- [Voice](.agents/skills/tricord-voice/SKILL.md): LiveKit, devices, permissions and capacity.
+- [Hosting](.agents/skills/tricord-hosting/SKILL.md): packaging, CI/release and authorized operations.
+- [Deployment option](.agents/skills/tricord-deployment-option/SKILL.md): future boolean selectors; no component switches exist yet.
 
-Invoke a skill explicitly, for example `$tricord-database`, or let Codex select it when the task matches its description. Open this checkout in Codex so repository discovery uses the correct root. If the current session has not discovered a new skill, read its linked file directly or reopen the repository session.
+Keep `.agents/skills/` canonical. In Copilot/VS Code, use Agent Customizations, available `/` commands or request a skill by name. In Codex, use skill selection or `$tricord-database`. After changes, check discovery in a fresh repository-scoped chat; if missing, read the required manifest directly and report the limitation, rather than duplicating files.
 
-Repository discovery and manifest format follow [OpenAI's skill documentation](https://learn.chatgpt.com/docs/build-skills); root guidance follows [AGENTS.md documentation](https://learn.chatgpt.com/docs/agent-configuration/agents-md). MEMORY.md is a project convention read through AGENTS.md, not a built-in persistent-memory feature.
-
-When maintaining these skills, keep descriptions specific, verify commands against package.json, resolve links relative to each skill folder, and use the Skill Creator validator when available. Do not turn a one-time request for three reviews or a push into a permanent approval or review requirement.
+For discovery problems, consult [VS Code](https://code.visualstudio.com/docs/agent-customization/agent-skills) or [Codex](https://learn.chatgpt.com/docs/build-skills). [Trello setup](docs/trello-mcp.md) is needed only for connection/authentication issues. Skills require no particular paid model. Validate changed manifests, relative links, commands and formatting; keep descriptions specific and avoid permanent rules derived from one-off requests.

@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 
 export function validateRelease(repository, commit, image) {
-  assert.equal(repository, 'fakebane/tricord-public', 'Only the intended repository may deploy.');
+  assert.ok(
+    typeof repository === 'string' && repository.toLowerCase() === 'treca-raja/tricord-public',
+    'Only the intended repository may deploy.',
+  );
   assert.match(commit, /^[a-f0-9]{40}$/, 'Use a full commit SHA.');
   if (image !== undefined)
     assert.match(
       image,
-      /^ghcr\.io\/fakebane\/tricord-public@sha256:[a-f0-9]{64}$/,
+      /^ghcr\.io\/treca-raja\/tricord-public@sha256:[a-f0-9]{64}$/,
       'Use an immutable image digest.',
     );
 }

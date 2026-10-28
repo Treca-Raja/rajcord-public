@@ -1,45 +1,37 @@
 ---
 name: tricord-verify
-description: Select and run Tricord's local verification for code, configuration or documentation changes, and diagnose failed project checks without damaging development data.
+description: Use to select/run Tricord checks or diagnose test failures; cover changed behavior with local, data-safe evidence.
 ---
 
 # Verify a Tricord change
 
-Work from the existing repository root. Read [AGENTS.md](../../../AGENTS.md), the relevant [README](../../../README.md) section and [package.json](../../../package.json). Use the current scripts rather than copying an old test count from memory.
+Use current [package scripts](../../../package.json), not historical counts. Do not preload README/MEMORY; consult the relevant setup section only for missing prerequisites.
 
-## Choose the needed evidence
+## Select checks by impact
 
-| Change                                                    | Appropriate checks                                                                          |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Markdown/instructions only                                | `pnpm format:check`, verify links and factual commands; validate changed skills             |
-| Runtime code or workspace configuration                   | `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`               |
-| Persistence, auth, chat or permission behavior            | Above plus `pnpm test:db` with relevant regression cases                                    |
-| Browser auth/chat/unread/notification flows               | `pnpm test:browser`                                                                         |
-| Electron lifecycle, preload, permissions or notifications | `pnpm test:desktop`                                                                         |
-| Voice transport/devices/recovery                          | `pnpm test:voice`; add `pnpm test:voice:load` for capacity, recovery or rate-budget changes |
-| Server packaging, migrations or backup compatibility      | `pnpm server:build` then `pnpm test:server-image`                                           |
-| Hosted proxy, service configuration or delivery scripts   | Above plus `pnpm test:hosting`; run workflow and shell validators as CI does                |
+Add regression tests for implementations: success, relevant failures, permissions and compatibility. Reproduce the old bug when practical. Reuse fixtures; never weaken assertions or add sleeps for a pass.
 
-Combine rows that apply. Do not start services or rerun unrelated runtime suites for a documentation-only change. After a focused failure is fixed, rerun the affected check; repeat broader checks only when the fix or unresolved evidence justifies it.
+- **Docs only:** `pnpm exec prettier --check <changed-files>`, factual/relative-link checks, and changed skill YAML/name/description validation. No application services/runtime suites.
+- **Code:** focused `pnpm exec vitest run <test-files>` plus affected lint, type and build checks. Include dependent contracts. Use supported package/file selectors; widen for cross-cutting changes, uncertain coverage or unavailable focused checks. Full commands remain `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` and `pnpm format:check`.
+- **Persistence/auth/chat/permissions:** relevant regressions plus `pnpm test:db`.
+- **Browser flows:** `pnpm test:browser`; **Electron lifecycle/IPC/permissions:** `pnpm test:desktop`.
+- **Voice behavior:** `pnpm test:voice`; capacity/reconnect/rate-budget changes also need `pnpm test:voice:load`.
+- **Release policy/registry/workflow:** `pnpm exec vitest run scripts/release-policy.test.ts`, workflow validation and affected lint/type checks. No image smoke unless image/deployment behavior changes.
+- **Image/migration/backup compatibility:** `pnpm server:build` then `pnpm test:server-image`. **Hosted proxy/service/deployment:** also `pnpm test:hosting` and CI's relevant workflow/shell validators.
 
-## Local prerequisites
+Combine relevant selectors in one run. Reuse successful evidence/builds only while inputs and environment remain unchanged; rerun after relevant changes or unresolved failures. Never drop necessary checks to save time. CI retains its full checks.
 
-Use the Node/pnpm versions declared by the workspace. If dependencies are missing, install with `pnpm install --frozen-lockfile`. Type checking builds shared packages before tests; when running a runtime test alone on a fresh checkout, run `pnpm build:packages` first. Electron verification also needs its binary, installed by `pnpm setup:desktop` when absent.
+## Prerequisites, only when needed
 
-The database suite and browser/desktop/voice smokes need local PostgreSQL and LiveKit. The PostgreSQL test role also needs `CREATEDB` permission for isolated test databases; the default development Compose role provides it. For missing initial configuration, use the existing `pnpm db:setup` and `pnpm voice:setup`; preserve existing credentials. Start Docker Desktop on Windows if stopped, then from the root:
+- Use declared Node/pnpm versions and existing tools. Restore missing dependencies with `pnpm install --frozen-lockfile`; do not reinstall for every task. Runtime tests needing unbuilt shared packages require `pnpm build:packages`; Electron needs `pnpm setup:desktop` if its binary is absent.
+- Integration/UI/voice suites need local PostgreSQL/LiveKit and a test role with `CREATEDB`. For absent initial config use `pnpm db:setup` / `pnpm voice:setup`, preserving credentials. Start Docker if needed, then `pnpm db:up`, `pnpm voice:up`, and inspect the target before `pnpm db:migrate`. Full setup is in [README](../../../README.md).
+- Root UI/voice smoke commands build first. After an unchanged verified build, matching `pnpm --filter @tricord/api test:browser`, `test:desktop` or `test:voice` avoids rebuilding. Browser automation defaults to Windows Edge; `TRICORD_BROWSER_PATH` selects supported Chromium.
+- For upgrades, check affected Node/pnpm, Electron/browser, PostgreSQL/Drizzle, LiveKit and image compatibility; preserve the lockfile.
 
-```powershell
-pnpm db:up
-pnpm voice:up
-pnpm db:migrate
-```
+## Evidence and cleanup
 
-Root smoke commands build first. After an already verified build, the matching `pnpm --filter @tricord/api test:browser` / `test:desktop` / `test:voice` commands avoid another build. Browser automation defaults to installed Windows Edge; `TRICORD_BROWSER_PATH` selects another supported Chromium executable. Linux CI does not certify the Windows UI.
+Verify exit status, assertions and the full relevant summary. Report missing prerequisites, actual failures and skipped checks distinctly; a running container is not readiness. Do not claim CI, physical-device, Windows or WAN coverage from unrelated local checks.
 
-## Interpret and report
+Use disposable fixtures and clean only owned resources; never delete development volumes. The hosted smoke uses fixture TLS and mocked operator commands, not real SSH/backups. Shut down local services only when appropriate, via `pnpm voice:down` / `pnpm db:down` without `-v`.
 
-Check the actual process exit status and complete test summary. A container being running does not establish database readiness or working voice. Missing Docker/services should be fixed or reported as prerequisites, not represented as application-test failures or passing checks.
-
-The image and hosted-stack smokes own disposable containers/networks and tmpfs databases. The hosted smoke also uses a temporary fixture certificate and a networkless container with mocked operator commands for deployment failure checks; it does not contact a real backup backend or SSH host. Other integration fixtures use uniquely named temporary databases/profiles and media prefixes; clean only their owned resources. Never use volume deletion as cleanup. Service shutdown uses `pnpm voice:down` and `pnpm db:down` only when appropriate to the task, without `-v`.
-
-Report new failures separately from the known lazy LiveKit bundle/legacy deploy advisories. Record substantial new evidence in [docs/verification.md](../../../docs/verification.md), with its limits. Claim neither physical-device nor internet-wide voice coverage from synthetic local tests.
+Report new failures separately from known advisories. Record material new evidence in [verification notes](../../../docs/verification.md), with its limits; do not append routine repeated checks or copy old counts as current results.

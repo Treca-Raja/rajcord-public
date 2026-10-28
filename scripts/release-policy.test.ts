@@ -7,15 +7,23 @@ afterEach(() => vi.unstubAllGlobals());
 describe('release boundaries', () => {
   it('rejects mutable image tags and other repositories', () => {
     const sha = 'a'.repeat(40);
-    const digest = 'ghcr.io/fakebane/tricord-public@sha256:' + 'b'.repeat(64);
-    expect(() => validateRelease('fakebane/tricord-public', sha, digest)).not.toThrow();
+    const digest = 'ghcr.io/treca-raja/tricord-public@sha256:' + 'b'.repeat(64);
+    for (const repository of ['Treca-Raja/tricord-public', 'treca-raja/tricord-public'])
+      expect(() => validateRelease(repository, sha, digest)).not.toThrow();
     for (const image of [
-      'ghcr.io/fakebane/tricord-public:main',
+      'ghcr.io/treca-raja/tricord-public:main',
+      'ghcr.io/fakebane/tricord-public@sha256:' + 'b'.repeat(64),
       digest + ';echo bad',
       'ghcr.io/other/app@sha256:' + 'b'.repeat(64),
     ])
-      expect(() => validateRelease('fakebane/tricord-public', sha, image)).toThrow();
-    expect(() => validateRelease('other/repo', sha, digest)).toThrow();
+      expect(() => validateRelease('Treca-Raja/tricord-public', sha, image)).toThrow();
+    for (const repository of [
+      'other/repo',
+      'fakebane/tricord-public',
+      'Treca-Raja/tricord-public\n',
+      undefined,
+    ])
+      expect(() => validateRelease(repository, sha, digest)).toThrow();
   });
 
   it('fails closed when production approvals or branch protection are missing', () => {
@@ -41,18 +49,35 @@ describe('release boundaries', () => {
   });
 
   it('rejects non-main releases before making any GitHub request', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    for (const branch of ['feature/example', 'develop', 'untrusted'])
+      await expect(
+        checkPolicy('main', {
+          GITHUB_REPOSITORY: 'Treca-Raja/tricord-public',
+          GITHUB_SHA: 'a'.repeat(40),
+          GITHUB_REF: `refs/heads/${branch}`,
+        }),
+      ).rejects.toThrow('Only main');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects the former repository before making any GitHub request', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
     await expect(
       checkPolicy('main', {
         GITHUB_REPOSITORY: 'fakebane/tricord-public',
         GITHUB_SHA: 'a'.repeat(40),
-        GITHUB_REF: 'refs/heads/untrusted',
+        GITHUB_REF: 'refs/heads/main',
       }),
-    ).rejects.toThrow('Only main');
+    ).rejects.toThrow('Only the intended repository');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('rejects superseded commits and GitHub permission errors', async () => {
     const env = {
-      GITHUB_REPOSITORY: 'fakebane/tricord-public',
+      GITHUB_REPOSITORY: 'Treca-Raja/tricord-public',
       GITHUB_SHA: 'a'.repeat(40),
       GITHUB_REF: 'refs/heads/main',
       GH_TOKEN: 'disposable-test',
@@ -72,7 +97,7 @@ describe('release boundaries', () => {
   it('checks exact main-only branch policy after finding the approval rule', async () => {
     const sha = 'a'.repeat(40);
     const env = {
-      GITHUB_REPOSITORY: 'fakebane/tricord-public',
+      GITHUB_REPOSITORY: 'Treca-Raja/tricord-public',
       GITHUB_SHA: sha,
       GITHUB_REF: 'refs/heads/main',
       GH_TOKEN: 'disposable-test',
@@ -98,6 +123,11 @@ describe('release boundaries', () => {
     vi.stubGlobal('fetch', fetch);
     await expect(checkPolicy('production', env)).resolves.toBeUndefined();
     expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      'https://api.github.com/repos/Treca-Raja/tricord-public/git/ref/heads/main',
+      'https://api.github.com/repos/Treca-Raja/tricord-public/environments/production',
+      'https://api.github.com/repos/Treca-Raja/tricord-public/environments/production/deployment-branch-policies?per_page=100',
+    ]);
     branch = '*';
     await expect(checkPolicy('production', env)).rejects.toThrow('Only main');
   });

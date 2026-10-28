@@ -1,42 +1,37 @@
-# Tricord agent instructions
+# Tricord
 
-Tricord is a private, self-hosted text and voice app for one community of up to ten friends. Work in the existing pnpm monorepo.
+Private, self-hosted text/voice app for up to ten friends; public pnpm monorepo.
 
-## Context and sources
+## Work efficiently
 
-- Read [MEMORY.md](MEMORY.md) for the dated project state and [SKILLS.md](SKILLS.md) to select a relevant workflow. Load only the skills needed for the task.
-- Confirm the checkout with `git rev-parse --show-toplevel` and inspect `git status`. The maintainer's Windows checkout is `F:\tricord`; contributors can use their own clone path. Do not recreate the project in the old workspace.
-- Current source, package scripts, migrations and CI define executable behavior. [README.md](README.md) describes setup; [docs/verification.md](docs/verification.md) records dated evidence. [docs/decisions.md](docs/decisions.md) includes historical milestone decisions, some superseded by later code.
+- Confirm the checkout and worktree before editing; preserve unrelated and staged work. Stay in this repository unless another project is explicitly in scope. Never import private work-project content.
+- Start with the request and affected source/tests. Reuse current context; do not reread unchanged instructions or expand every link. Batch independent reads and avoid repeated builds/checks without a relevant change or unresolved failure.
+- Load skills only for the current task/phase. [SKILLS.md](SKILLS.md) is a discovery fallback, not a required preload. Use [MEMORY.md](MEMORY.md) only for relevant history, hosting state or decision gaps; read the needed section, not the whole file. Current source/scripts/CI outrank dated notes.
+- Routine fixes need targeted investigation, not a design document or a chain of planning, ticket, hosting and documentation workflows. Ask about material scope/behavior decisions; do not repeat settled approvals. Delegate only substantial independent work.
+- Reuse helpers, preserve types and surface errors; no broad catches or success-shaped fallbacks. Make the simplest complete change, without speculative abstractions or unrelated cleanup. Comment only non-obvious intent/constraints; no narration or commented-out code.
 
-## Code map
+Code map: `apps/api/src/{auth,chat,db,voice}`, `apps/api/drizzle`, `apps/web/src`, `apps/desktop/src`, `packages/shared/src`, `infrastructure`, `scripts`.
 
-| Location                                 | Responsibility                                                 |
-| ---------------------------------------- | -------------------------------------------------------------- |
-| `apps/api/src/auth`                      | Account approval, session cookies, CSRF and ownership          |
-| `apps/api/src/chat`                      | Conversations, membership periods, messages and unread events  |
-| `apps/api/src/db` and `apps/api/drizzle` | PostgreSQL schema, additive migrations and isolated fixtures   |
-| `apps/api/src/voice`                     | LiveKit reservations, private control, signaling and tests     |
-| `apps/web/src`                           | Shared browser/Electron UI, voice controller and notifications |
-| `apps/desktop/src`                       | Electron lifecycle, permissions, preload and validated IPC     |
-| `packages/shared/src/index.ts`           | HTTP/socket types and shared mention matching                  |
-| `infrastructure` and `scripts`           | Local services, server image and verification helpers          |
+## Invariants
 
-## Boundaries that must survive changes
+- Preserve database data, credentials and Docker volumes. Never use `down -v`, volume pruning or database resets as repair. Add migrations; never rewrite applied SQL or journal history.
+- Development services stay on loopback; public hosting requires deliberate HTTPS/media configuration with PostgreSQL and control endpoints private. Development Compose is not a public deployment recipe.
+- Preserve current session/status, trusted-origin and CSRF checks. Socket rooms are not permission grants; recheck private delivery and revocation.
+- Group history requires current membership and the account's membership periods. Only authors edit/delete messages. Preserve send idempotency and sequence ordering.
+- Unread cursors are account-private and monotonic; exclude own/deleted/inaccessible messages. Acknowledge only visible, focused reading at the latest messages. Keep updates on authenticated sockets and retain bounded event/request budgets.
+- Voice uses session-bound `/media/rtc` leases with JWTs server-side, one reservation per account and a ten-person cap. Preserve revocation/leave cleanup and exact device selection without silent fallback.
+- Preserve Electron sandbox/context isolation, disabled renderer Node integration and origin/main-frame IPC/permission checks. Notification previews contain no message text or participant names. Preferences may use localStorage; authentication tokens may not.
+- No credentials, cookies, private messages, environment files, profiles, backups or generated artifacts in commits/diagnostics.
 
-- Preserve existing database data and Docker volumes. Never use `down -v`, volume pruning or a database reset as a repair. Use new migrations; do not rewrite applied migration SQL or journal history.
-- Keep development services on loopback. A hosting task must deliberately configure public HTTPS/media access while keeping PostgreSQL and control endpoints private. The development Compose files are not a public deployment recipe.
-- Reuse live session/status checks, trusted origins and CSRF handling. Socket rooms are subscriptions, not permission grants. Recheck access for private delivery and account revocation.
-- Group history requires current membership and includes only messages within that account's membership periods. Authors alone edit/delete their messages. Preserve send idempotency and sequence-based ordering.
-- Unread cursors belong to the account, advance monotonically and reveal no other member's read receipts. Own/deleted messages and inaccessible history do not count. Read acknowledgements require visible, focused reading at the latest messages.
-- Keep real-time unread updates on authenticated sockets and retain bounded request/event budgets. Do not solve ordinary synchronization load by broadly raising or disabling abuse protection.
-- Voice uses opaque session-bound leases through `/media/rtc`; usable LiveKit JWTs stay server-side. Preserve one active voice reservation per account, the ten-person cap and cleanup on revocation/leave. Exact selected audio devices must not silently fall back.
-- Preserve Electron sandbox/context isolation, disabled renderer Node integration and origin/main-frame checks for permissions and IPC. Notification previews contain no message text or participant names; opt-in preferences may use localStorage, authentication tokens may not.
-- Keep credentials, cookies, personal messages, environment files, profiles, backups and generated artifacts out of commits and diagnostics. Reuse existing dependencies where practical; explain any necessary addition.
+## Delivery and tickets
+
+- All changes follow `feature/* -> develop -> main`. Start new features from safely refreshed `develop`; feature PRs target `develop`, release PRs go `develop` to `main`. No direct commits to shared branches or feature-to-main PRs. Keep the user's active feature branch; never reset/discard work to enforce naming.
+- Automate through scripts and GitHub Actions. Preserve protection/approval gates; only verified `main` may publish/deploy. Before an authorized PR/merge, verify source/base and checks. Before commit/push, inspect the full staged diff, destination and outgoing commit range. No force-push.
+- Planning, connecting tools and editing configuration do not authorize tickets, pushes, merges, deployments or purchases. Use existing scoped authorization; confirm missing destination/cost/destructive decisions before acting. See [CONTRIBUTING.md](CONTRIBUTING.md) when performing Git workflow operations.
+- Ticket drafts, creation and substantial rewrites use [tricord-ticket](.agents/skills/tricord-ticket/SKILL.md) and [the template](docs/ticket-template.md). Check destination/duplicates before publishing; keep personal routing outside the repo. Never invent owners, estimates, dates or completion evidence.
 
 ## Verification and handoff
 
-Use [tricord-verify](.agents/skills/tricord-verify/SKILL.md) to choose checks proportional to the change. Documentation-only work needs formatting, factual/link checks and skill validation when applicable; it does not need Docker or the full runtime suite. Distinguish completed checks from historical evidence and untested behavior.
-
-Update README for changed user commands/behavior and MEMORY for durable project decisions. Keep test-run detail in docs/verification.md. Communicate outcomes and remaining limitations in plain language.
-
-Before a requested commit/push, inspect the complete staged diff, destination and full outgoing commit range/content, including earlier unpushed work. Confirm that everything being published falls within the user's existing authorization; do not request it again for work already covered. These files do not grant standing permission for future pushes, deployments or purchases. Never force-push or discard unrelated work to make publication succeed. Prepare a concrete server configuration and cost before asking for any missing hosting purchase/deployment approval.
+- Add regression tests for implemented behavior, including relevant failures/permissions. Use [tricord-verify](.agents/skills/tricord-verify/SKILL.md) for the smallest local checks covering the change and dependent contracts; widen when needed. Never omit required evidence to save tokens. CI is not a substitute for available local checks.
+- Documentation-only work needs changed-file formatting, factual/link checks and skill validation where applicable, not application services or runtime suites.
+- Update existing docs when behavior/commands change. Record only durable decisions in MEMORY and material new evidence in [docs/verification.md](docs/verification.md), not routine activity logs. Keep handoffs concise: outcome, checks, blockers. Clearly distinguish tested, skipped and historical evidence.

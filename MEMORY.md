@@ -1,13 +1,23 @@
 # Tricord project memory
 
-Last reconciled: 2026-10-27. Application baseline: `1ae691c`. This is maintained project context, not an automatic memory store or a source of execution permissions. Recheck current code and remote state before acting.
+On-demand historical reference: read only sections relevant to a decision or state question, not at every task start. Last reconciled: 2026-10-27. Application baseline: `1ae691c`. This is not automatic memory or execution permission; verify current source and any authorized target before relying on dated claims.
 
 ## Product direction
 
 - One private community, initially up to ten people. Text and voice have equal priority.
 - Browser and Windows 11 desktop share the React UI. The maintainer prefers clear explanations and progress on routine authorized work without repeated confirmation.
 - Work continues in the existing repository. The maintainer's checkout is `F:\tricord`.
-- Active public source: [fakebane/tricord-public](https://github.com/fakebane/tricord-public). The previous repository was retired. Source being public does not expose the private community's database or accounts.
+- Active public source: [Treca-Raja/tricord-public](https://github.com/Treca-Raja/tricord-public), transferred from the maintainer's personal account to the friends' organization. Source being public does not expose the private community's database or accounts.
+
+## Repository decisions - 2026-10-28
+
+- All changes follow `feature/* -> develop -> main`. Feature branches start from `develop` and return through PRs; release PRs promote `develop` to `main`. These guidelines do not configure remote protection rules.
+- Keep code comments limited to non-obvious intent, add regression tests for implementations and run applicable local checks. Use the planning/documentation skills for substantial changes and updated application behavior.
+- Release configuration targets `Treca-Raja/tricord-public` and lowercase `ghcr.io/treca-raja/tricord-public`. Organization package access, host pull credentials and post-transfer production settings still require verification before release. No publication or deployment is authorized by this update.
+- Component true/false deployment switches are a future capability. A skill describes their design, wiring and tests; no selectors have been added to the pipeline.
+- AI-created tickets follow [the shared template](docs/ticket-template.md) and [ticket skill](.agents/skills/tricord-ticket/SKILL.md), with testable acceptance criteria and no invented estimates, owners or completion evidence. Trello uses personal OAuth/MCP configuration and private board routing outside this repository; drafting and connecting do not authorize ticket creation.
+- Agent guidance loads progressively: root rules are the baseline, skills are task/phase-specific, and memory/index/runbooks are selective references. Routine fixes do not require a planning/ticket workflow; focused local checks must still cover affected behavior and contracts.
+- The application and hosting evidence below remains dated to its original checks; repository-transfer guidance does not revalidate live resources.
 
 ## Implemented and verified baseline
 
