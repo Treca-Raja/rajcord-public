@@ -60,6 +60,8 @@ Hosting initialization supports separate web/TURN DNS identities while preservin
 
 ## Limits and follow-up candidates
 
+- Chat hyperlinks use shared HTTP(S) validation and React text/anchor rendering, with simple Markdown labels, balanced destination parentheses and literal backtick code. Links expose normalized destinations in tooltips and omit paired emphasis from automatic URL targets. Stored message bodies and API behavior remain plain text. Electron opens validated web links in the default browser while denying renderer-created windows and navigation; its isolated `test:links` smoke records the OS adapter without opening a real browser.
+
 - Single API instance; multi-instance voice/session coordination is not implemented.
 - Uploads, message search, screen sharing, closed-app push, tray support and signed desktop distribution remain future work, not authorization to implement them automatically.
 - The lazy LiveKit client bundle triggers a non-failing size advisory. The server image uses the existing pnpm legacy-deploy path, which reports a warning. Check new failures independently of these known advisories.

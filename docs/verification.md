@@ -1,3 +1,38 @@
+# Authenticated hyperlink verification — 2026-10-28
+
+Windows verification on `feature/chat-hyperlinks` after `a11e3be`. Installed Docker was confirmed running Linux containers. Existing setup commands generated ignored local credentials without printing them; loopback-only PostgreSQL/LiveKit started and additive migrations applied. Test suites used disposable databases and isolated Edge/Electron profiles. Existing data and volumes were preserved.
+
+- **113 unit/regression tests passed** (`pnpm test`).
+- **65 authentication/chat database tests passed** (`pnpm exec vitest run --config vitest.database.config.ts apps/api/src/chat/chat.integration.test.ts apps/api/src/auth/auth.integration.test.ts`). Unrelated voice/database suites were not selected.
+- **31 Edge checks passed** (`pnpm --filter @tricord/api test:browser`): 11 authentication and 20 messaging/unread/notification checks. Hyperlinks were verified after sending, reloading stored history, receiving another account's message and editing. HTML remained escaped and unsafe Markdown destinations stayed literal.
+- **21 authenticated Electron checks passed across three launches** (`pnpm --filter @tricord/api test:desktop --chat-only`). Added explicit autolink/Markdown-link assertions for sent, received and restored messages, including new-tab/security attributes and normalized destination titles. The new chat-only mode skips camera, microphone and voice checks; the default combined suite remains available.
+- The isolated real Electron window-open smoke passed (`pnpm --filter @tricord/desktop test:links`), with OS launches recorded rather than actually opening a system browser.
+- `pnpm lint`, `pnpm build` and formatting checks passed; only the known LiveKit chunk-size advisory remains. TypeScript compilation covered both updated harnesses.
+
+This closes the earlier authenticated chat verification gap. No microphone capture, voice joins, audio publication, voice/load tests, server-image tests or production changes were needed or performed. LiveKit was only a prerequisite of the existing chat harnesses. The actual default-browser application launch remains outside the recording-adapter check.
+
+# Chat hyperlink review fixes — 2026-10-28
+
+Addressed PR #9 feedback on `feature/chat-hyperlinks`. The reported duplicate-message failure was a misreading of removed/added lines; the browser smoke now selects the persisted message by ID to remove text-match ambiguity. Sequential smoke operations remain sequential because their UI and server state depend on earlier steps.
+
+Automatic links exclude paired emphasis without stripping legitimate unpaired URL characters. Anchors expose the normalized destination in `title` and have an explicit keyboard focus outline. Markdown destinations use a balanced scan; unsupported titles, whitespace and incomplete destinations remain literal. Label matching no longer rescans repeated opening brackets; maximum-length hostile bracket cases are tested. The API already limits message bodies to 4,000 characters.
+
+- Full `pnpm test`: **113 tests passed in 20 files**, including 30 additional review regressions (16 parser/rendering and 14 Electron handler cases).
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: passed; only the known LiveKit chunk-size advisory remains.
+- Real Electron `pnpm --filter @tricord/desktop test:links`: passed on Windows with a separate profile, sandbox/context isolation and renderer Node disabled. Actual renderer-created window-open events delegate valid HTTPS to a recording OS adapter; unsafe destinations and an untrusted app-page origin cause no external action or additional window. Unit cases also cover HTTP, malformed URLs, credentials, origin/port mismatches and rejected OS launches. The smoke script clears the inherited `ELECTRON_RUN_AS_NODE` flag.
+- The system default browser itself is not launched by this smoke. Authenticated Edge chat, database integration and the full authenticated Electron smoke remain unrun because local PostgreSQL/LiveKit configuration and Docker are absent.
+
+# Chat hyperlinks — 2026-10-27
+
+Feature branch: `feature/chat-hyperlinks`, based on `origin/main` at `613b367`. Shared React rendering adds HTTP(S) autolinks and simple Markdown links without changing stored text or API behavior. Electron delegates validated HTTP(S) links to the default browser and continues denying new renderer windows and navigation. No dependencies added.
+
+- `pnpm test`: **83 tests passed in 19 files**, including 18 new parser, escaped-rendering and shared URL validation cases. The initial sandbox run failed four existing Windows process startup/cleanup checks; the complete rerun outside the sandbox passed.
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: passed. The existing lazy LiveKit chunk-size advisory remains.
+- `pnpm format:check`: flags 123 untouched files in this Windows checkout, where `core.autocrlf=true` gives them CRLF line endings. Changed files pass the default Prettier check; `pnpm exec prettier --check . --end-of-line auto` passes for the entire checkout. Unrelated files were preserved.
+- Database integration, Edge authenticated messaging and Electron runtime smokes were not run: Docker and local PostgreSQL/LiveKit configuration are absent. The browser smoke now contains assertions for sent, reloaded, received and edited hyperlinks, but those new assertions have not been executed here. Actual external-browser launches remain unverified.
+
+Only explicit HTTP(S) URLs without credentials are linked. Common trailing punctuation and excess closing brackets are excluded. Markdown support is limited to simple labeled links; backtick code spans/fences, HTML and image syntax remain literal. There is no full Markdown renderer.
+
 # Milestone 2C verification
 
 Windows 11, 2026-10-24. Active repository: F:\tricord. Milestone 2B commit d298aa9 retained.

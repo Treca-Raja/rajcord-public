@@ -1,4 +1,5 @@
 import { validNotice, trustedNoticeFrame } from './notification-policy.js';
+import { createWindowOpenHandler } from './external-links.js';
 import { serverUrl } from './server-url.js';
 import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
 import { app, BrowserWindow, session, dialog, ipcMain, Notification, shell } from 'electron';
@@ -223,7 +224,16 @@ app
       ipcMain.removeHandler('notifications:enable');
       for (const notice of notices) notice.close();
     });
-    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.setWindowOpenHandler(
+      await createWindowOpenHandler({
+        target,
+        currentUrl: () => win.webContents.getURL(),
+        openExternal: (href) => shell.openExternal(href),
+        onError: () => {
+          console.warn('Could not open web link in the default browser.');
+        },
+      }),
+    );
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.webContents.on('will-attach-webview', (event) => event.preventDefault());
     await win.loadURL(target);

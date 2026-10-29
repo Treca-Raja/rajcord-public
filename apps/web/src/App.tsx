@@ -1,4 +1,5 @@
 import { Notifications } from './Notifications';
+import { MessageBody } from './MessageBody';
 import { mentionsUser } from '@tricord/shared';
 import { VoicePanel } from './VoicePanel';
 import { mergeMessages } from './message-state';
@@ -977,7 +978,7 @@ function Messages({
                         </button>
                       </form>
                     ) : (
-                      <p className="message-body">{item.body}</p>
+                      <MessageBody body={item.body ?? ''} />
                     )}
                   </div>
                   {item.author.id === state.user.id && editing !== item.id && (
