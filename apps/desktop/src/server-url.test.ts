@@ -1,5 +1,14 @@
 import { expect, it } from 'vitest';
 import { serverUrl } from './server-url';
+it('pins installed clients to production even with development or smoke overrides', () => {
+  expect(
+    serverUrl(
+      { TRICORD_DEV_URL: 'http://127.0.0.1:5173', TRICORD_SERVER_URL: 'https://evil.example' },
+      true,
+      true,
+    ),
+  ).toBe('https://rajcord.com');
+});
 it('keeps development and test origins isolated from remote configuration', () => {
   expect(serverUrl({})).toBe('http://127.0.0.1:3001');
   expect(

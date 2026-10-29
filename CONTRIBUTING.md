@@ -1,6 +1,6 @@
-# Contributing to Tricord
+# Contributing to Rajcord
 
-Thanks for helping build Tricord. Contributions are welcome from anyone. You do not need write access to contribute.
+Thanks for helping build Rajcord. Contributions are welcome from anyone. You do not need write access to contribute.
 
 ## Setup
 
@@ -13,14 +13,21 @@ Thanks for helping build Tricord. Contributions are welcome from anyone. You do 
 
 ## Submitting changes
 
+- Use [the ticket template](docs/ticket-template.md) when drafting work items. AI-created Trello cards and GitHub issues must follow it; keep personal Trello access/routing in [personal MCP configuration](docs/trello-mcp.md), not the repository.
 - For larger work, open an issue or discussion first to align on scope.
-- Create a descriptive branch, e.g. `feat/message-search` or `fix/login-redirect`.
+- Follow `feature/* -> develop -> main` for features, fixes, documentation and CI changes.
+- Create a descriptive `feature/<short-description>` branch from an up-to-date `develop`, for example `feature/message-search` or `feature/fix-login-redirect`. Inspect local work before fetching or switching; only fast-forward shared branches and never discard unrelated changes.
+- Open feature pull requests against `develop`. Release pull requests go from `develop` to `main`; do not open feature pull requests directly against `main` or push changes directly to either shared branch.
 - Keep PRs focused. Explain what changed and how you tested it.
-- Run the applicable scripts in `package.json`, including `pnpm test`; database tests (`pnpm test:db`) require a working test database.
+- Add tests for implemented behavior and run applicable local checks from [rajcord-verify](.agents/skills/rajcord-verify/SKILL.md). Database tests (`pnpm test:db`) require the documented local services. Documentation-only changes need formatting/link checks, not the runtime stack.
+- Update existing documentation for changed features or commands, using [rajcord-document-change](.agents/skills/rajcord-document-change/SKILL.md). Keep code comments limited to non-obvious intent or constraints.
 - Do not include generated output, dependencies, secrets, or unrelated formatting changes.
+- Text checkouts use LF through `.gitattributes`, including on Windows; PNG and ICO assets remain binary. Preserve applied migration files rather than rewriting them to repair formatting.
 - Be respectful and follow the Code of Conduct.
 
-Trusted collaborators may push branches directly. Contributors without write access can submit pull requests from forks. PR approval is not mandatory, but review is encouraged for security-sensitive and substantial changes.
+Trusted collaborators may push their feature branches when authorized. Contributors without write access can submit pull requests from forks, also targeting `develop`. Check the PR source/base pair and required checks before merging. Preserve configured branch protections; this document does not change GitHub settings. Review is encouraged for security-sensitive and substantial changes.
+
+Verification runs on feature/develop branches and pull requests without publishing or deploying. Only verified `main` commits enter the separately gated release pipeline; a PR merge does not authorize bypassing production approval.
 
 ## Licensing
 

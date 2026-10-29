@@ -4,7 +4,9 @@ packages:
 allowBuilds:
   argon2: true
   electron: true
+  electron-winstaller: false # Squirrel tooling is unused; Rajcord uses NSIS.
   esbuild: true
 
 overrides:
+  'electron-updater@6.8.11>js-yaml': '4.3.2' # Patch YAML parser advisories without changing updater APIs.
   'drizzle-kit@0.31.11>@esbuild-kit/esm-loader': '-'

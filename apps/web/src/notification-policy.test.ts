@@ -28,6 +28,6 @@ it('alerts for private messages and mentions away from the focused conversation'
   expect(shouldNotify({ ...notice, authorId: 'me' }, 'me', null, false)).toBe(false);
 });
 it('notification previews contain no message or participant content', () => {
-  expect(notificationBody(true)).toBe('You were mentioned. Open Tricord to read it.');
-  expect(notificationBody(false)).toBe('New private message. Open Tricord to read it.');
+  expect(notificationBody(true)).toBe('You were mentioned. Open Rajcord to read it.');
+  expect(notificationBody(false)).toBe('New private message. Open Rajcord to read it.');
 });

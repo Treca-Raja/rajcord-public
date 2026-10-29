@@ -45,7 +45,7 @@ export function Notifications({
           .catch(() => setError('Desktop alerts are unavailable.'));
       } else if ('Notification' in window && Notification.permission === 'granted') {
         try {
-          const notification = new Notification('Tricord', {
+          const notification = new Notification('Rajcord', {
             body: notificationBody(notice.mention),
             tag: 'tricord:' + notice.conversationId,
           });
@@ -104,7 +104,7 @@ export function Notifications({
       <button onClick={() => void toggle()} aria-pressed={enabled}>
         {enabled ? 'Disable notifications' : 'Enable notifications'}
       </button>
-      <small>Private messages & @mentions · while Tricord is open</small>
+      <small>Private messages & @mentions · while Rajcord is open</small>
       {error && <small role="status">{error}</small>}
     </div>
   );

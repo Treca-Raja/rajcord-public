@@ -152,7 +152,7 @@ export function createApp({
     void socket.join(['user:' + auth.user.id, 'session:' + auth.sessionId]);
     if (auth.user.status === 'approved')
       socket.emit('connection:welcome', {
-        message: 'Connected to Tricord.',
+        message: 'Connected to Rajcord.',
         connectedAt: new Date().toISOString(),
       });
     socket.on('connection:ping', async (ack) => {

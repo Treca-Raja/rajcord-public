@@ -1,13 +1,29 @@
-# Tricord project memory
+# Rajcord project memory
 
-Last reconciled: 2026-10-27. Application baseline: `1ae691c`. This is maintained project context, not an automatic memory store or a source of execution permissions. Recheck current code and remote state before acting.
+On-demand historical reference: read only sections relevant to a decision or state question, not at every task start. Last reconciled: 2026-10-27. Application baseline: `1ae691c`. This is not automatic memory or execution permission; verify current source and any authorized target before relying on dated claims.
 
 ## Product direction
 
 - One private community, initially up to ten people. Text and voice have equal priority.
 - Browser and Windows 11 desktop share the React UI. The maintainer prefers clear explanations and progress on routine authorized work without repeated confirmation.
-- Work continues in the existing repository. The maintainer's checkout is `F:\tricord`.
-- Active public source: [fakebane/tricord-public](https://github.com/fakebane/tricord-public). The previous repository was retired. Source being public does not expose the private community's database or accounts.
+- Work continues in the existing repository. Use the current clone path rather than assuming a maintainer's workstation layout.
+- Active public source: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public), transferred from the maintainer's personal account to the friends' organization. Source being public does not expose the private community's database or accounts.
+
+## Repository decisions - updated 2026-10-29
+
+- The repository is now `Treca-Raja/rajcord-public`; skill names use `rajcord-`. Repository links and release image validation use the new identity. Existing package/environment/database/volume/cookie/server identifiers remain compatible; the Windows client/installer uses Rajcord identity and an isolated per-user profile.
+
+- All changes follow `feature/* -> develop -> main`. Feature branches start from `develop` and return through PRs; release PRs promote `develop` to `main`. These guidelines do not configure remote protection rules.
+- Keep code comments limited to non-obvious intent, add regression tests for implementations and run applicable local checks. Use the planning/documentation skills for substantial changes and updated application behavior.
+- Release configuration targets `Treca-Raja/rajcord-public` and lowercase `ghcr.io/treca-raja/rajcord-public`. Organization package access, host pull credentials and post-transfer production settings still require verification before release. No publication or deployment is authorized by this update.
+- Component true/false deployment switches are a future capability. A skill describes their design, wiring and tests; no selectors have been added to the pipeline.
+- AI-created tickets follow [the shared template](docs/ticket-template.md) and [ticket skill](.agents/skills/rajcord-ticket/SKILL.md), with testable acceptance criteria and no invented estimates, owners or completion evidence. Trello uses personal OAuth/MCP configuration and private board routing outside this repository; drafting and connecting do not authorize ticket creation.
+- Agent guidance loads progressively: root rules are the baseline, skills are task/phase-specific, and memory/index/runbooks are selective references. Routine fixes do not require a planning/ticket workflow; focused local checks must still cover affected behavior and contracts.
+- The application and hosting evidence below remains dated to its original checks; repository-transfer guidance does not revalidate live resources.
+
+## Naming integration - 2026-10-29
+
+The remaining shared UI, native notification and human-readable API/development messages use Rajcord. The [naming inventory](docs/naming.md) records compatibility exceptions and records the inherited guidance/registry changes from PR #12 and the now-merged Windows distribution work from PR #11. This branch starts from develop and retains its ghcr.io/treca-raja/rajcord-public configuration; it does not migrate installed profiles, registry artifacts, saved release markers, runtime credentials or production services. Package write/pull access and a tested recovery path for former-namespace images remain release prerequisites.
 
 ## Implemented and verified baseline
 
@@ -25,8 +41,8 @@ The verification record for baseline `1ae691c` reports **139 Vitest tests** (51 
 - Local web/API ports are 5173/3001. PostgreSQL is bound to 127.0.0.1:5432. LiveKit uses loopback 7880/7881 TCP and 7882 UDP. Confirm Compose before troubleshooting an actual machine.
 - Existing local settings live in ignored `apps/api/.env`, `infrastructure/.env` and `infrastructure/.env.voice`. Setup scripts preserve initialized configuration. Do not regenerate an initialized database password.
 - Docker Desktop must be running before database/media work. A connection refusal usually calls for checking services/configuration first, not modifying application code or deleting data.
-- `pnpm dev:desktop` waits for Vite and the Tricord health endpoint; an idle watch process normally stays running. Built desktop supports an exact HTTPS `TRICORD_SERVER_URL`; the development command deliberately targets the local UI.
-- Closing Electron quits it; minimizing keeps it running. There is no tray mode. Windows development notification opt-in registers a Start Menu shortcut. The preference is per account/device.
+- `pnpm dev:desktop` waits for Vite and the Rajcord health endpoint; an idle watch process normally stays running. Unpackaged desktop supports an exact HTTPS `TRICORD_SERVER_URL`; the development command targets the local UI. Packaged clients always use `https://rajcord.com` regardless of inherited development/test overrides.
+- Closing development Electron quits it; minimizing keeps it running. Packaged Rajcord closes to tray; Quit/Ctrl+Q exits. Windows development notification opt-in registers a Start Menu shortcut. The preference is per account/device.
 
 ## Hosting direction and remaining work
 
@@ -48,8 +64,12 @@ Hosting initialization supports separate web/TURN DNS identities while preservin
 
 ## Limits and follow-up candidates
 
+- PR #11 review fixes (2026-10-29): `.gitattributes` enforces LF for text while PNG/ICO stay binary; no migration files are rewritten. Contributor flow is `feature/* -> develop -> main`, with Windows review builds on both integration branches and release gates still main-only. Updater preparation failures release the operation guard; reported installer errors invalidate that attempt's queued quit and allow a fresh verified retry without private updater-state changes. The PR now targets develop; current Windows CI and real signed-update acceptance still require their own evidence.
+- Chat hyperlinks use shared HTTP(S) validation and React text/anchor rendering, with simple Markdown labels, balanced destination parentheses and literal backtick code. Links expose normalized destinations in tooltips and omit paired emphasis from automatic URL targets. Stored message bodies and API behavior remain plain text. Electron opens validated web links in the default browser while denying renderer-created windows and navigation; its isolated `test:links` smoke records the OS adapter without opening a real browser.
+
 - Single API instance; multi-instance voice/session coordination is not implemented.
-- Uploads, message search, screen sharing, closed-app push, tray support and signed desktop distribution remain future work, not authorization to implement them automatically.
+- Uploads, message search, screen sharing and closed-app push remain future work, not authorization to implement them automatically.
+- Rajcord desktop distribution implementation (2026-10-28, dedicated distribution branch): NSIS x64, `com.rajcord.desktop`, per-user `%APPDATA%\Rajcord`, pinned production HTTPS and tray lifecycle. `pnpm desktop:package` builds unsigned/manual-install output by default; signed builds require an exact publisher DN and certificate and enable fail-closed Authenticode-verified GitHub updates. Stable electron-builder/updater are pinned to 26.18.0/6.8.11; the newer v27/v7 documentation is not their security contract. The new Windows workflow builds review artifacts automatically but only creates draft Releases after explicit dispatch and a verified protected `desktop-release` environment. No remote environment/signing credential/release has been configured. Real signed two-release updating and installed physical/WAN media acceptance remain outstanding. See `docs/desktop-distribution.md` and dated verification evidence.
 - The lazy LiveKit client bundle triggers a non-failing size advisory. The server image uses the existing pnpm legacy-deploy path, which reports a warning. Check new failures independently of these known advisories.
 - Detailed architecture rationale is in [docs/decisions.md](docs/decisions.md). Early statements about platform-only preload, no hosted origin or no client ICE configuration were superseded by later voice/hosting/notification work; consult source and the newer verification entries.
 

@@ -33,7 +33,7 @@ jobs:
       - run: pnpm lint
       - name: Validate workflow and operator scripts
         run: |
-          docker run --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" --workdir /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 .github/workflows/verify.yml
+          docker run --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" --workdir /repo rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 .github/workflows/*.yml
           docker run --rm --network none --mount "type=bind,source=$GITHUB_WORKSPACE,target=/repo,readonly" --workdir /repo koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d -x scripts/hosting/*.sh
       - run: pnpm typecheck
       - run: pnpm test
@@ -108,7 +108,7 @@ jobs:
           test "$(docker inspect tricord-ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           trap 'docker logout ghcr.io' EXIT
-          tag="ghcr.io/fakebane/tricord-public:$GITHUB_SHA"
+          tag="ghcr.io/treca-raja/rajcord-public:$GITHUB_SHA"
           docker tag tricord-ci "$tag"
           docker push "$tag"
           image=$(docker inspect "$tag" --format '{{index .RepoDigests 0}}')

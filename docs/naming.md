@@ -1,0 +1,42 @@
+# Rajcord naming convention and inventory
+
+Use **Rajcord** for the product, `rajcord` for new technical identifiers where no existing contract applies, and **Treca-Raja/rajcord-public** for the [source repository](https://github.com/Treca-Raja/rajcord-public). Preserve canonical casing in current links. Existing technical names remain when changing them would lose data/settings or break a matching consumer.
+
+## Integration scope - 2026-10-29
+
+This implements the remaining branding work from [the naming ticket](https://trello.com/c/pcsX3wsk), integrated with `develop` at `3bf4071`. It preserves the merged hyperlink feature and does not import unrelated local hosting or Codex configuration work.
+
+| Surface                               | Audit result                                                                                                                                                                                                                                                        |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browser/shared UI                     | Page titles, wordmark, account/device labels and generic notification text use Rajcord; matching test expectations were updated. Notification previews still contain no participant names or message text.                                                          |
+| Native desktop notifications          | Microphone prompt, notification title/body and shortcut description use Rajcord. Merged PR #11 already supplies native Rajcord branding and the packaged profile/app ID; this change preserves that implementation.                                                 |
+| API/development tools                 | Human-readable welcome/startup diagnostics use Rajcord; health and protocol identifiers are retained.                                                                                                                                                               |
+| Contributor guidance and source links | Merged [PR #12](https://github.com/Treca-Raja/rajcord-public/pull/12) already supplies canonical repository/community links, Rajcord skill directories and `rajcord.code-workspace`. Those changes are inherited rather than duplicated.                            |
+| Desktop packaging/update identity     | Merged [PR #11](https://github.com/Treca-Raja/rajcord-public/pull/11) supplies installer/tray branding, packaged profile/app ID, signed updates and release automation. Those changes are inherited without duplication; their release acceptance remains separate. |
+| Workspace/manifests                   | Existing `tricord` / `@tricord/*` names, imports, package filters and lockfile remain matched. No dependency or package-resolution migration is needed for visible branding.                                                                                        |
+| CI/registry                           | Inherited `develop` configuration consistently uses `ghcr.io/treca-raja/rajcord-public` in publication, source/image policy and operator validation. This PR does not change registry behavior or claim that access/publication is verified.                        |
+
+## Registry and recovery boundary
+
+The earlier local naming prototype retained `ghcr.io/fakebane/tricord-public`; merged PR #12 changed the release configuration on `develop`. This integrated branch keeps that upstream configuration instead of reintroducing conflicting validators. Existing negative tests reject former namespaces and mutable tags.
+
+Changing source configuration does not move a registry package or an installed runtime. Before any separately authorized release, verify organization package write access, host pull access, saved image markers and a tested recovery procedure for existing rollback digests. Preserve former artifacts and markers as recovery evidence. Current validators reject former-namespace images; do not assume rollback through those validators works or overwrite initialized configuration to make it pass. Any necessary recovery/migration change needs its own reviewed scope and focused checks. This naming PR performs no publication, production access or deployment.
+
+## Retained legacy references
+
+The tracked-file legacy-name search is classified by these families; the same exceptions apply to matching source, commands, examples and tests.
+
+| Identifier family / location                                                                                                          | Reason retained                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Root/package manifests, `pnpm-lock.yaml`, `@tricord/*` imports and package/Docker build filters                                       | Existing workspace contracts; keep references consistent until a coordinated tooling migration.                                                              |
+| `tricord_session`, browser storage/preferences, account channels, notification keys/tags, `window.tricordDesktop` and IPC contracts   | Preserve existing sessions, settings and renderer/preload interoperability.                                                                                  |
+| `TRICORD_*`, `tricord-api` health identity, current Electron profile defaults                                                         | Preserve initialized configuration, startup checks and stored sessions.                                                                                      |
+| Existing `com.rajcord.desktop` app ID, `Rajcord development.lnk` and packaged `Rajcord` profile                                       | Retain the desktop distribution identity already merged into develop. This naming change performs no further notification registration or profile migration. |
+| Database/schema/migration names and persisted default resources                                                                       | Preserve initialized data and applied migration history. No SQL, journal or serialization migration is performed.                                            |
+| Docker project/service/container/network/volume names, local `tricord-server:alpha`, CI image/archive names and LiveKit room prefixes | Avoid orphaning initialized services; keep matching build, delivery and isolation references intact.                                                         |
+| `/etc/tricord`, `/opt/tricord`, deploy account, systemd filenames/descriptions, firewall names/comments, TLS lineages and restic tags | Existing operator/recovery contracts. Cosmetic operator labels remain with their legacy resources to avoid service configuration churn.                      |
+| Former source/image names in negative tests and dated evidence                                                                        | Rejected inputs and historical commit/run/artifact URLs are intentional. They do not define current release targets.                                         |
+| Temporary fixture names, disposable certificate subjects, test HTML/domains and test database prefixes                                | Internal labels remain consistently matched; no broad fixture migration is required.                                                                         |
+| Historical verification, architecture/milestone documents and dated memory                                                            | Preserve names and URLs accurate to their recorded date. Local folder names are independent of GitHub repository names.                                      |
+
+No existing session, profile, setting, database, Docker volume, deployment directory or backup identity is migrated. Physical-device/WAN voice, clean installation and signed update acceptance remain separate from local branding verification.

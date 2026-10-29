@@ -43,7 +43,7 @@ export async function waitForDevelopment({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  console.log('Waiting up to 30 seconds for the web app and Tricord API…');
+  console.log('Waiting up to 30 seconds for the web app and Rajcord API…');
   try {
     await waitForDevelopment();
     console.log('Web app and API are ready. Opening Electron…');

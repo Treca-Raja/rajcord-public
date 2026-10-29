@@ -224,32 +224,52 @@ try {
       "SELECT id FROM conversations WHERE kind='channel' AND name='general'",
     )
   ).rows[0].id;
-  await compose('Browser message <img src=x onerror=window.tricordXss=true>');
+  const browserMessage =
+    'Browser message <img src=x onerror=window.tricordXss=true> https://github.com, [Docs](https://example.com/docs) [bad](javascript:alert(1))';
+  await compose(browserMessage);
   await wait("document.querySelector('.message-scroll').innerText.includes('Browser message')");
   assert.equal(await js('window.tricordXss===true'), false);
   const original = (
     await fixture.database.pool.query(
-      'SELECT id FROM messages WHERE author_id=$1 AND conversation_id=$2',
-      [user.id, general],
+      'SELECT id FROM messages WHERE author_id=$1 AND conversation_id=$2 AND body=$3 ORDER BY seq DESC LIMIT 1',
+      [user.id, general, browserMessage],
     )
   ).rows[0];
   assert.ok(original);
+  const messageSelector = '[data-message-id="' + original.id + '"]';
+  const secureLinks = `(()=>{const body=document.querySelector('${messageSelector} .message-body');if(!body)return false;const links=[...body.querySelectorAll('a')];return links.length===2 && links[0].textContent==='https://github.com' && links[1].textContent==='Docs' && links.every(a=>a.target==='_blank' && a.rel==='noopener noreferrer' && a.title===a.href && /^https:/.test(a.href)) && !body.querySelector('img') && body.textContent.includes('[bad](javascript:alert(1))')})()`;
+  await wait(secureLinks);
+  await call('Page.reload');
+  await wait(secureLinks);
   const reply = await app.inject({
     url: '/api/conversations/' + general + '/messages',
     method: 'POST',
     headers: ownerHeaders,
-    payload: { body: 'Reply from independent session', clientId: randomUUID() },
+    payload: {
+      body: 'Reply from independent session https://example.com/reply',
+      clientId: randomUUID(),
+    },
   });
   assert.equal(reply.statusCode, 200);
   await wait(
     "document.querySelector('.message-scroll').innerText.includes('Reply from independent session')",
   );
+  assert.equal(
+    await js('!!document.querySelector(\'.message-body a[href="https://example.com/reply"]\')'),
+    true,
+  );
   await js('document.querySelector(\'button[aria-label="Edit message"]\').click()');
   await js(
-    "(()=>{const input=document.querySelector('.edit-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Edited in browser');input.dispatchEvent(new Event('input',{bubbles:true}));})()",
+    "(()=>{const input=document.querySelector('.edit-form textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Edited in browser https://example.com/edited');input.dispatchEvent(new Event('input',{bubbles:true}));})()",
   );
   await js("document.querySelector('.edit-form').requestSubmit()");
-  await wait("document.querySelector('.message-body')?.innerText==='Edited in browser'");
+  await wait(
+    "document.querySelector('.message-body')?.innerText==='Edited in browser https://example.com/edited'",
+  );
+  assert.equal(
+    await js('!!document.querySelector(\'.message-body a[href="https://example.com/edited"]\')'),
+    true,
+  );
   await screenshot('messaging-browser-channel.png');
   await js(
     'window.confirm=()=>true;document.querySelector(\'button[aria-label="Delete message"]\').click()',
@@ -347,7 +367,7 @@ try {
   await wait('window.notificationCalls.length===1');
   assert.equal(
     await js('window.notificationCalls[0].options.body'),
-    'You were mentioned. Open Tricord to read it.',
+    'You were mentioned. Open Rajcord to read it.',
   );
   await js('window.notificationCalls[0].onclick()');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
@@ -456,6 +476,7 @@ try {
           'composer persists',
           'independent-session realtime reply',
           'untrusted text stays text',
+          'secure hyperlinks in sent, stored, received and edited messages',
           'author edit',
           'author delete',
           'private DM UI',
@@ -541,7 +562,7 @@ try {
     ),
   );
   console.log(
-    'PASS: Browser authentication (11 checks) and messaging/unread/notification (19 checks) in headless Microsoft Edge.',
+    'PASS: Browser authentication (11 checks) and messaging/unread/notification (20 checks) in headless Microsoft Edge.',
   );
 } finally {
   if (ws?.readyState === WebSocket.OPEN) {
