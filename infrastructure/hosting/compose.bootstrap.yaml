@@ -18,7 +18,7 @@ services:
         max-size: '10m'
         max-file: '3'
   certbot:
-    image: certbot/certbot:v5.4.0@sha256:c23159d30afdd9c97960578aa4654f5901de6cae394958f894074dedd55e599d
+    image: certbot/certbot:v5.8.0@sha256:f70ad0adbb7e117f0fe42a63c553f28ea451edabc0148757b6efcd9735acaa20
     profiles: [tools]
     volumes:
       - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/acme:/var/www/acme
