@@ -19,7 +19,7 @@ The identity is `com.rajcord.desktop`, product/executable/shortcut name `Rajcord
 
 The original geometric R icon is tracked as SVG, PNG and multi-resolution ICO. Regenerate it with `node scripts/desktop-icons.mjs`; no image service or extra build dependency is needed.
 
-Never copy `.env`, `.local`, profiles, server code, API keys or signing material into the app. The desktop archive includes compiled desktop runtime code, its icon and production npm dependencies. `pnpm desktop:audit` checks identity, excluded private/test files and update configuration. The installer uses the system's normal HTTPS trust; there is no TLS-error bypass.
+Never copy `.env`, `.local`, profiles, server code, API keys or signing material into the app. The desktop archive includes compiled desktop runtime code, its icon and production npm dependencies. Compiled `*.test.js` and `*smoke.js` files are excluded from both desktop code and bundled dependencies. `pnpm desktop:audit` checks identity, excluded private/test files and update configuration; failures list the rejected archive paths. The installer uses the system's normal HTTPS trust; there is no TLS-error bypass.
 
 ## Runtime behavior
 
