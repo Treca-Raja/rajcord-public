@@ -134,6 +134,14 @@ Messages are plain text, limited to 4,000 characters. Enter sends; Shift+Enter a
 
 The composer keeps its draft on connection/send failure and retries with the same idempotency ID. Reconnection synchronizes missed sends, edits and deletions. There is no durable offline queue; reloading or switching conversations can discard an unsent draft. No uploads, search or blocking UI are included. Community voice is described below.
 
+## Member availability
+
+The right-hand **Members** panel groups approved accounts into **Online** and **Offline**, with distinct-account counts and an initially expanded, collapsible Offline section. Public channels show **Community**. DMs and groups start with **Participants** and offer a Community view. Offline members remain messageable. On smaller windows, **Members** opens a keyboard-accessible drawer; Escape or **Close members** closes it and returns focus. Messages covered by that drawer are not marked read.
+
+Online means at least one authorized application connection, including background or minimized browser/Electron windows. It does not mean reading, typing, using voice or available to answer, and it is separate from account approval. Signing in without an application connection does not make an account Online. Multiple tabs/devices count once; disconnecting one leaves the account Online while another remains.
+
+The approved timing policy uses a 25-second heartbeat interval, a 20-second heartbeat timeout and a five-second reconnect grace: undetected network loss can therefore take up to approximately 50 seconds to become Offline. Known logout, session revocation and account suspension/removal bypass grace. Healthy local propagation and snapshot targets are five seconds; client synchronization times out after five seconds. Timing approval and physical-device/network acceptance are recorded separately in [verification](docs/verification.md). Disconnection or synchronization failure shows **Presence unavailable** and unavailable counts until an authoritative snapshot succeeds. Presence is ephemeral within one API process; it stores no last-seen history and exposes no private conversation activity or device/session counts.
+
 ## Unread messages, mentions and notifications
 
 Unread counts and @mention badges appear beside channels, DMs and groups, and the window title shows the total unread count. Read progress is saved per account in PostgreSQL and shared across devices. Authenticated sockets carry unread summaries and read acknowledgements without extra HTTP inbox polling; read acknowledgements are coalesced while reading continuously, and existing request limits remain unchanged. Your own messages and deleted messages do not count as unread. Group counts follow the same membership-history rules as message access. Existing history starts unread until you open it.

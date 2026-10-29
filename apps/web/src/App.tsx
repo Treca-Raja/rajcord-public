@@ -1,3 +1,5 @@
+import { MemberPanel } from './MemberPanel';
+import { usePresence } from './use-presence';
 import { Notifications } from './Notifications';
 import { MessageBody } from './MessageBody';
 import { mentionsUser } from '@tricord/shared';
@@ -42,6 +44,9 @@ function Community() {
   const [conversations, setConversations] = useState<Conversation[]>([]),
     [invites, setInvites] = useState<Invitation[]>([]),
     [members, setMembers] = useState<AuthUser[]>([]);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [rosterAvailable, setRosterAvailable] = useState(false);
+  const presence = usePresence(socket);
   const [selected, setSelected] = useState<string | null>(null),
     [mobile, setMobile] = useState(false),
     [error, setError] = useState(''),
@@ -52,6 +57,7 @@ function Community() {
   const reloadVersion = useRef(0);
   const reload = useCallback(async () => {
     const version = ++reloadVersion.current;
+    setRosterAvailable(false);
     try {
       const [data, inbox, people] = await Promise.all([
         requestRef.current<{ conversations: Conversation[] }>('/conversations'),
@@ -62,21 +68,41 @@ function Community() {
       setConversations(data.conversations);
       setInvites(inbox.invitations);
       setMembers(people.users);
+      setRosterAvailable(true);
       setSelected((current) =>
         data.conversations.some((c) => c.id === current)
           ? current
           : (data.conversations.find((c) => c.kind === 'channel' && !c.archived)?.id ?? null),
       );
     } catch (e) {
+      if (version !== reloadVersion.current) return;
+      const status = (e as { status?: number }).status;
+      if (status === 401 || status === 403) {
+        setConversations([]);
+        setInvites([]);
+        setMembers([]);
+        setSelected(null);
+        setModal(null);
+      }
       setError((e as Error).message);
     }
   }, []);
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, presence.rosterVersion]);
   useEffect(() => {
     if (!socket) return;
     const changed = () => void reload();
+    const closed = ({ conversationId }: { conversationId: string }) => {
+      // Known access loss removes private cached data before any fallible refresh.
+      setConversations((previous) => previous.filter((c) => c.id !== conversationId));
+      setInvites((previous) =>
+        previous.filter((invite) => invite.conversationId !== conversationId),
+      );
+      setSelected((previous) => (previous === conversationId ? null : previous));
+      setModal(null);
+      void reload();
+    };
     const unreadChanged = (data: ConversationUnread) =>
       setConversations((previous) =>
         previous.map((c) => {
@@ -91,17 +117,27 @@ function Community() {
       );
     socket.on('unread:changed', unreadChanged);
     socket.on('inbox:changed', changed);
+    socket.on('account:changed', changed);
     socket.on('connect', changed);
-    socket.on('conversation:closed', changed);
+    socket.on('conversation:closed', closed);
     window.addEventListener('focus', changed);
     return () => {
       socket.off('unread:changed', unreadChanged);
       socket.off('inbox:changed', changed);
+      socket.off('account:changed', changed);
       socket.off('connect', changed);
-      socket.off('conversation:closed', changed);
+      socket.off('conversation:closed', closed);
       window.removeEventListener('focus', changed);
     };
   }, [socket, reload]);
+  useEffect(() => {
+    const wide = window.matchMedia('(min-width: 1201px)');
+    const resize = () => {
+      if (wide.matches) setMembersOpen(false);
+    };
+    wide.addEventListener('change', resize);
+    return () => wide.removeEventListener('change', resize);
+  }, []);
   const unreadTotal = conversations.reduce((total, c) => total + c.unreadCount, 0);
   useEffect(() => {
     document.title = (unreadTotal ? '(' + unreadTotal + ') ' : '') + 'Rajcord';
@@ -146,7 +182,7 @@ function Community() {
   };
   return (
     <div className={'shell live-shell' + (mobile ? ' mobile-open' : '')}>
-      <nav className="rail" aria-label="Platform">
+      <nav className="rail" aria-label="Platform" inert={membersOpen}>
         <div className="logo">
           t<span>•</span>
         </div>
@@ -166,7 +202,7 @@ function Community() {
           <Settings />
         </button>
       </nav>
-      <aside className="sidebar">
+      <aside className="sidebar" inert={membersOpen}>
         <div className="community">
           <div>
             <strong>
@@ -296,7 +332,7 @@ function Community() {
           </button>
         </div>
       </aside>
-      <section className="chat">
+      <section className="chat" inert={membersOpen}>
         <header className="channel-header">
           <button
             className="mobile-menu"
@@ -314,6 +350,14 @@ function Community() {
               : 'Only conversation members can read these messages.'}
           </span>
           <div className="grow" />
+          <button
+            className="members-action"
+            aria-label="Members"
+            aria-expanded={membersOpen}
+            onClick={() => setMembersOpen(true)}
+          >
+            <Users size={18} />
+          </button>
           {current && (
             <button aria-label="Manage conversation" onClick={() => setModal('manage')}>
               <Settings size={18} />
@@ -329,7 +373,11 @@ function Community() {
           </div>
         )}
         {current ? (
-          <Messages key={current.id} conversation={current} readingAllowed={!mobile && !modal} />
+          <Messages
+            key={current.id}
+            conversation={current}
+            readingAllowed={!mobile && !modal && !membersOpen}
+          />
         ) : (
           <div className="empty-channel">
             <MessageCircle size={34} />
@@ -341,62 +389,33 @@ function Community() {
           </div>
         )}
       </section>
-      <aside className="members">
-        <header>
-          <Users size={17} /> {current?.kind === 'channel' ? 'THE PEOPLE' : 'PARTICIPANTS'}
-          <span>{current?.members.length ?? members.length}</span>
-        </header>
-        <div className="section-label">
-          {current?.kind === 'group' ? 'GROUP MEMBERS' : 'COMMUNITY'}
-        </div>
-        {(current?.members ?? members).map((person) => (
-          <button
-            className="member member-button"
-            key={person.id}
-            onClick={() => {
-              if (person.id !== state.user.id)
-                void action(async () => {
-                  const data = await request<{ conversation: Conversation }>(
-                    '/conversations',
-                    'POST',
-                    { kind: 'dm', userId: person.id },
-                  );
-                  setSelected(data.conversation.id);
-                });
-            }}
-            disabled={person.id === state.user.id || person.status !== 'approved'}
-          >
-            <Avatar>{person.displayName.slice(0, 1)}</Avatar>
-            <div>
-              <strong>{person.displayName}</strong>
-              <small>
-                {current?.managerId === person.id
-                  ? 'Group manager'
-                  : person.id === state.user.id
-                    ? 'You'
-                    : person.status === 'approved'
-                      ? '@' + person.username
-                      : 'Unavailable'}
-              </small>
-            </div>
-          </button>
-        ))}
-        <div className="member-note">
-          <button onClick={openSettings}>Manage accounts & approvals →</button>
-        </div>
-        <div className="grow" />
-        <div className="system-card" data-connection={connected ? 'connected' : 'disconnected'}>
-          <strong>{connected ? 'Connected' : 'Reconnecting…'}</strong>
-          <p>
-            {connected
-              ? 'Messages are saved to your server.'
-              : 'Your draft stays here. We’ll catch up when connected.'}
-          </p>
-        </div>
-        <div className="version">
-          RAJCORD <span>Voice & text</span>
-        </div>
-      </aside>
+      <MemberPanel
+        key={current?.id ?? 'community'}
+        conversation={current}
+        members={members}
+        rosterAvailable={rosterAvailable}
+        snapshot={presence.snapshot}
+        connected={connected}
+        userId={state.user.id}
+        drawer={membersOpen}
+        close={() => setMembersOpen(false)}
+        settings={openSettings}
+        retry={() => {
+          presence.retry();
+          void reload();
+        }}
+        contact={(id) => {
+          setMembersOpen(false);
+          if (id !== state.user.id)
+            void action(async () => {
+              const data = await request<{ conversation: Conversation }>('/conversations', 'POST', {
+                kind: 'dm',
+                userId: id,
+              });
+              setSelected(data.conversation.id);
+            });
+        }}
+      />
       {modal && (
         <div className="modal-backdrop">
           <section
@@ -809,14 +828,14 @@ function Messages({
     const changed = (data: { conversationId: string }) => {
       if (data.conversationId === conversation.id) void synchronize();
     };
-    socket.on('connect', join);
     socket.on('conversation:changed', changed);
+    socket.on('connect', join);
     if (socket.connected) join();
     const focus = () => void synchronize();
     window.addEventListener('focus', focus);
     return () => {
-      socket.off('connect', join);
       socket.off('conversation:changed', changed);
+      socket.off('connect', join);
       window.removeEventListener('focus', focus);
     };
   }, [socket, conversation.id, synchronize]);

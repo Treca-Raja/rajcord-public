@@ -6,6 +6,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
+import { io, type Socket } from 'socket.io-client';
+import { PRESENCE_TIMING } from '@tricord/shared';
 import { testDatabase } from '../db/test-database.js';
 import { AuthService } from './service.js';
 import { createApp } from '../app.js';
@@ -29,6 +31,7 @@ const executable =
   process.env.TRICORD_BROWSER_PATH ||
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 let child: ReturnType<typeof spawn> | undefined, ws: WebSocket | undefined;
+const presencePeers: Socket[] = [];
 const pending = new Map<
   number,
   {
@@ -60,8 +63,8 @@ async function js<T = unknown>(expression: string): Promise<T> {
   if (result.exceptionDetails) throw new Error('Browser evaluation failed.');
   return result.result.value;
 }
-async function wait(expression: string) {
-  const end = Date.now() + 15000;
+async function wait(expression: string, deadlineMs = 15000) {
+  const end = Date.now() + deadlineMs;
   while (Date.now() < end) {
     if (await js(expression)) return;
     await delay(100);
@@ -208,6 +211,58 @@ try {
   assert.equal(sessionCookie.session, false);
   await screenshot('auth-browser-approved.png');
 
+  // An HTTP login alone is offline. Two independent application connections still
+  // produce one account row, and closing either cannot erase the other connection.
+  const ownerRow = `[data-member-id="${owner.id}"]`;
+  await wait(`document.querySelector('${ownerRow}')?.dataset.presence==='offline'`);
+  async function connectPresencePeer() {
+    const peer = io(origin, {
+      transports: ['websocket'],
+      extraHeaders: { origin, cookie: ownerHeaders.cookie },
+      auth: { csrfToken: ownerLogin.json().csrfToken },
+      reconnection: false,
+    });
+    presencePeers.push(peer);
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Presence peer connection timed out')), 5000);
+      peer.once('connect', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      peer.once('connect_error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+    return peer;
+  }
+  const firstPeer = await connectPresencePeer();
+  await wait(`document.querySelector('${ownerRow}')?.dataset.presence==='online'`, 5000);
+  const secondPeer = await connectPresencePeer();
+  firstPeer.disconnect();
+  assert.equal(await js(`document.querySelectorAll('${ownerRow}').length`), 1);
+  await js('document.hasFocus=()=>false');
+  assert.equal(await js(`document.querySelector('${ownerRow}')?.dataset.presence`), 'online');
+  await js('delete document.hasFocus');
+  secondPeer.disconnect();
+  await wait(
+    `document.querySelector('${ownerRow}')?.dataset.presence==='offline'`,
+    PRESENCE_TIMING.reconnectGraceMs + 5000,
+  );
+  await js(
+    `window.rosterRefreshes=0;window.originalPresenceFetch=window.fetch;window.fetch=async(...args)=>{const result=await window.originalPresenceFetch(...args);if(args[0]==='/api/members')window.rosterRefreshes++;return result};document.querySelector('${ownerRow}').focus();window.dispatchEvent(new Event('focus'))`,
+  );
+  await wait('window.rosterRefreshes>0');
+  await wait("!!document.querySelector('[data-presence-state=ready]')");
+  await wait(`document.activeElement?.dataset.memberId===${JSON.stringify(owner.id)}`);
+  await js(
+    "document.querySelector('.chat').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));document.activeElement.blur();window.rosterRefreshes=0;window.dispatchEvent(new Event('focus'))",
+  );
+  await wait('window.rosterRefreshes>0');
+  await wait("!!document.querySelector('[data-presence-state=ready]')");
+  assert.equal(await js('document.activeElement?.hasAttribute("data-member-id")'), false);
+  await js('window.fetch=window.originalPresenceFetch;delete window.originalPresenceFetch');
+
   // Exercise actual controlled React inputs, not API-only message creation.
   async function compose(value: string) {
     await wait("!!document.querySelector('textarea[name=message]')");
@@ -285,6 +340,10 @@ try {
   await js("document.querySelector('select[name=userId]').value=" + JSON.stringify(owner.id));
   await click('Open conversation');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
+  await wait("document.querySelector('button[aria-pressed=true]')?.textContent==='Participants'");
+  await click('Community');
+  await wait("document.querySelector('button[aria-pressed=true]')?.textContent==='Community'");
+  await click('Participants');
   await compose('Private browser DM');
   const dm = (
     await fixture.database.pool.query(
@@ -451,6 +510,31 @@ try {
     deviceScaleFactor: 1,
     mobile: true,
   });
+  await js(
+    "document.querySelector('button[aria-label=Members]').focus();document.querySelector('button[aria-label=Members]').click()",
+  );
+  await wait("!!document.querySelector('[role=dialog][aria-label=Members]')");
+  assert.equal(
+    await js("!!document.activeElement.closest('[role=dialog][aria-label=Members]')"),
+    true,
+  );
+  await app.inject({
+    url: '/api/conversations/' + groupId + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Hidden by member drawer', clientId: randomUUID() },
+  });
+  const drawerBadge = `document.querySelector('[data-conversation-id="${groupId}"] .unread-badge')`;
+  await wait(`!!${drawerBadge}`);
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27,
+  });
+  await wait("!document.querySelector('[role=dialog][aria-label=Members]')");
+  assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Members');
+  await wait(`!${drawerBadge}`);
   assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
   await screenshot('messaging-browser-mobile.png');
   await call('Emulation.setDeviceMetricsOverride', {
@@ -562,9 +646,10 @@ try {
     ),
   );
   console.log(
-    'PASS: Browser authentication (11 checks) and messaging/unread/notification (20 checks) in headless Microsoft Edge.',
+    'PASS: Browser authentication (11 checks), messaging/unread/notification (20 checks), and live multi-connection presence, scoped views, drawer keyboard/focus and covered-chat unread regressions in headless Microsoft Edge.',
   );
 } finally {
+  for (const peer of presencePeers) peer.disconnect();
   if (ws?.readyState === WebSocket.OPEN) {
     await call('Browser.close').catch(() => {});
     ws.close();
