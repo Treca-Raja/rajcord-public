@@ -152,7 +152,7 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     await fill({ displayName: 'Verified desktop member' });
     await click('Save name');
     await wait("document.body.innerText.includes('Display name saved.')");
-    await click('Sign out of Tricord');
+    await click('Sign out of Rajcord');
     await wait("!!document.querySelector('input[name=username]')");
     await login(false);
     await wait("!!document.querySelector('.shell')");
@@ -182,7 +182,7 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     await checkLinks();
     await js("document.querySelector('button[aria-label=Settings]').click()");
     await wait("!!document.querySelector('[role=dialog]')");
-    await click('Sign out of Tricord');
+    await click('Sign out of Rajcord');
     await wait("!!document.querySelector('input[name=username]')");
   }
   assert.equal(await js('Object.keys(localStorage).length'), 0);

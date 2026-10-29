@@ -26,7 +26,7 @@ try {
   app.log.error(
     { code: code ?? 'startup' },
     code === 'EADDRINUSE'
-      ? 'API port is already in use. Close the other Tricord development terminal and retry.'
+      ? 'API port is already in use. Close the other Rajcord development terminal and retry.'
       : 'API startup failed. Check local configuration.',
   );
   await app.close();
