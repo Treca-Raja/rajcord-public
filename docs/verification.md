@@ -262,3 +262,13 @@ Removed mandatory upfront reads of the skill index and project memory. Root inst
 Measured Unicode character counts: root instructions decreased from 8,481 to 5,176 (39.0%); default required reading decreased from 26,697 to 5,176 (80.6%, excluding optional task-specific reads). The corresponding default word count decreased from 3,352 to 648. Skill bodies decreased from 32,978 to 18,481 characters (44.0%). These are source-text measurements, not actual model-token counts or a response-time benchmark; discovery metadata, source code, tool results and conversation history still add context.
 
 Validated eight manifests, 49 local links, 37 executable root-command references, formatting, whitespace and retained critical instructions. No application/runtime tests were needed for this guidance-only change. Historical memory and staged changes were preserved; no model, MCP, application, release configuration or remote state was changed.
+
+## Rajcord repository and guidance rename - 2026-10-29
+
+Updated current repository/community links, the workspace filename, eight skill names/directories and their references to Rajcord. Personal Trello routing was renamed outside the repository without changing the board or credentials. The local checkout and origin now use rajcord-public; the feature branch remains unchanged for PR #12. Historical verification/milestone records retain the original names.
+
+Publishing, CI release policy and the server-side image validator now agree on `ghcr.io/treca-raja/rajcord-public`. Fixed the operator helper's remaining former-owner allowlist and bootstrap placeholder. Tests reject mutable tags, both previous image namespaces and unrelated repositories before deployment operations, while preserving the previous successful release marker.
+
+Ten release-policy/hosting-configuration tests pass in an offline Node 24 container. The existing operator fixture passes in a disposable, networkless Linux container without a Docker socket, including bootstrap image selection and backup/migration/HTTPS failure paths. Focused ESLint, strict TypeScript checking of the changed release tests, pinned actionlint 1.7.12, ShellCheck 0.11.0, skill metadata/link checks, changed-file formatting and whitespace checks pass.
+
+No application/package names, environment variables, database/volume/cookie identifiers, server paths, systemd units or backup tags were migrated. No full application build, hosted TLS/media smoke, Windows packaging, registry publication or deployment was performed. Before an authorized release, verify new package permissions, host pull access, saved image markers and rollback digests; former-namespace images are now rejected. No commit, push or PR merge was performed.

@@ -1,9 +1,9 @@
 ---
-name: tricord-voice
-description: Use for Tricord voice/LiveKit, exact audio devices, Electron media permissions, reconnects or capacity.
+name: rajcord-voice
+description: Use for Rajcord voice/LiveKit, exact audio devices, Electron media permissions, reconnects or capacity.
 ---
 
-# Tricord voice work
+# Rajcord voice work
 
 Identify the failing/changed layer first. Read only relevant [service](../../../apps/api/src/voice/service.ts), [gateway](../../../apps/api/src/voice/gateway.ts), [controller](../../../apps/web/src/voice-controller.ts) or [desktop permission](../../../apps/desktop/src/media-permissions.ts) paths, then expand across their affected contracts.
 

@@ -3,14 +3,14 @@ import { pathToFileURL } from 'node:url';
 
 export function validateRelease(repository, commit, image) {
   assert.ok(
-    typeof repository === 'string' && repository.toLowerCase() === 'treca-raja/tricord-public',
+    typeof repository === 'string' && repository.toLowerCase() === 'treca-raja/rajcord-public',
     'Only the intended repository may deploy.',
   );
   assert.match(commit, /^[a-f0-9]{40}$/, 'Use a full commit SHA.');
   if (image !== undefined)
     assert.match(
       image,
-      /^ghcr\.io\/treca-raja\/tricord-public@sha256:[a-f0-9]{64}$/,
+      /^ghcr\.io\/treca-raja\/rajcord-public@sha256:[a-f0-9]{64}$/,
       'Use an immutable image digest.',
     );
 }

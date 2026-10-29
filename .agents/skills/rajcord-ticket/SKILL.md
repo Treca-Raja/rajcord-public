@@ -1,9 +1,9 @@
 ---
-name: tricord-ticket
-description: Use for Tricord ticket drafts, Trello card/GitHub issue creation or substantial rewrites; apply the shared template.
+name: rajcord-ticket
+description: Use for Rajcord ticket drafts, Trello card/GitHub issue creation or substantial rewrites; apply the shared template.
 ---
 
-# Write a Tricord ticket
+# Write a Rajcord ticket
 
 Load [the template](../../../docs/ticket-template.md) once and reuse it while current. Use source/evidence already available; planning is needed only for unresolved substantial design questions. Drafting a ticket requires no MCP connection or remote reads.
 

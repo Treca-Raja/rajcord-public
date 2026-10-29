@@ -1,6 +1,16 @@
-# Tricord
+# Rajcord
 
-Active public repository: [Treca-Raja/tricord-public](https://github.com/Treca-Raja/tricord-public).
+Active public repository: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public).
+
+## Naming and compatibility
+
+The project and repository are now Rajcord. Open [rajcord.code-workspace](rajcord.code-workspace) from the current checkout; local folder names are independent of GitHub repository names. AI skill names use the `rajcord-` prefix.
+
+This branch preserves existing technical identifiers: `@tricord/*` workspace packages, `TRICORD_*` environment variables, `tricord_session`, database users/names, Docker projects/volumes, local image tags, server paths and systemd units. Keep using their documented names so existing configuration and data remain accessible. Historical verification and milestone documents retain the names used at the time. The separate [Windows distribution PR](https://github.com/Treca-Raja/rajcord-public/pull/11) owns its application/installer rebrand.
+
+Release images now target `ghcr.io/treca-raja/rajcord-public`. Verify package access and host pull credentials before releasing; a repository rename does not migrate a registry package or existing deployed data.
+
+## Application overview
 
 Milestone 2C adds local community voice channels to the authenticated React/Electron application, alongside persistent shared text channels, private DMs and group DMs. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
 
@@ -14,12 +24,12 @@ Changes follow `feature/* -> develop -> main`: create feature branches from `dev
 
 Windows 11, Node.js 24 LTS, pnpm 11.25.0, Git and Docker Desktop running Linux containers. Keep PostgreSQL and the API on loopback.
 
-On this workstation, if PowerShell cannot find the already-installed tools, add their locations for the current terminal:
+Run commands from your current clone (for example `C:\path\to\rajcord-public`). If PowerShell cannot find the already-installed tools, add their locations for the current terminal:
 
 ```powershell
 $env:Path += ";$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback"
 $env:Path += ";$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin"
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 ```
 
 On another machine, install pnpm normally with `npm install --global pnpm@11.25.0` and reopen PowerShell after installing Docker Desktop.
@@ -27,7 +37,7 @@ On another machine, install pnpm normally with `npm install --global pnpm@11.25.
 ## Setup and first owner
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm install --frozen-lockfile
 pnpm setup:desktop
 pnpm db:setup
@@ -53,7 +63,7 @@ The browser uses same-origin requests. Vite proxies `/api` and `/socket.io` to F
 ## Daily startup
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm db:up
 pnpm voice:setup
 pnpm voice:up
@@ -69,7 +79,7 @@ To run the desktop app, stop `pnpm dev` with Ctrl+C, then:
 pnpm dev:desktop
 ```
 
-The API uses Node’s watch mode with the existing tsx TypeScript loader. Desktop startup waits up to 30 seconds for Vite and a valid Tricord API health response, then opens Electron. If startup fails, it names the unavailable service and stops the helpers instead of waiting forever.
+The API uses Node’s watch mode with the existing tsx TypeScript loader. Desktop startup waits up to 30 seconds for Vite and a valid Rajcord API health response, then opens Electron. If startup fails, it names the unavailable service and stops the helpers instead of waiting forever.
 
 The same screens run in the sandboxed Electron renderer. A normal desktop exit stops its development helpers and returns success; actual app/helper failures still fail. Minimize retains the session. Closing the window fully quits; there is no tray mode. Temporary sessions are revoked on an orderly online quit and their local cookie is removed. Remembered sessions survive restart for up to 30 days. Settings includes display-name changes, password changes, device revocation and logout.
 
@@ -88,7 +98,7 @@ Readiness checks a real database connection; it does not apply migrations. Postg
 Close Electron if it is running, then press **Ctrl+C** in the development terminal. Stop PostgreSQL with:
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm voice:down
 pnpm db:down
 ```
@@ -115,16 +125,16 @@ Write **@username** to mention someone (case-insensitive, complete usernames). U
 
 Choose **Enable notifications** in the sidebar on each browser/device. Alerts cover private messages and mentions away from the focused conversation. Notification previews contain no message text or participant names; clicking opens the conversation. Turn them off with **Disable notifications**. Only this per-account notification preference is stored in localStorage; authentication remains in HttpOnly cookies.
 
-On Windows, enabling alerts registers a **Tricord development** Start Menu shortcut for Electron notifications. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
+On Windows, enabling alerts currently registers a **Tricord development** Start Menu shortcut for Electron notifications; this legacy identifier is unchanged on this branch. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
 
-Notifications require Tricord to stay open (minimized is fine). There is no push delivery after closing the browser/app and no replay of old alerts on reconnect; persisted unread counts catch up instead. Multiple open browsers/devices may each alert if enabled. Public browser hosting requires trusted HTTPS.
+Notifications require Rajcord to stay open (minimized is fine). There is no push delivery after closing the browser/app and no replay of old alerts on reconnect; persisted unread counts catch up instead. Multiple open browsers/devices may each alert if enabled. Public browser hosting requires trusted HTTPS.
 
 ## Verification
 
 With Docker Desktop running (the database suite and browser/Electron smoke also require the local voice service):
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm db:up
 pnpm voice:setup
 pnpm voice:up
@@ -197,7 +207,7 @@ LiveKit 1.13.10 runs as a separate local Docker service. Approved users can crea
 First-time voice setup (preserves all existing database files and data):
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm voice:setup
 pnpm voice:up
 pnpm db:up
@@ -229,7 +239,7 @@ This test covers actual received audio, independent sessions, mute/deafen, selec
 Start Docker Desktop and the existing services first:
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 docker desktop start
 pnpm db:up
 pnpm voice:setup

@@ -1,9 +1,9 @@
 ---
-name: tricord-plan-change
-description: Use for substantial Tricord designs, architecture or cross-component planning; map dependencies and define tasks and acceptance criteria.
+name: rajcord-plan-change
+description: Use for substantial Rajcord designs, architecture or cross-component planning; map dependencies and define tasks and acceptance criteria.
 ---
 
-# Plan a Tricord change
+# Plan a Rajcord change
 
 Not needed for a routine fix with clear scope. Follow active repository instructions without rereading them.
 

@@ -1,9 +1,9 @@
 ---
-name: tricord-deployment-option
-description: Use when adding or changing future boolean Tricord deployment switches across GitHub Actions and scripts.
+name: rajcord-deployment-option
+description: Use when adding or changing future boolean Rajcord deployment switches across GitHub Actions and scripts.
 ---
 
-# Add a Tricord deployment option
+# Add a Rajcord deployment option
 
 No component selectors exist yet; this skill describes future work.
 

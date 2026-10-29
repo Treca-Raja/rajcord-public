@@ -1,9 +1,9 @@
 ---
-name: tricord-hosting
-description: Use for Tricord packaging, CI/release policy, hosting readiness or explicitly authorized production operations.
+name: rajcord-hosting
+description: Use for Rajcord packaging, CI/release policy, hosting readiness or explicitly authorized production operations.
 ---
 
-# Tricord hosting work
+# Rajcord hosting work
 
 Choose the entry point for this task; do not preload all hosting documents:
 
@@ -15,7 +15,7 @@ Choose the entry point for this task; do not preload all hosting documents:
 ## Release boundary
 
 - PRs/feature/develop do not publish or deploy. `HOSTING_ENABLED=true` enables trusted current-main delivery of the exact tested digest after production approval. `publish_only=true` skips both production jobs regardless of that variable.
-- Keep `Treca-Raja/tricord-public`, `ghcr.io/treca-raja/tricord-public`, the policy allowlist, publishing tag and tests consistent. Verify organization package access and host pull credentials before release; transfer alone proves neither. Never put CI's write token on the VPS.
+- Keep `Treca-Raja/rajcord-public`, `ghcr.io/treca-raja/rajcord-public`, the policy allowlist, publishing tag and tests consistent. Verify organization package access and host pull credentials before release; transfer alone proves neither. Never put CI's write token on the VPS.
 - API/web share a non-root server image; PostgreSQL/LiveKit are separate services. No runtime secrets in image layers/build context. No per-component switches exist; use the deployment-option skill only when adding them.
 - Preserve existing gates, storage, migrations and rollback compatibility when changing runtimes/images/database/LiveKit versions.
 

@@ -1,9 +1,9 @@
 ---
-name: tricord-verify
-description: Use to select/run Tricord checks or diagnose test failures; cover changed behavior with local, data-safe evidence.
+name: rajcord-verify
+description: Use to select/run Rajcord checks or diagnose test failures; cover changed behavior with local, data-safe evidence.
 ---
 
-# Verify a Tricord change
+# Verify a Rajcord change
 
 Use current [package scripts](../../../package.json), not historical counts. Do not preload README/MEMORY; consult the relevant setup section only for missing prerequisites.
 

@@ -4,7 +4,7 @@ Use the [official Trello MCP server](https://github.com/atlassian/trello-mcp-ser
 
 ## Personal setup in Copilot / VS Code
 
-1. Open the Tricord checkout in a separate VS Code window with the Copilot harness selected. Copilot can remain signed into the account supplying its subscription; Trello authorization is separate.
+1. Open the Rajcord checkout in a separate VS Code window with the Copilot harness selected. Copilot can remain signed into the account supplying its subscription; Trello authorization is separate.
 2. Run **MCP: Add Server**, choose **HTTP**, enter the official endpoint and name it `trello-personal`. Choose **Global > Copilot Global**, not a shared workspace file. If it is already configured, open **Chat: Open Customizations > MCP Servers** instead of adding a duplicate.
 3. Review the server and sign-in prompts. In the browser, use the personal Trello account and choose only the workspace containing the intended board. The current server authorizes one workspace per connection. Review the requested read/write permissions; organization MCP policies may still apply.
 4. Complete OAuth in the client/browser. Never paste tokens into chat, JSON headers, committed environment files or tickets.
@@ -39,7 +39,7 @@ If the board/list is missing, do not create replacements automatically. Check th
 
 ## Ticket workflow
 
-Every AI-created ticket follows [the ticket template](ticket-template.md) through [tricord-ticket](../.agents/skills/tricord-ticket/SKILL.md). Keep unspecified owners, estimates and dates unresolved rather than inventing them. Drafting or connecting does not create tickets.
+Every AI-created ticket follows [the ticket template](ticket-template.md) through [rajcord-ticket](../.agents/skills/rajcord-ticket/SKILL.md). Keep unspecified owners, estimates and dates unresolved rather than inventing them. Drafting or connecting does not create tickets.
 
 Use the provider's returned identifiers and current action schemas. Archive, move, assignment and other write actions need to fall within the user's request. Verify the resulting card before reporting success. Markdown description fields provide the full template on Free plans without requiring custom fields or Planner features.
 

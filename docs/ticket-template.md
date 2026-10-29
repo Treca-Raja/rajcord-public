@@ -1,6 +1,6 @@
-# Tricord ticket template
+# Rajcord ticket template
 
-Use this format for AI-created Trello cards and GitHub issues, and when drafting tickets for review. Follow [tricord-ticket](../.agents/skills/tricord-ticket/SKILL.md) before publishing.
+Use this format for AI-created Trello cards and GitHub issues, and when drafting tickets for review. Follow [rajcord-ticket](../.agents/skills/rajcord-ticket/SKILL.md) before publishing.
 
 ## Writing rules
 

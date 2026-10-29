@@ -21,7 +21,9 @@ flowchart LR
 
 Pull requests use read-only CI without deployment secrets. After all checks pass, enabled main runs transfer the exact tested image to a separate job with registry write permission. Production receives its immutable SHA-256 digest after the required environment approval; it never rebuilds the image. A commit label is checked before publishing. Main runs serialize without cancellation during deployment; an approval waiting on an old run must be rejected or completed before the next main run proceeds. Current-main checks reject superseded commits before publication and deployment. Keep pull requests small enough to review and reject outdated approvals promptly.
 
-The source repository is `Treca-Raja/tricord-public`; publication and digest validation target `ghcr.io/treca-raja/tricord-public`. The old personal namespace is no longer an allowed release source. Repository transfer alone does not prove GHCR package permissions or the host's pull credentials migrated. Confirm organization package creation/access, repository association and runtime image access before enabling delivery; no registry or server changes are made by editing this configuration.
+The source repository is `Treca-Raja/rajcord-public`; publication and both CI/server digest validation target `ghcr.io/treca-raja/rajcord-public`. Neither the former personal namespace nor the old organization package name is an allowed release source. A repository transfer/rename does not prove GHCR package permissions or the host's pull credentials migrated. Confirm package creation/access, repository association and runtime image access before enabling delivery; no registry or server changes are made by editing this configuration.
+
+Existing `/etc/tricord`, `/opt/tricord`, `TRICORD_*`, database/volume names, systemd units and backup tags intentionally remain unchanged. Do not rename or recreate them during this repository update. Before an authorized release, check any saved image marker and required rollback digest: an old-namespace digest is now rejected, so keep delivery disabled until an approved migration/rollback plan and access to the new package are verified.
 
 | Environment | Purpose                               | Data and access                                                                         | Delivery                                    |
 | ----------- | ------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------- |
@@ -60,7 +62,7 @@ Allow these public service ports and deny other inbound traffic at the provider 
 | ----------------------------------------------------------- | ---------------------------------------------------------- |
 | SSH TCP, restricted to trusted administration/runner access | Deployment and maintenance                                 |
 | 80/TCP                                                      | ACME HTTP-01 validation and HTTPS redirect                 |
-| 443/TCP                                                     | Tricord HTTPS, Socket.IO and authenticated voice signaling |
+| 443/TCP                                                     | Rajcord HTTPS, Socket.IO and authenticated voice signaling |
 | 7881/TCP, 7882/UDP                                          | LiveKit direct media                                       |
 | 3478/UDP, 5349/TCP                                          | Embedded TURN UDP and TLS                                  |
 | 50000–50199/UDP                                             | Bounded embedded TURN relay range                          |

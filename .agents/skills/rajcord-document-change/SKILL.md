@@ -1,9 +1,9 @@
 ---
-name: tricord-document-change
-description: Use when documenting changed Tricord features, behavior, commands or decisions; update existing sections with verified facts.
+name: rajcord-document-change
+description: Use when documenting changed Rajcord features, behavior, commands or decisions; update existing sections with verified facts.
 ---
 
-# Document a Tricord change
+# Document a Rajcord change
 
 Use the actual change/tests already in context. Open only the relevant section of the existing document:
 

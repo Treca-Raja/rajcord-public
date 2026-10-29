@@ -1,6 +1,8 @@
-# Tricord
+# Rajcord
 
 Private, self-hosted text/voice app for up to ten friends; public pnpm monorepo.
+
+Repository/guidance names use Rajcord. Existing `@tricord/*`, `TRICORD_*`, database/volume/cookie names and server paths remain compatibility identifiers; do not globally replace them. See [naming scope](README.md#naming-and-compatibility).
 
 ## Work efficiently
 
@@ -28,10 +30,10 @@ Code map: `apps/api/src/{auth,chat,db,voice}`, `apps/api/drizzle`, `apps/web/src
 - All changes follow `feature/* -> develop -> main`. Start new features from safely refreshed `develop`; feature PRs target `develop`, release PRs go `develop` to `main`. No direct commits to shared branches or feature-to-main PRs. Keep the user's active feature branch; never reset/discard work to enforce naming.
 - Automate through scripts and GitHub Actions. Preserve protection/approval gates; only verified `main` may publish/deploy. Before an authorized PR/merge, verify source/base and checks. Before commit/push, inspect the full staged diff, destination and outgoing commit range. No force-push.
 - Planning, connecting tools and editing configuration do not authorize tickets, pushes, merges, deployments or purchases. Use existing scoped authorization; confirm missing destination/cost/destructive decisions before acting. See [CONTRIBUTING.md](CONTRIBUTING.md) when performing Git workflow operations.
-- Ticket drafts, creation and substantial rewrites use [tricord-ticket](.agents/skills/tricord-ticket/SKILL.md) and [the template](docs/ticket-template.md). Check destination/duplicates before publishing; keep personal routing outside the repo. Never invent owners, estimates, dates or completion evidence.
+- Ticket drafts, creation and substantial rewrites use [rajcord-ticket](.agents/skills/rajcord-ticket/SKILL.md) and [the template](docs/ticket-template.md). Check destination/duplicates before publishing; keep personal routing outside the repo. Never invent owners, estimates, dates or completion evidence.
 
 ## Verification and handoff
 
-- Add regression tests for implemented behavior, including relevant failures/permissions. Use [tricord-verify](.agents/skills/tricord-verify/SKILL.md) for the smallest local checks covering the change and dependent contracts; widen when needed. Never omit required evidence to save tokens. CI is not a substitute for available local checks.
+- Add regression tests for implemented behavior, including relevant failures/permissions. Use [rajcord-verify](.agents/skills/rajcord-verify/SKILL.md) for the smallest local checks covering the change and dependent contracts; widen when needed. Never omit required evidence to save tokens. CI is not a substitute for available local checks.
 - Documentation-only work needs changed-file formatting, factual/link checks and skill validation where applicable, not application services or runtime suites.
 - Update existing docs when behavior/commands change. Record only durable decisions in MEMORY and material new evidence in [docs/verification.md](docs/verification.md), not routine activity logs. Keep handoffs concise: outcome, checks, blockers. Clearly distinguish tested, skipped and historical evidence.

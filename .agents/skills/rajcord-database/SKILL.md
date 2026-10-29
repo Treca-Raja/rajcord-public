@@ -1,9 +1,9 @@
 ---
-name: tricord-database
-description: Use for Tricord PostgreSQL/Drizzle persistence, migrations, database fixtures or recovery; preserve existing data.
+name: rajcord-database
+description: Use for Rajcord PostgreSQL/Drizzle persistence, migrations, database fixtures or recovery; preserve existing data.
 ---
 
-# Tricord database work
+# Rajcord database work
 
 Inspect the affected service/query; read [schema](../../../apps/api/src/db/schema.ts) and migration journal only where relevant. Keep current data and credentials.
 

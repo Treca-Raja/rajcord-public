@@ -1,6 +1,6 @@
-# Contributing to Tricord
+# Contributing to Rajcord
 
-Thanks for helping build Tricord. Contributions are welcome from anyone. You do not need write access to contribute.
+Thanks for helping build Rajcord. Contributions are welcome from anyone. You do not need write access to contribute.
 
 ## Setup
 
@@ -19,8 +19,8 @@ Thanks for helping build Tricord. Contributions are welcome from anyone. You do 
 - Create a descriptive `feature/<short-description>` branch from an up-to-date `develop`, for example `feature/message-search` or `feature/fix-login-redirect`. Inspect local work before fetching or switching; only fast-forward shared branches and never discard unrelated changes.
 - Open feature pull requests against `develop`. Release pull requests go from `develop` to `main`; do not open feature pull requests directly against `main` or push changes directly to either shared branch.
 - Keep PRs focused. Explain what changed and how you tested it.
-- Add tests for implemented behavior and run applicable local checks from [tricord-verify](.agents/skills/tricord-verify/SKILL.md). Database tests (`pnpm test:db`) require the documented local services. Documentation-only changes need formatting/link checks, not the runtime stack.
-- Update existing documentation for changed features or commands, using [tricord-document-change](.agents/skills/tricord-document-change/SKILL.md). Keep code comments limited to non-obvious intent or constraints.
+- Add tests for implemented behavior and run applicable local checks from [rajcord-verify](.agents/skills/rajcord-verify/SKILL.md). Database tests (`pnpm test:db`) require the documented local services. Documentation-only changes need formatting/link checks, not the runtime stack.
+- Update existing documentation for changed features or commands, using [rajcord-document-change](.agents/skills/rajcord-document-change/SKILL.md). Keep code comments limited to non-obvious intent or constraints.
 - Do not include generated output, dependencies, secrets, or unrelated formatting changes.
 - Be respectful and follow the Code of Conduct.
 
