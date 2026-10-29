@@ -13,7 +13,7 @@
     "@tricord/shared": "workspace:*",
     "@tricord/ui": "workspace:*",
     "livekit-client": "^2.23.0",
-    "lucide-react": "^0.468.0",
+    "lucide-react": "^1.61.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "socket.io-client": "^4.8.1"
