@@ -147,7 +147,7 @@ try {
   const home = await fetch(origin + '/');
   assert.equal(home.status, 200);
   const html = await home.text();
-  assert.match(html, /<title>Tricord/);
+  assert.match(html, /<title>Rajcord/);
   const asset = html.match(/src="([^"]+\.js)"/)?.[1];
   assert.ok(asset);
   assert.equal((await fetch(new URL(asset, origin))).status, 200);

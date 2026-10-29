@@ -8,6 +8,8 @@ The project and repository are now Rajcord. Open [rajcord.code-workspace](rajcor
 
 Existing technical identifiers remain compatible: `@tricord/*` workspace packages, `TRICORD_*` environment variables, `tricord_session`, database users/names, Docker projects/volumes, local image tags, server paths and systemd units. Keep using their documented names so existing configuration and data remain accessible. The Windows client/installer uses Rajcord identity and a separate per-user profile; see [desktop distribution](docs/desktop-distribution.md). Historical verification and milestone documents retain the names used at the time.
 
+See the [naming inventory](docs/naming.md) for audited surfaces, retained identifiers and overlap with the desktop distribution work.
+
 Release images now target `ghcr.io/treca-raja/rajcord-public`. Verify package access and host pull credentials before releasing; a repository rename does not migrate a registry package or existing deployed data.
 
 ## Application overview

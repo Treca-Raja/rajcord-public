@@ -13,6 +13,6 @@ export function shouldNotify(
 }
 export function notificationBody(mention: boolean) {
   return mention
-    ? 'You were mentioned. Open Tricord to read it.'
-    : 'New private message. Open Tricord to read it.';
+    ? 'You were mentioned. Open Rajcord to read it.'
+    : 'New private message. Open Rajcord to read it.';
 }

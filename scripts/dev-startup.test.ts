@@ -22,7 +22,7 @@ afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
-it('desktop waits for both HTTP services and identifies the Tricord API', async () => {
+it('desktop waits for both HTTP services and identifies the Rajcord API', async () => {
   const webUrl = await endpoint('{}');
   const apiUrl = await endpoint('{"status":"ok","service":"tricord-api"}');
   await expect(waitForDevelopment({ webUrl, apiUrl, timeoutMs: 1000 })).resolves.toBeUndefined();

@@ -367,7 +367,7 @@ try {
   await wait('window.notificationCalls.length===1');
   assert.equal(
     await js('window.notificationCalls[0].options.body'),
-    'You were mentioned. Open Tricord to read it.',
+    'You were mentioned. Open Rajcord to read it.',
   );
   await js('window.notificationCalls[0].onclick()');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");

@@ -104,9 +104,9 @@ function Community() {
   }, [socket, reload]);
   const unreadTotal = conversations.reduce((total, c) => total + c.unreadCount, 0);
   useEffect(() => {
-    document.title = (unreadTotal ? '(' + unreadTotal + ') ' : '') + 'Tricord';
+    document.title = (unreadTotal ? '(' + unreadTotal + ') ' : '') + 'Rajcord';
     return () => {
-      document.title = 'Tricord';
+      document.title = 'Rajcord';
     };
   }, [unreadTotal]);
   const current = conversations.find((c) => c.id === selected);
@@ -170,7 +170,7 @@ function Community() {
         <div className="community">
           <div>
             <strong>
-              Tricord<span>.</span>
+              Rajcord<span>.</span>
             </strong>
             <small>YOUR PEOPLE, YOUR PLACE</small>
           </div>
@@ -394,7 +394,7 @@ function Community() {
           </p>
         </div>
         <div className="version">
-          TRICORD <span>Voice & text</span>
+          RAJCORD <span>Voice & text</span>
         </div>
       </aside>
       {modal && (

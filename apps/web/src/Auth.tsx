@@ -187,7 +187,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
             <div className="auth-mark">
               <ShieldCheck size={30} />
             </div>
-            <div className="eyebrow">TRICORD · YOUR ACCOUNT</div>
+            <div className="eyebrow">RAJCORD · YOUR ACCOUNT</div>
             <h1>
               {state.user.status === 'pending' ? 'You’re on the list.' : 'Registration declined.'}
             </h1>
@@ -248,7 +248,7 @@ function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void }) {
             username,
             password,
             remember: form.get('remember') === 'on',
-            deviceLabel: window.tricordDesktop ? 'Tricord for Windows' : 'Web browser',
+            deviceLabel: window.tricordDesktop ? 'Rajcord for Windows' : 'Web browser',
           }),
         );
     } catch (e) {
@@ -282,7 +282,7 @@ function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void }) {
         <p>
           {register
             ? 'Create an account. A member of the group will approve your registration.'
-            : 'Sign in to your Tricord community.'}
+            : 'Sign in to your Rajcord community.'}
         </p>
         <form onSubmit={(event) => void submit(event)} key={register ? 'register' : 'login'}>
           <label>
@@ -447,7 +447,7 @@ function AccountPanel({ close }: { close: () => void }) {
       >
         <header>
           <div>
-            <div className="eyebrow">YOUR TRICORD</div>
+            <div className="eyebrow">YOUR RAJCORD</div>
             <h2>Settings & people</h2>
           </div>
           <button aria-label="Close settings" onClick={close}>
@@ -575,7 +575,7 @@ function AccountPanel({ close }: { close: () => void }) {
               </div>
             ))}
             <button className="secondary" onClick={() => void logout()}>
-              <LogOut size={16} /> Sign out of Tricord
+              <LogOut size={16} /> Sign out of Rajcord
             </button>
           </div>
         ) : (

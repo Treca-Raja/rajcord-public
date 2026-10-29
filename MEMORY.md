@@ -21,6 +21,10 @@ On-demand historical reference: read only sections relevant to a decision or sta
 - Agent guidance loads progressively: root rules are the baseline, skills are task/phase-specific, and memory/index/runbooks are selective references. Routine fixes do not require a planning/ticket workflow; focused local checks must still cover affected behavior and contracts.
 - The application and hosting evidence below remains dated to its original checks; repository-transfer guidance does not revalidate live resources.
 
+## Naming integration - 2026-10-29
+
+The remaining shared UI, native notification and human-readable API/development messages use Rajcord. The [naming inventory](docs/naming.md) records compatibility exceptions and records the inherited guidance/registry changes from PR #12 and the now-merged Windows distribution work from PR #11. This branch starts from develop and retains its ghcr.io/treca-raja/rajcord-public configuration; it does not migrate installed profiles, registry artifacts, saved release markers, runtime credentials or production services. Package write/pull access and a tested recovery path for former-namespace images remain release prerequisites.
+
 ## Implemented and verified baseline
 
 - PostgreSQL persistence; approval-based accounts; Argon2id passwords; HttpOnly session cookies; CSRF; owner-only sensitive account actions.
