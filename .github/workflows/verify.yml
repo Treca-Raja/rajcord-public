@@ -108,7 +108,7 @@ jobs:
           test "$(docker inspect tricord-ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           trap 'docker logout ghcr.io' EXIT
-          tag="ghcr.io/fakebane/tricord-public:$GITHUB_SHA"
+          tag="ghcr.io/treca-raja/rajcord-public:$GITHUB_SHA"
           docker tag tricord-ci "$tag"
           docker push "$tag"
           image=$(docker inspect "$tag" --format '{{index .RepoDigests 0}}')

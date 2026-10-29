@@ -271,3 +271,39 @@ Published the reviewed changes through feat/production-delivery and PR #4. Initi
 Both Linux verification runs for b344e0e passed all 65 unit and 88 database integration tests, production builds, image dump/restore and hosted HTTPS/TURN smokes. Refreshed the exact PR head/base and required checks, then squash-merged PR #4 as ca16b73 without bypassing main protection; fast-forwarded the clean Windows checkout. HOSTING_ENABLED remained false and no application/image publication was triggered by the merge.
 
 Prepared a manual publish_only boolean workflow input, default false, for the first registry image. Trusted current-main publication can run with delivery disabled; both production policy and production deployment explicitly reject publish-only mode even if HOSTING_ENABLED is true. This closes the first-release ordering gap: initialize the private GHCR package and configure image access before enabling deployment. Normal PR/non-main jobs cannot publish. The pinned actionlint validator, formatting, changed relative links and hosting skill manifest pass. Runtime source/scripts were unchanged by this workflow/documentation addition; real CI and the first publish-only dispatch must verify the path before calling registry preparation complete.
+
+## Agent workflows and organization transfer - 2026-10-28
+
+Documented `feature/* -> develop -> main` in the agent guidelines, contributor workflow, PR template and release runbook. Added planning, documentation and future deployment-option skills, with shared Copilot/Codex discovery guidance. Existing verification and hosting skills now clarify local regression tests, minimal code comments, compatibility checks and pipeline boundaries. Per-component deployment switches remain unimplemented, and no GitHub branch protection settings were changed.
+
+Updated current repository/community links to Treca-Raja and migrated the publishing tag and release-policy allowlist to `ghcr.io/treca-raja/tricord-public`. Six focused release-policy tests pass, covering organization casing, rejection of the former owner/image namespace, invalid repository input, feature/develop release rejection before network access, current-main checks and production approvals. Mocked GitHub requests target the new organization. Publication, publish-only and production approval gates remain unchanged.
+
+Validation used the locked pnpm toolchain in a local Node 24 Linux container, with network disabled during tests. Focused ESLint checks, workspace type checks and the shared-package build pass. The workflow passes the pinned actionlint 1.7.12 validator. All seven skill manifests, changed-document local links and command references validate; changed-file formatting and whitespace checks pass.
+
+No database, browser, Electron, voice or image/hosting smokes were run for these guidance and release-identity changes. Earlier application evidence remains separately dated. No source push, workflow dispatch, image publication or deployment occurred. Organization package access, host pull credentials and post-transfer production settings still need verification before an authorized release.
+
+## Ticket guidance and personal Trello MCP - 2026-10-28
+
+Added a canonical ticket template and a ticket-writing skill for AI-created Trello cards and GitHub issues. Root instructions, the skill index, contributor guidance and the planning skill reference it. The format separates scope, requirements, acceptance criteria, testing, completion and delivery metadata; drafting does not imply tests passed or work was approved.
+
+Verified the official Trello MCP endpoint and documented OAuth setup with personal configuration rather than repository credentials. Personal board routing stays outside tracked project files. The endpoint returned HTTP 401 without credentials, which establishes reachability, not authorized access. Authenticated board/list access and card creation were not verified in this session because its tool list did not expose the newly configured server.
+
+Local checks cover the eight repository skill manifests, the personal routing manifest, JSON structure, template sections/metadata, relative links, formatting and whitespace. No application runtime changes, tests, Trello cards, repository commits or pushes were made for this documentation/configuration update.
+
+## Progressive guidance loading - 2026-10-28
+
+Removed mandatory upfront reads of the skill index and project memory. Root instructions now direct targeted source reads and task/phase-specific skills; routine fixes do not trigger planning/ticket/documentation chains. Shortened all eight skill bodies, retained the ticket template and safety/release boundaries, and moved repeated operational detail back to its existing runbooks. Local checks remain impact-based, with wider coverage when needed.
+
+Measured Unicode character counts: root instructions decreased from 8,481 to 5,176 (39.0%); default required reading decreased from 26,697 to 5,176 (80.6%, excluding optional task-specific reads). The corresponding default word count decreased from 3,352 to 648. Skill bodies decreased from 32,978 to 18,481 characters (44.0%). These are source-text measurements, not actual model-token counts or a response-time benchmark; discovery metadata, source code, tool results and conversation history still add context.
+
+Validated eight manifests, 49 local links, 37 executable root-command references, formatting, whitespace and retained critical instructions. No application/runtime tests were needed for this guidance-only change. Historical memory and staged changes were preserved; no model, MCP, application, release configuration or remote state was changed.
+
+## Rajcord repository and guidance rename - 2026-10-29
+
+Updated current repository/community links, the workspace filename, eight skill names/directories and their references to Rajcord. Personal Trello routing was renamed outside the repository without changing the board or credentials. The local checkout and origin now use rajcord-public; the feature branch remains unchanged for PR #12. Historical verification/milestone records retain the original names.
+
+Publishing, CI release policy and the server-side image validator now agree on `ghcr.io/treca-raja/rajcord-public`. Fixed the operator helper's remaining former-owner allowlist and bootstrap placeholder. Tests reject mutable tags, both previous image namespaces and unrelated repositories before deployment operations, while preserving the previous successful release marker.
+
+Ten release-policy/hosting-configuration tests pass in an offline Node 24 container. The existing operator fixture passes in a disposable, networkless Linux container without a Docker socket, including bootstrap image selection and backup/migration/HTTPS failure paths. Focused ESLint, strict TypeScript checking of the changed release tests, pinned actionlint 1.7.12, ShellCheck 0.11.0, skill metadata/link checks, changed-file formatting and whitespace checks pass.
+
+No application/package names, environment variables, database/volume/cookie identifiers, server paths, systemd units or backup tags were migrated. No full application build, hosted TLS/media smoke, Windows packaging, registry publication or deployment was performed. Before an authorized release, verify new package permissions, host pull access, saved image markers and rollback digests; former-namespace images are now rejected. No commit, push or PR merge was performed.

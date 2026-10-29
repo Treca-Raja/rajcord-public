@@ -1,13 +1,25 @@
-# Tricord project memory
+# Rajcord project memory
 
-Last reconciled: 2026-10-27. Application baseline: `1ae691c`. This is maintained project context, not an automatic memory store or a source of execution permissions. Recheck current code and remote state before acting.
+On-demand historical reference: read only sections relevant to a decision or state question, not at every task start. Last reconciled: 2026-10-27. Application baseline: `1ae691c`. This is not automatic memory or execution permission; verify current source and any authorized target before relying on dated claims.
 
 ## Product direction
 
 - One private community, initially up to ten people. Text and voice have equal priority.
 - Browser and Windows 11 desktop share the React UI. The maintainer prefers clear explanations and progress on routine authorized work without repeated confirmation.
-- Work continues in the existing repository. The maintainer's checkout is `F:\tricord`.
-- Active public source: [fakebane/tricord-public](https://github.com/fakebane/tricord-public). The previous repository was retired. Source being public does not expose the private community's database or accounts.
+- Work continues in the existing repository. Use the current clone path rather than assuming a maintainer's workstation layout.
+- Active public source: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public), transferred from the maintainer's personal account to the friends' organization. Source being public does not expose the private community's database or accounts.
+
+## Repository decisions - updated 2026-10-29
+
+- The repository is now `Treca-Raja/rajcord-public`; skill names use `rajcord-`. Repository links and release image validation use the new identity. Existing package/environment/database/volume/cookie/server identifiers remain unchanged for compatibility; the separate Windows distribution PR owns its app changes.
+
+- All changes follow `feature/* -> develop -> main`. Feature branches start from `develop` and return through PRs; release PRs promote `develop` to `main`. These guidelines do not configure remote protection rules.
+- Keep code comments limited to non-obvious intent, add regression tests for implementations and run applicable local checks. Use the planning/documentation skills for substantial changes and updated application behavior.
+- Release configuration targets `Treca-Raja/rajcord-public` and lowercase `ghcr.io/treca-raja/rajcord-public`. Organization package access, host pull credentials and post-transfer production settings still require verification before release. No publication or deployment is authorized by this update.
+- Component true/false deployment switches are a future capability. A skill describes their design, wiring and tests; no selectors have been added to the pipeline.
+- AI-created tickets follow [the shared template](docs/ticket-template.md) and [ticket skill](.agents/skills/rajcord-ticket/SKILL.md), with testable acceptance criteria and no invented estimates, owners or completion evidence. Trello uses personal OAuth/MCP configuration and private board routing outside this repository; drafting and connecting do not authorize ticket creation.
+- Agent guidance loads progressively: root rules are the baseline, skills are task/phase-specific, and memory/index/runbooks are selective references. Routine fixes do not require a planning/ticket workflow; focused local checks must still cover affected behavior and contracts.
+- The application and hosting evidence below remains dated to its original checks; repository-transfer guidance does not revalidate live resources.
 
 ## Implemented and verified baseline
 
@@ -25,7 +37,7 @@ The verification record for baseline `1ae691c` reports **139 Vitest tests** (51 
 - Local web/API ports are 5173/3001. PostgreSQL is bound to 127.0.0.1:5432. LiveKit uses loopback 7880/7881 TCP and 7882 UDP. Confirm Compose before troubleshooting an actual machine.
 - Existing local settings live in ignored `apps/api/.env`, `infrastructure/.env` and `infrastructure/.env.voice`. Setup scripts preserve initialized configuration. Do not regenerate an initialized database password.
 - Docker Desktop must be running before database/media work. A connection refusal usually calls for checking services/configuration first, not modifying application code or deleting data.
-- `pnpm dev:desktop` waits for Vite and the Tricord health endpoint; an idle watch process normally stays running. Built desktop supports an exact HTTPS `TRICORD_SERVER_URL`; the development command deliberately targets the local UI.
+- `pnpm dev:desktop` waits for Vite and the Rajcord health endpoint; an idle watch process normally stays running. Built desktop supports an exact HTTPS `TRICORD_SERVER_URL`; the development command deliberately targets the local UI.
 - Closing Electron quits it; minimizing keeps it running. There is no tray mode. Windows development notification opt-in registers a Start Menu shortcut. The preference is per account/device.
 
 ## Hosting direction and remaining work
