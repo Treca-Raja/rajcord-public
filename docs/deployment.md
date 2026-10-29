@@ -8,13 +8,22 @@ The current plan uses the user's existing AlphaVPS production server without a p
 
 ```mermaid
 flowchart LR
-  PR[Pull request] --> CI[Format, lint, types, tests and image checks]
-  Main[Verified main commit] --> Image[Publish the tested image to GHCR]
+  Feature[feature/* from develop] --> FeaturePR[PR into develop]
+  FeaturePR --> Develop[Verified develop]
+  Develop --> ReleasePR[PR from develop into main]
+  ReleasePR --> Main[Verified main commit]
+  FeaturePR --> CI[Format, lint, types, tests and image checks]
+  ReleasePR --> CI
+  Main --> Image[Publish the tested image to GHCR]
   Image --> Approval[Production environment approval]
   Approval --> Production[Deploy the same image digest]
 ```
 
 Pull requests use read-only CI without deployment secrets. After all checks pass, enabled main runs transfer the exact tested image to a separate job with registry write permission. Production receives its immutable SHA-256 digest after the required environment approval; it never rebuilds the image. A commit label is checked before publishing. Main runs serialize without cancellation during deployment; an approval waiting on an old run must be rejected or completed before the next main run proceeds. Current-main checks reject superseded commits before publication and deployment. Keep pull requests small enough to review and reject outdated approvals promptly.
+
+The source repository is `Treca-Raja/rajcord-public`; publication and both CI/server digest validation target `ghcr.io/treca-raja/rajcord-public`. Neither the former personal namespace nor the old organization package name is an allowed release source. A repository transfer/rename does not prove GHCR package permissions or the host's pull credentials migrated. Confirm package creation/access, repository association and runtime image access before enabling delivery; no registry or server changes are made by editing this configuration.
+
+Existing `/etc/tricord`, `/opt/tricord`, `TRICORD_*`, database/volume names, systemd units and backup tags intentionally remain unchanged. Do not rename or recreate them during this repository update. Before an authorized release, check any saved image marker and required rollback digest: an old-namespace digest is now rejected, so keep delivery disabled until an approved migration/rollback plan and access to the new package are verified.
 
 | Environment | Purpose                               | Data and access                                                                         | Delivery                                    |
 | ----------- | ------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------- |
@@ -26,12 +35,12 @@ Do not copy production accounts, cookies or messages into test fixtures. One env
 
 ## GitHub setup before enabling delivery
 
-1. Protect `main`: require a pull request and the `verify` status check; disallow force pushes and deletion. This is configured on the current repository, with up-to-date checks, administrator enforcement and the check bound to the GitHub Actions app. The sole maintainer currently needs no second-person PR review; require another reviewer if a second maintainer joins. Use a feature branch/PR for publishing these local changes, preserving protection. Protect workflows and operator scripts with the same care as application code.
+1. Protect `develop` and `main`: require a pull request and the `verify` status check; disallow force pushes and deletion. Use up-to-date checks, administrator enforcement and the GitHub Actions check identity. Confirm the current settings after the organization transfer rather than assuming earlier protection evidence covers both branches. Feature PRs target `develop`; only release PRs from `develop` target `main`. Protect workflows and operator scripts with the same care as application code.
 2. Create the environment named exactly `production`. Restrict it to the selected branch `main`, with policy type **branch**, not tag.
 3. In `production`, add the maintainer as a required reviewer and disable administrator bypass. For a sole maintainer, allow self-review so the maintainer can approve their own run. The pipeline queries GitHub and fails closed if the reviewer, exact branch policy or an explicit disabled administrator-bypass setting is absent. Administrator bypass is disabled on the configured production environment and verified by API readback. Environment approval withholds production secrets until approved. See [GitHub's environment rules](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 4. In `production`, configure variables `DEPLOY_HOST` (the host's public IPv4 for SSH), `DEPLOY_HTTPS_HOST=rajcord.com` (required bare hostname for the external HTTPS readiness check), `DEPLOY_USER` and optional `DEPLOY_PORT` (default `22`). Add secrets `DEPLOY_SSH_KEY` and `DEPLOY_KNOWN_HOSTS`. Obtain the SSH host fingerprint through the provider console or another trusted channel. The pipeline never trusts an unverified `ssh-keyscan` result. For a custom SSH port, use the standard `[IP]:port` known-hosts entry.
 5. Prepare and test the production host below. For the first image, keep `HOSTING_ENABLED=false` and dispatch `gh workflow run verify.yml --ref main -f publish_only=true`. This tests and publishes the exact current-main image while explicitly skipping both production jobs, even if delivery is enabled later. A normal dispatch leaves `publish_only=false`. New GHCR packages are private by default; then configure image access before enabling deployment. If GHCR remains private, install a read-only package credential in root's Docker credential store. Authenticate using `docker login --password-stdin` from a secure local prompt or protected file. CI's write token never travels to the host. Package visibility is a separate choice from public source visibility.
-6. Set the **repository** variable `HOSTING_ENABLED=true` only when the host, secrets, backup target, domain configuration and approval rules are ready. Push a reviewed main change or dispatch `Verify` on `main`. Pull requests and non-main dispatches cannot publish or deploy.
+6. Set the **repository** variable `HOSTING_ENABLED=true` only when the host, secrets, backup target, domain configuration and approval rules are ready. Merge an approved `develop`-to-`main` release PR or dispatch `Verify` on `main`. Pull requests and non-main dispatches cannot publish or deploy.
 
 GitHub settings are intentionally a separate setup step; adding YAML does not create protection rules or SSH credentials. Jobs run on GitHub-hosted Ubuntu runners. Avoid a persistent self-hosted runner with access to production secrets for public pull requests.
 
@@ -53,7 +62,7 @@ Allow these public service ports and deny other inbound traffic at the provider 
 | ----------------------------------------------------------- | ---------------------------------------------------------- |
 | SSH TCP, restricted to trusted administration/runner access | Deployment and maintenance                                 |
 | 80/TCP                                                      | ACME HTTP-01 validation and HTTPS redirect                 |
-| 443/TCP                                                     | Tricord HTTPS, Socket.IO and authenticated voice signaling |
+| 443/TCP                                                     | Rajcord HTTPS, Socket.IO and authenticated voice signaling |
 | 7881/TCP, 7882/UDP                                          | LiveKit direct media                                       |
 | 3478/UDP, 5349/TCP                                          | Embedded TURN UDP and TLS                                  |
 | 50000–50199/UDP                                             | Bounded embedded TURN relay range                          |

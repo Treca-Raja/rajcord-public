@@ -1,3 +1,38 @@
+# Authenticated hyperlink verification — 2026-10-28
+
+Windows verification on `feature/chat-hyperlinks` after `a11e3be`. Installed Docker was confirmed running Linux containers. Existing setup commands generated ignored local credentials without printing them; loopback-only PostgreSQL/LiveKit started and additive migrations applied. Test suites used disposable databases and isolated Edge/Electron profiles. Existing data and volumes were preserved.
+
+- **113 unit/regression tests passed** (`pnpm test`).
+- **65 authentication/chat database tests passed** (`pnpm exec vitest run --config vitest.database.config.ts apps/api/src/chat/chat.integration.test.ts apps/api/src/auth/auth.integration.test.ts`). Unrelated voice/database suites were not selected.
+- **31 Edge checks passed** (`pnpm --filter @tricord/api test:browser`): 11 authentication and 20 messaging/unread/notification checks. Hyperlinks were verified after sending, reloading stored history, receiving another account's message and editing. HTML remained escaped and unsafe Markdown destinations stayed literal.
+- **21 authenticated Electron checks passed across three launches** (`pnpm --filter @tricord/api test:desktop --chat-only`). Added explicit autolink/Markdown-link assertions for sent, received and restored messages, including new-tab/security attributes and normalized destination titles. The new chat-only mode skips camera, microphone and voice checks; the default combined suite remains available.
+- The isolated real Electron window-open smoke passed (`pnpm --filter @tricord/desktop test:links`), with OS launches recorded rather than actually opening a system browser.
+- `pnpm lint`, `pnpm build` and formatting checks passed; only the known LiveKit chunk-size advisory remains. TypeScript compilation covered both updated harnesses.
+
+This closes the earlier authenticated chat verification gap. No microphone capture, voice joins, audio publication, voice/load tests, server-image tests or production changes were needed or performed. LiveKit was only a prerequisite of the existing chat harnesses. The actual default-browser application launch remains outside the recording-adapter check.
+
+# Chat hyperlink review fixes — 2026-10-28
+
+Addressed PR #9 feedback on `feature/chat-hyperlinks`. The reported duplicate-message failure was a misreading of removed/added lines; the browser smoke now selects the persisted message by ID to remove text-match ambiguity. Sequential smoke operations remain sequential because their UI and server state depend on earlier steps.
+
+Automatic links exclude paired emphasis without stripping legitimate unpaired URL characters. Anchors expose the normalized destination in `title` and have an explicit keyboard focus outline. Markdown destinations use a balanced scan; unsupported titles, whitespace and incomplete destinations remain literal. Label matching no longer rescans repeated opening brackets; maximum-length hostile bracket cases are tested. The API already limits message bodies to 4,000 characters.
+
+- Full `pnpm test`: **113 tests passed in 20 files**, including 30 additional review regressions (16 parser/rendering and 14 Electron handler cases).
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: passed; only the known LiveKit chunk-size advisory remains.
+- Real Electron `pnpm --filter @tricord/desktop test:links`: passed on Windows with a separate profile, sandbox/context isolation and renderer Node disabled. Actual renderer-created window-open events delegate valid HTTPS to a recording OS adapter; unsafe destinations and an untrusted app-page origin cause no external action or additional window. Unit cases also cover HTTP, malformed URLs, credentials, origin/port mismatches and rejected OS launches. The smoke script clears the inherited `ELECTRON_RUN_AS_NODE` flag.
+- The system default browser itself is not launched by this smoke. Authenticated Edge chat, database integration and the full authenticated Electron smoke remain unrun because local PostgreSQL/LiveKit configuration and Docker are absent.
+
+# Chat hyperlinks — 2026-10-27
+
+Feature branch: `feature/chat-hyperlinks`, based on `origin/main` at `613b367`. Shared React rendering adds HTTP(S) autolinks and simple Markdown links without changing stored text or API behavior. Electron delegates validated HTTP(S) links to the default browser and continues denying new renderer windows and navigation. No dependencies added.
+
+- `pnpm test`: **83 tests passed in 19 files**, including 18 new parser, escaped-rendering and shared URL validation cases. The initial sandbox run failed four existing Windows process startup/cleanup checks; the complete rerun outside the sandbox passed.
+- `pnpm lint`, `pnpm typecheck`, `pnpm build`: passed. The existing lazy LiveKit chunk-size advisory remains.
+- `pnpm format:check`: flags 123 untouched files in this Windows checkout, where `core.autocrlf=true` gives them CRLF line endings. Changed files pass the default Prettier check; `pnpm exec prettier --check . --end-of-line auto` passes for the entire checkout. Unrelated files were preserved.
+- Database integration, Edge authenticated messaging and Electron runtime smokes were not run: Docker and local PostgreSQL/LiveKit configuration are absent. The browser smoke now contains assertions for sent, reloaded, received and edited hyperlinks, but those new assertions have not been executed here. Actual external-browser launches remain unverified.
+
+Only explicit HTTP(S) URLs without credentials are linked. Common trailing punctuation and excess closing brackets are excluded. Markdown support is limited to simple labeled links; backtick code spans/fences, HTML and image syntax remain literal. There is no full Markdown renderer.
+
 # Milestone 2C verification
 
 Windows 11, 2026-10-24. Active repository: F:\tricord. Milestone 2B commit d298aa9 retained.
@@ -270,3 +305,47 @@ Verification completed:
 - Pinned actionlint 1.7.12 passed for both workflows. Task-file formatting and whitespace checks passed. Whole-tree formatting still flags only the five pre-existing untracked `.github/agents/*.agent.md` files, which were not reformatted or absorbed into this change.
 
 The hosted Windows job has not been rerun because these corrections have not been committed/pushed. Installation/uninstallation, real signed updater launch/recovery after shutdown, two signed releases, and physical/WAN voice were not rerun; the distribution runbook retains those acceptance gates. No commit, push, merge, PR comment, PR title/base change, workflow dispatch, release publication, production access or deployment was performed.
+
+## Agent workflows and organization transfer - 2026-10-28
+
+Documented `feature/* -> develop -> main` in the agent guidelines, contributor workflow, PR template and release runbook. Added planning, documentation and future deployment-option skills, with shared Copilot/Codex discovery guidance. Existing verification and hosting skills now clarify local regression tests, minimal code comments, compatibility checks and pipeline boundaries. Per-component deployment switches remain unimplemented, and no GitHub branch protection settings were changed.
+
+Updated current repository/community links to Treca-Raja and migrated the publishing tag and release-policy allowlist to `ghcr.io/treca-raja/tricord-public`. Six focused release-policy tests pass, covering organization casing, rejection of the former owner/image namespace, invalid repository input, feature/develop release rejection before network access, current-main checks and production approvals. Mocked GitHub requests target the new organization. Publication, publish-only and production approval gates remain unchanged.
+
+Validation used the locked pnpm toolchain in a local Node 24 Linux container, with network disabled during tests. Focused ESLint checks, workspace type checks and the shared-package build pass. The workflow passes the pinned actionlint 1.7.12 validator. All seven skill manifests, changed-document local links and command references validate; changed-file formatting and whitespace checks pass.
+
+No database, browser, Electron, voice or image/hosting smokes were run for these guidance and release-identity changes. Earlier application evidence remains separately dated. No source push, workflow dispatch, image publication or deployment occurred. Organization package access, host pull credentials and post-transfer production settings still need verification before an authorized release.
+
+## Ticket guidance and personal Trello MCP - 2026-10-28
+
+Added a canonical ticket template and a ticket-writing skill for AI-created Trello cards and GitHub issues. Root instructions, the skill index, contributor guidance and the planning skill reference it. The format separates scope, requirements, acceptance criteria, testing, completion and delivery metadata; drafting does not imply tests passed or work was approved.
+
+Verified the official Trello MCP endpoint and documented OAuth setup with personal configuration rather than repository credentials. Personal board routing stays outside tracked project files. The endpoint returned HTTP 401 without credentials, which establishes reachability, not authorized access. Authenticated board/list access and card creation were not verified in this session because its tool list did not expose the newly configured server.
+
+Local checks cover the eight repository skill manifests, the personal routing manifest, JSON structure, template sections/metadata, relative links, formatting and whitespace. No application runtime changes, tests, Trello cards, repository commits or pushes were made for this documentation/configuration update.
+
+## Progressive guidance loading - 2026-10-28
+
+Removed mandatory upfront reads of the skill index and project memory. Root instructions now direct targeted source reads and task/phase-specific skills; routine fixes do not trigger planning/ticket/documentation chains. Shortened all eight skill bodies, retained the ticket template and safety/release boundaries, and moved repeated operational detail back to its existing runbooks. Local checks remain impact-based, with wider coverage when needed.
+
+Measured Unicode character counts: root instructions decreased from 8,481 to 5,176 (39.0%); default required reading decreased from 26,697 to 5,176 (80.6%, excluding optional task-specific reads). The corresponding default word count decreased from 3,352 to 648. Skill bodies decreased from 32,978 to 18,481 characters (44.0%). These are source-text measurements, not actual model-token counts or a response-time benchmark; discovery metadata, source code, tool results and conversation history still add context.
+
+Validated eight manifests, 49 local links, 37 executable root-command references, formatting, whitespace and retained critical instructions. No application/runtime tests were needed for this guidance-only change. Historical memory and staged changes were preserved; no model, MCP, application, release configuration or remote state was changed.
+
+## Rajcord repository and guidance rename - 2026-10-29
+
+Updated current repository/community links, the workspace filename, eight skill names/directories and their references to Rajcord. Personal Trello routing was renamed outside the repository without changing the board or credentials. The local checkout and origin now use rajcord-public; the feature branch remains unchanged for PR #12. Historical verification/milestone records retain the original names.
+
+Publishing, CI release policy and the server-side image validator now agree on `ghcr.io/treca-raja/rajcord-public`. Fixed the operator helper's remaining former-owner allowlist and bootstrap placeholder. Tests reject mutable tags, both previous image namespaces and unrelated repositories before deployment operations, while preserving the previous successful release marker.
+
+Ten release-policy/hosting-configuration tests pass in an offline Node 24 container. The existing operator fixture passes in a disposable, networkless Linux container without a Docker socket, including bootstrap image selection and backup/migration/HTTPS failure paths. Focused ESLint, strict TypeScript checking of the changed release tests, pinned actionlint 1.7.12, ShellCheck 0.11.0, skill metadata/link checks, changed-file formatting and whitespace checks pass.
+
+No application/package names, environment variables, database/volume/cookie identifiers, server paths, systemd units or backup tags were migrated. No full application build, hosted TLS/media smoke, Windows packaging, registry publication or deployment was performed. Before an authorized release, verify new package permissions, host pull access, saved image markers and rollback digests; former-namespace images are now rejected. No commit, push or PR merge was performed.
+
+## PR #11 integration with develop - 2026-10-29
+
+Reconciled desktop branch `2c1b4c9` with develop `f046911` in an isolated worktree. The merge retains the optimized Rajcord skills, ticket template, branch flow and canonical server release namespace alongside Windows packaging, tray lifecycle and verified-update recovery. Both `package:win` and the develop branch's `test:links` script remain in the desktop manifest. The merged main process retains validated external-link handling as well as updater/lifecycle behavior. Both branches' dated verification history is preserved.
+
+Local validation in a network-disabled Node 24 Linux container passed all workspace builds and type checks, repository-wide formatting and ESLint, and **149 tests across 26 files**. This includes the external-link/message-rendering regressions, updater failure/retry tests, and separate server/desktop release policies. Both workflow files pass pinned actionlint 1.7.12. The frozen lockfile restored without changes and the known lazy LiveKit chunk-size advisory remains non-failing.
+
+Windows NSIS packaging, installer/signature checks, real Electron/browser smokes, database integration and physical/WAN voice were not rerun in this Linux resolution environment. The Windows workflow and distribution runbook retain those acceptance gates. No production services, release assets, credentials, remote protection settings or persistent data were changed.

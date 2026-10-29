@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 [[ -f /.dockerenv && ! -S /var/run/docker.sock && -d /fixture/scripts/hosting ]] || exit 1
 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-image=ghcr.io/fakebane/tricord-public@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+image=ghcr.io/treca-raja/rajcord-public@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 release=/opt/tricord/releases/$sha
 config=/etc/tricord/staging
 mkdir -p "$release/scripts" "$release/infrastructure" "$config/letsencrypt/live/tricord"
@@ -38,6 +38,10 @@ exit 0
 MOCK
 chmod 755 /usr/local/bin/docker /usr/local/bin/restic /usr/local/bin/curl /usr/local/bin/timeout
 deploy() { bash "$release/scripts/hosting/deploy.sh" staging "$image" "$sha" >/tmp/deploy-output 2>&1; }
+
+bash -c 'source "$1"; initialize_host staging; [[ $TRICORD_IMAGE == "$2" ]]' bash \
+  "$release/scripts/hosting/common.sh" \
+  ghcr.io/treca-raja/rajcord-public@sha256:0000000000000000000000000000000000000000000000000000000000000000
 
 # Failed off-server backup must block migrations and must not publish release markers.
 touch /tmp/fail-backup
@@ -87,6 +91,14 @@ mv "$config/letsencrypt/live/tricord.fixture" "$config/letsencrypt/live/tricord"
 deploy
 grep -q -- 'https://rajcord.test/ready' /tmp/operations
 grep -q -- '-verify_hostname turn.rajcord.test -servername turn.rajcord.test' /tmp/operations
-if bash "$release/scripts/hosting/deploy.sh" staging ghcr.io/fakebane/tricord-public:latest "$sha" >/dev/null 2>&1; then exit 1; fi
+: >/tmp/operations
+for rejected_image in \
+  ghcr.io/treca-raja/rajcord-public:latest \
+  "ghcr.io/fakebane/tricord-public@sha256:${image##*@sha256:}" \
+  "ghcr.io/treca-raja/tricord-public@sha256:${image##*@sha256:}" \
+  "ghcr.io/other/rajcord-public@sha256:${image##*@sha256:}"; do
+  if bash "$release/scripts/hosting/deploy.sh" staging "$rejected_image" "$sha" >/dev/null 2>&1; then exit 1; fi
+done
+[[ ! -s /tmp/operations && $(cat "$config/image") == "$image" ]]
 if bash "$release/scripts/hosting/deploy.sh" production "$image" "$sha" >/dev/null 2>&1; then exit 1; fi
-printf 'PASS: backup/migration/HTTPS failures block release success; immutable image and environment checks fail closed.\n'
+printf 'PASS: backup/migration/HTTPS failures block release success; Rajcord bootstrap and immutable image/environment checks fail closed.\n'

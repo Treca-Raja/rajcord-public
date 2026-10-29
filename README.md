@@ -1,23 +1,35 @@
-# Tricord
+# Rajcord
 
 Active public repository: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public).
+
+## Naming and compatibility
+
+The project and repository are now Rajcord. Open [rajcord.code-workspace](rajcord.code-workspace) from the current checkout; local folder names are independent of GitHub repository names. AI skill names use the `rajcord-` prefix.
+
+Existing technical identifiers remain compatible: `@tricord/*` workspace packages, `TRICORD_*` environment variables, `tricord_session`, database users/names, Docker projects/volumes, local image tags, server paths and systemd units. Keep using their documented names so existing configuration and data remain accessible. The Windows client/installer uses Rajcord identity and a separate per-user profile; see [desktop distribution](docs/desktop-distribution.md). Historical verification and milestone documents retain the names used at the time.
+
+Release images now target `ghcr.io/treca-raja/rajcord-public`. Verify package access and host pull credentials before releasing; a repository rename does not migrate a registry package or existing deployed data.
+
+## Application overview
 
 Milestone 2C adds local community voice channels to the authenticated React/Electron application, alongside persistent shared text channels, private DMs and group DMs. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
 
 ## Working with coding agents
 
-Start with [AGENTS.md](AGENTS.md) for project rules, [MEMORY.md](MEMORY.md) for dated context and [SKILLS.md](SKILLS.md) for reusable verification, database, voice and hosting workflows.
+Start with [AGENTS.md](AGENTS.md) for project rules, [MEMORY.md](MEMORY.md) for dated context and [SKILLS.md](SKILLS.md) for reusable planning, documentation, verification, database, voice and hosting workflows. Repository skills can be used with Copilot/VS Code or Codex; check discovery in the selected tool.
+
+Changes follow `feature/* -> develop -> main`: create feature branches from `develop`, target `develop` with feature PRs, and release through a `develop`-to-`main` PR. See [CONTRIBUTING.md](CONTRIBUTING.md). The deployment-option skill describes future component switches; those switches are not implemented yet.
 
 ## Windows prerequisites
 
 Windows 11, Node.js 24 LTS, pnpm 11.25.0, Git and Docker Desktop running Linux containers. Keep PostgreSQL and the API on loopback.
 
-On this workstation, if PowerShell cannot find the already-installed tools, add their locations for the current terminal:
+Run commands from your current clone (for example `C:\path\to\rajcord-public`). If PowerShell cannot find the already-installed tools, add their locations for the current terminal:
 
 ```powershell
 $env:Path += ";$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback"
 $env:Path += ";$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin"
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 ```
 
 On another machine, install pnpm normally with `npm install --global pnpm@11.25.0` and reopen PowerShell after installing Docker Desktop.
@@ -25,7 +37,7 @@ On another machine, install pnpm normally with `npm install --global pnpm@11.25.
 ## Setup and first owner
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm install --frozen-lockfile
 pnpm setup:desktop
 pnpm db:setup
@@ -51,7 +63,7 @@ The browser uses same-origin requests. Vite proxies `/api` and `/socket.io` to F
 ## Daily startup
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm db:up
 pnpm voice:setup
 pnpm voice:up
@@ -67,7 +79,7 @@ To run the desktop app, stop `pnpm dev` with Ctrl+C, then:
 pnpm dev:desktop
 ```
 
-The API uses Node’s watch mode with the existing tsx TypeScript loader. Desktop startup waits up to 30 seconds for Vite and a valid Tricord API health response, then opens Electron. If startup fails, it names the unavailable service and stops the helpers instead of waiting forever.
+The API uses Node’s watch mode with the existing tsx TypeScript loader. Desktop startup waits up to 30 seconds for Vite and a valid Rajcord API health response, then opens Electron. If startup fails, it names the unavailable service and stops the helpers instead of waiting forever.
 
 The same screens run in the sandboxed Electron renderer. A normal development desktop exit stops its helpers and returns success; actual app/helper failures still fail. Minimize retains the session. Closing a development window quits. Installed Rajcord closes to the tray; **Quit Rajcord** or Ctrl+Q exits and disconnects voice. Temporary sessions are revoked on an orderly online quit and their local cookie is removed. Remembered sessions survive restart for up to 30 days. Settings includes display-name changes, password changes, device revocation and logout.
 
@@ -97,7 +109,7 @@ Readiness checks a real database connection; it does not apply migrations. Postg
 Close Electron if it is running, then press **Ctrl+C** in the development terminal. Stop PostgreSQL with:
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm voice:down
 pnpm db:down
 ```
@@ -105,6 +117,12 @@ pnpm db:down
 This preserves the database volume. Never use `down -v`, volume removal or pruning for this project.
 
 ## Messaging behavior
+
+Explicit `http://` and `https://` URLs become clickable links, as do simple Markdown links such as `[GitHub](https://github.com)`. Links open in a new browser tab (the default browser from Electron); hover shows the normalized destination, including the ASCII form of international domain names. Common trailing sentence punctuation and paired emphasis markers are excluded from automatic URL targets. Only HTTP(S) destinations without embedded credentials are accepted; HTML stays escaped. Link destinations support balanced parentheses; incomplete destinations, spaces and Markdown link titles remain literal. Backtick code spans and fenced blocks remain literal, and other Markdown formatting is not interpreted. This applies to stored, incoming and edited messages without changing their stored text.
+
+After `pnpm build` and `pnpm setup:desktop`, run `pnpm --filter @tricord/desktop test:links` for an isolated Electron link smoke that needs no database or LiveKit. It exercises real window-open events with a recording OS adapter; it does not launch an external browser. The test profile is separate from the normal desktop profile.
+
+For authenticated desktop chat verification after building, run `pnpm --filter @tricord/api test:desktop --chat-only`. It checks links in sent, received and restored messages across three launches, along with authentication and session regressions, without microphone access or voice tests. PostgreSQL and the harness's LiveKit prerequisite must be configured and running. Omitting `--chat-only` retains the existing combined desktop/voice suite.
 
 Approved members can create, rename, archive and reopen shared channels. Use the sidebar plus buttons to open a DM or create a group; clicking a community member opens the same persistent DM for that pair. Groups start with the creator as manager. Any current member can invite approved users, but invitees must accept in their inbox. Only the manager can remove members, rename the group or transfer management. A manager must transfer before leaving a nonempty group.
 
@@ -124,16 +142,16 @@ Write **@username** to mention someone (case-insensitive, complete usernames). U
 
 Choose **Enable notifications** in the sidebar on each browser/device. Alerts cover private messages and mentions away from the focused conversation. Notification previews contain no message text or participant names; clicking opens the conversation. Turn them off with **Disable notifications**. Only this per-account notification preference is stored in localStorage; authentication remains in HttpOnly cookies.
 
-On Windows, enabling alerts registers a **Tricord development** Start Menu shortcut for Electron notifications. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
+On Windows, enabling alerts registers a **Rajcord development** Start Menu shortcut for Electron notifications. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
 
-Notifications require Tricord to stay open (minimized is fine). There is no push delivery after closing the browser/app and no replay of old alerts on reconnect; persisted unread counts catch up instead. Multiple open browsers/devices may each alert if enabled. Public browser hosting requires trusted HTTPS.
+Notifications require Rajcord to stay open (minimized is fine). There is no push delivery after closing the browser/app and no replay of old alerts on reconnect; persisted unread counts catch up instead. Multiple open browsers/devices may each alert if enabled. Public browser hosting requires trusted HTTPS.
 
 ## Verification
 
 With Docker Desktop running (the database suite and browser/Electron smoke also require the local voice service):
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm db:up
 pnpm voice:setup
 pnpm voice:up
@@ -206,7 +224,7 @@ LiveKit 1.13.10 runs as a separate local Docker service. Approved users can crea
 First-time voice setup (preserves all existing database files and data):
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm voice:setup
 pnpm voice:up
 pnpm db:up
@@ -238,7 +256,7 @@ This test covers actual received audio, independent sessions, mute/deafen, selec
 Start Docker Desktop and the existing services first:
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 docker desktop start
 pnpm db:up
 pnpm voice:setup
@@ -263,3 +281,5 @@ The [production deployment runbook](docs/deployment.md) describes the prepared C
 For the Linux VPS, the reviewed host helpers under `scripts/hosting/` prepare Docker/firewall rules, key-only SSH and a separate CI deployment account. `initialize-runtime.sh` generates server-only configuration using the pinned Node container, so host Node installation is optional. The existing VPS now has these foundations and issued public certificates; the encrypted R2 repository is initialized and its storage round trip is verified. The application, live database backup/recovery and active release maintenance jobs remain pending. See the dated verification record before treating a prepared component as live.
 
 For first-release image preparation, `gh workflow run verify.yml --ref main -f publish_only=true` tests and publishes the current-main image without entering production policy/approval/deployment jobs. Keep `HOSTING_ENABLED=false` while configuring GHCR image access. The normal workflow's publication and approval-gated deployment behavior is unchanged when this manual input is false.
+
+Andrej se igra
