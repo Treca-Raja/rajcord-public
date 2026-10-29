@@ -247,11 +247,16 @@ app
       win.show();
       win.focus();
     };
-    const updates = configureUpdates(async () => {
-      await clearTemporarySession();
-      await session.defaultSession.cookies.flushStore();
-      quitting = true;
-    });
+    const updates = configureUpdates(
+      async () => {
+        await clearTemporarySession();
+        await session.defaultSession.cookies.flushStore();
+        quitting = true;
+      },
+      () => {
+        quitting = false;
+      },
+    );
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
         {

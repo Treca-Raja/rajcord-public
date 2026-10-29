@@ -4,6 +4,7 @@ const state = vi.hoisted(() => ({
   prompt: vi.fn(),
   verify: vi.fn(),
   create: vi.fn(),
+  quitGuards: [] as (() => boolean)[],
   listeners: {} as Record<string, () => void>,
 }));
 vi.mock('electron', () => ({
@@ -12,8 +13,9 @@ vi.mock('electron', () => ({
 }));
 vi.mock('node:fs', () => ({ default: { readFileSync: state.read } }));
 vi.mock('./update-signature.js', () => ({ verifyUpdateSignature: state.verify }));
-vi.mock('electron-updater', () => ({
-  NsisUpdater: function () {
+vi.mock('./update-installer.js', () => ({
+  RecoverableNsisUpdater: function (mayQuit: () => boolean) {
+    state.quitGuards.push(mayQuit);
     return state.create();
   },
 }));
@@ -38,8 +40,9 @@ beforeEach(() => {
     configurable: true,
   });
   state.listeners = {};
+  state.quitGuards = [];
   state.read.mockReturnValue(
-    'provider: github\nowner: Treca-Raja\nrepo: tricord-public\npublisherName: CN=Trusted\n',
+    'provider: github\nowner: Treca-Raja\nrepo: rajcord-public\npublisherName: CN=Trusted\n',
   );
   state.prompt.mockResolvedValue({ response: 1 });
   state.verify.mockResolvedValue(null);
@@ -63,7 +66,7 @@ afterEach(() => {
   else Reflect.deleteProperty(process, 'resourcesPath');
 });
 it('disables updates when the packaged publisher is missing', async () => {
-  state.read.mockReturnValue('provider: github\nowner: Treca-Raja\nrepo: tricord-public');
+  state.read.mockReturnValue('provider: github\nowner: Treca-Raja\nrepo: rajcord-public');
   await configureUpdates(vi.fn()).check();
   expect(state.create).not.toHaveBeenCalled();
   expect(state.prompt).toHaveBeenCalled();
@@ -115,4 +118,90 @@ it('blocks cached-file replacement even if the replacement has a valid trusted s
   state.read.mockReturnValue('different bytes');
   await updates.install();
   expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+
+it('allows retrying the verified update after session preparation fails', async () => {
+  const prepare = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('cleanup failed'))
+    .mockResolvedValue(undefined);
+  const failed = vi.fn();
+  const updates = configureUpdates(prepare, failed);
+  await updates.check();
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  expect(failed).toHaveBeenCalledOnce();
+  expect(state.prompt).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      message: 'Rajcord could not prepare to install the update. Please try again.',
+    }),
+  );
+
+  await updates.install();
+  expect(prepare).toHaveBeenCalledTimes(2);
+  expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+  expect(state.verify).toHaveBeenCalledTimes(3);
+});
+
+it('releases the operation guard when the restart dialog fails', async () => {
+  state.prompt
+    .mockResolvedValueOnce({ response: 1 })
+    .mockRejectedValueOnce(new Error('dialog failed'));
+  const prepare = vi.fn();
+  const updates = configureUpdates(prepare);
+  await updates.check();
+  expect(prepare).not.toHaveBeenCalled();
+  await updates.install();
+  expect(prepare).toHaveBeenCalledOnce();
+  expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+});
+
+it('reports a synchronous installer failure and rechecks before retrying with a fresh updater', async () => {
+  const failed = vi.fn();
+  updater.quitAndInstall.mockImplementationOnce(() => {
+    throw new Error('launch failed');
+  });
+  const updates = configureUpdates(vi.fn(), failed);
+  await updates.check();
+  expect(failed).toHaveBeenCalledOnce();
+  expect(state.prompt).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      message: 'The update installer failed. Check for updates and try again.',
+    }),
+  );
+
+  const replacement = { ...updater, quitAndInstall: vi.fn() };
+  state.create.mockReturnValueOnce(replacement);
+  await updates.check();
+  expect(state.create).toHaveBeenCalledTimes(2);
+  expect(replacement.checkForUpdates).toHaveBeenCalledTimes(2);
+  expect(replacement.downloadUpdate).toHaveBeenCalledTimes(2);
+  expect(replacement.quitAndInstall).toHaveBeenCalledWith(false, true);
+});
+
+it('reports installer error events after quitAndInstall returns and permits a fresh checked retry', async () => {
+  const failed = vi.fn();
+  const updates = configureUpdates(vi.fn(), failed);
+  await updates.check();
+  const previousQuitAllowed = state.quitGuards[0]!;
+  expect(previousQuitAllowed()).toBe(true);
+  const previousError = state.listeners['error']!;
+  previousError();
+  expect(previousQuitAllowed()).toBe(false);
+  expect(failed).toHaveBeenCalledOnce();
+  expect(state.prompt).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      message: 'The update installer failed. Check for updates and try again.',
+    }),
+  );
+
+  const replacement = { ...updater, quitAndInstall: vi.fn() };
+  state.create.mockReturnValueOnce(replacement);
+  await updates.check();
+  expect(state.quitGuards[1]!()).toBe(true);
+  expect(previousQuitAllowed()).toBe(false);
+  expect(state.create).toHaveBeenCalledTimes(2);
+  expect(replacement.quitAndInstall).toHaveBeenCalledOnce();
+  previousError();
+  expect(failed).toHaveBeenCalledOnce();
 });

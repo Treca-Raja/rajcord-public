@@ -17,7 +17,7 @@ module.exports = {
   forceCodeSigning: signed,
   electronUpdaterCompatibility: '>=6.8.11',
   publish: signed
-    ? [{ provider: 'github', owner: 'Treca-Raja', repo: 'tricord-public', releaseType: 'draft' }]
+    ? [{ provider: 'github', owner: 'Treca-Raja', repo: 'rajcord-public', releaseType: 'draft' }]
     : null,
   win: {
     target: [{ target: 'nsis', arch: ['x64'] }],

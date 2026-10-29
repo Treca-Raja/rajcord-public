@@ -14,10 +14,11 @@ Thanks for helping build Tricord. Contributions are welcome from anyone. You do 
 ## Submitting changes
 
 - For larger work, open an issue or discussion first to align on scope.
-- Create a descriptive branch, e.g. `feat/message-search` or `fix/login-redirect`.
+- Create a descriptive `feature/*` branch, e.g. `feature/message-search`, and target `develop` in its PR. Promote reviewed integration changes through a separate `develop` → `main` PR.
 - Keep PRs focused. Explain what changed and how you tested it.
 - Run the applicable scripts in `package.json`, including `pnpm test`; database tests (`pnpm test:db`) require a working test database.
 - Do not include generated output, dependencies, secrets, or unrelated formatting changes.
+- Text checkouts use LF through `.gitattributes`, including on Windows; PNG and ICO assets remain binary. Preserve applied migration files rather than rewriting them to repair formatting.
 - Be respectful and follow the Code of Conduct.
 
 Trusted collaborators may push branches directly. Contributors without write access can submit pull requests from forks. PR approval is not mandatory, but review is encouraged for security-sensitive and substantial changes.

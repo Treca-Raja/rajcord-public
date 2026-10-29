@@ -4,7 +4,7 @@ it('refuses updates without a pinned public release repository and publisher', (
   const config = {
     provider: 'github',
     owner: 'Treca-Raja',
-    repo: 'tricord-public',
+    repo: 'rajcord-public',
     publisherName: ['CN=Trusted, O=Example, C=RS'],
   };
   expect(trustedUpdateConfig(config)).toBe(true);
@@ -16,6 +16,8 @@ it('refuses updates without a pinned public release repository and publisher', (
     { provider: 'generic' },
     { owner: 'attacker' },
     { repo: 'other' },
+    { repo: 'tricord-public' },
+    { owner: 'fakebane' },
     { verifyUpdateCodeSignature: false },
   ])
     expect(trustedUpdateConfig({ ...config, ...change })).toBe(false);

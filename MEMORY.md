@@ -7,7 +7,7 @@ Last reconciled: 2026-10-27. Application baseline: `1ae691c`. This is maintained
 - One private community, initially up to ten people. Text and voice have equal priority.
 - Browser and Windows 11 desktop share the React UI. The maintainer prefers clear explanations and progress on routine authorized work without repeated confirmation.
 - Work continues in the existing repository. The maintainer's checkout is `F:\tricord`.
-- Active public source: [Treca-Raja/tricord-public](https://github.com/Treca-Raja/tricord-public), transferred from fakebane (same GitHub repository ID, verified 2026-10-28). The previous repository was retired. Source being public does not expose the private community's database or accounts.
+- Active public source: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public), transferred from fakebane (same GitHub repository ID, verified 2026-10-28). The previous repository was retired. Source being public does not expose the private community's database or accounts.
 
 ## Implemented and verified baseline
 
@@ -48,6 +48,7 @@ Hosting initialization supports separate web/TURN DNS identities while preservin
 
 ## Limits and follow-up candidates
 
+- PR #11 review fixes (2026-10-29, local): `.gitattributes` enforces LF for text while PNG/ICO stay binary; no migration files are rewritten. Contributor flow is `feature/*` → `develop` → `main`, with Windows review builds on both integration branches and release gates still main-only. Updater preparation failures release the operation guard; reported installer errors invalidate that attempt's queued quit and allow a fresh verified retry without private updater-state changes. PR title/base changes, publication and the actual GitHub Windows rerun remain pending authorization. Real signed updating remains a manual release gate.
 - Single API instance; multi-instance voice/session coordination is not implemented.
 - Uploads, message search, screen sharing and closed-app push remain future work, not authorization to implement them automatically.
 - Rajcord desktop distribution implementation (2026-10-28, dedicated distribution branch): NSIS x64, `com.rajcord.desktop`, per-user `%APPDATA%\Rajcord`, pinned production HTTPS and tray lifecycle. `pnpm desktop:package` builds unsigned/manual-install output by default; signed builds require an exact publisher DN and certificate and enable fail-closed Authenticode-verified GitHub updates. Stable electron-builder/updater are pinned to 26.18.0/6.8.11; the newer v27/v7 documentation is not their security contract. The new Windows workflow builds review artifacts automatically but only creates draft Releases after explicit dispatch and a verified protected `desktop-release` environment. No remote environment/signing credential/release has been configured. Real signed two-release updating and installed physical/WAN media acceptance remain outstanding. See `docs/desktop-distribution.md` and dated verification evidence.

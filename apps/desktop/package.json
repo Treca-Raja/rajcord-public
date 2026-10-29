@@ -5,7 +5,7 @@
   "productName": "Rajcord",
   "description": "Rajcord private community desktop client",
   "author": "Rajcord contributors",
-  "repository": "https://github.com/Treca-Raja/tricord-public",
+  "repository": "https://github.com/Treca-Raja/rajcord-public",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

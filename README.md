@@ -1,6 +1,6 @@
 # Tricord
 
-Active public repository: [Treca-Raja/tricord-public](https://github.com/Treca-Raja/tricord-public).
+Active public repository: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public).
 
 Milestone 2C adds local community voice channels to the authenticated React/Electron application, alongside persistent shared text channels, private DMs and group DMs. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
 
@@ -79,6 +79,8 @@ pnpm desktop:audit
 ```
 
 The Windows x64 NSIS installer is written to `artifacts/desktop/Rajcord-Setup-0.1.0-x64.exe` (version from `apps/desktop/package.json`). Installed clients always connect to `https://rajcord.com`. The default unsigned build supports manual installation; verified automatic updates require a signed build. See the [desktop distribution runbook](docs/desktop-distribution.md) for signing, versioning, guarded GitHub draft releases, install testing and manual voice/update acceptance gates. No release is published by a local build.
+
+Feature PRs target `develop`; reviewed integration then moves through a separate `develop` → `main` PR. Windows review builds run for both branches, while release publication stays restricted to explicitly authorized dispatches on `main`. Text files use LF on every platform through `.gitattributes`.
 
 From another terminal:
 

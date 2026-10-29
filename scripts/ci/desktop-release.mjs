@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { validateProduction } from './policy.mjs';
 
 // Desktop releases use the transferred repository; server deployment policy is unchanged.
-assert.equal(process.env.GITHUB_REPOSITORY, 'Treca-Raja/tricord-public');
+assert.equal(process.env.GITHUB_REPOSITORY, 'Treca-Raja/rajcord-public');
 assert.equal(process.env.GITHUB_REF, 'refs/heads/main', 'Only main may release.');
 assert.match(process.env.GITHUB_SHA ?? '', /^[a-f0-9]{40}$/, 'Use a full commit SHA.');
 const { version } = JSON.parse(fs.readFileSync('apps/desktop/package.json', 'utf8'));

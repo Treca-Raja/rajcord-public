@@ -1,25 +1,62 @@
 import { app, dialog } from 'electron';
-import { NsisUpdater } from 'electron-updater';
+import type { NsisUpdater } from 'electron-updater';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { load } from 'js-yaml';
 import { verifyUpdateSignature } from './update-signature.js';
 import { trustedUpdateConfig } from './update-policy.js';
+import { RecoverableNsisUpdater } from './update-installer.js';
 
-export function configureUpdates(prepareInstall: () => Promise<void>) {
+export function configureUpdates(
+  prepareInstall: () => Promise<void>,
+  installFailed: () => void = () => {},
+) {
   let updater: NsisUpdater | undefined;
   let publishers: string[] = [];
   let busy = false;
   let ready = false;
   let downloadedFile: string | undefined;
   let downloadedHash: string | undefined;
+  let recreateUpdater = false;
+  let installingUpdater: NsisUpdater | undefined;
   const hashFile = (file: string) =>
     createHash('sha512').update(fs.readFileSync(file)).digest('base64');
   let available = false;
   let timer: NodeJS.Timeout | undefined;
   const show = (message: string) =>
     dialog.showMessageBox({ type: 'info', title: 'Rajcord updates', message });
+  const reportInstallerFailure = (instance: NsisUpdater) => {
+    if (installingUpdater !== instance) return;
+    installingUpdater = undefined;
+    ready = false;
+    // v6 can retain its install-once flag after an asynchronous launch failure.
+    // A fresh updater will recheck the feed and reverify any cached download.
+    recreateUpdater = true;
+    installFailed();
+    void show('The update installer failed. Check for updates and try again.').catch(() => {
+      /* A dialog can be unavailable while Windows is shutting down. */
+    });
+  };
+  const createUpdater = () => {
+    const instance: NsisUpdater = new RecoverableNsisUpdater(() => installingUpdater === instance);
+    instance.verifyUpdateCodeSignature = verifyUpdateSignature;
+    instance.autoDownload = false;
+    instance.autoInstallOnAppQuit = false;
+    instance.allowPrerelease = false;
+    instance.allowDowngrade = false;
+    instance.disableWebInstaller = true;
+    instance.logger = null; // Do not log URLs, downloaded metadata or profiles.
+    instance.on('error', () => {
+      if (instance !== updater) return;
+      ready = false;
+      reportInstallerFailure(instance);
+    });
+    instance.on('update-available', () => {
+      if (instance === updater) available = true;
+    });
+    return instance;
+  };
   if (app.isPackaged && process.platform === 'win32') {
     try {
       const config = load(
@@ -29,38 +66,27 @@ export function configureUpdates(prepareInstall: () => Promise<void>) {
         publishers = Array.isArray(config.publisherName)
           ? config.publisherName
           : [config.publisherName];
-        updater = new NsisUpdater();
-        updater.verifyUpdateCodeSignature = verifyUpdateSignature;
-        updater.autoDownload = false;
-        updater.autoInstallOnAppQuit = false;
-        updater.allowPrerelease = false;
-        updater.allowDowngrade = false;
-        updater.disableWebInstaller = true;
-        updater.logger = null; // Do not log URLs, downloaded metadata or profiles.
-        updater.on('error', () => {
-          ready = false;
-        });
-        updater.on('update-available', () => {
-          available = true;
-        });
+        updater = createUpdater();
       }
     } catch {
       /* Unsigned builds deliberately have no update feed. */
     }
   }
   const install = async () => {
-    if (!updater || !ready || busy) return;
+    if (!updater || !ready || busy || installingUpdater) return;
     busy = true;
-    const answer = await dialog.showMessageBox({
-      type: 'question',
-      title: 'Restart Rajcord?',
-      message: 'Restart Rajcord to install the verified update?',
-      detail: 'This disconnects any active voice call.',
-      buttons: ['Later', 'Restart and install'],
-      defaultId: 0,
-      cancelId: 0,
-    });
-    if (answer.response === 1) {
+    let installerCalled = false;
+    try {
+      const answer = await dialog.showMessageBox({
+        type: 'question',
+        title: 'Restart Rajcord?',
+        message: 'Restart Rajcord to install the verified update?',
+        detail: 'This disconnects any active voice call.',
+        buttons: ['Later', 'Restart and install'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (answer.response !== 1) return;
       const file = downloadedFile;
       let verified = false;
       try {
@@ -73,17 +99,25 @@ export function configureUpdates(prepareInstall: () => Promise<void>) {
       }
       if (!verified) {
         ready = false;
-        busy = false;
         await show('The update signature could not be verified. Installation was blocked.');
         return;
       }
       await prepareInstall();
+      installingUpdater = updater;
+      installerCalled = true;
       updater.quitAndInstall(false, true);
+    } catch {
+      if (installerCalled) reportInstallerFailure(updater);
+      else {
+        installFailed();
+        await show('Rajcord could not prepare to install the update. Please try again.');
+      }
+    } finally {
+      busy = false;
     }
-    busy = false;
   };
   const check = async (interactive = true) => {
-    if (busy) return;
+    if (busy || installingUpdater) return;
     if (!updater) {
       if (interactive)
         await show(
@@ -97,6 +131,10 @@ export function configureUpdates(prepareInstall: () => Promise<void>) {
     }
     busy = true;
     try {
+      if (recreateUpdater) {
+        updater = createUpdater();
+        recreateUpdater = false;
+      }
       available = false;
       const result = await updater.checkForUpdates();
       if (!result || !available) {

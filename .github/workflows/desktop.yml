@@ -2,7 +2,7 @@ name: Windows desktop
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [develop, main]
   workflow_dispatch:
     inputs:
       publish_draft:
