@@ -3,6 +3,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish_only:
+        description: Publish the tested main image without deploying
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -48,12 +53,12 @@ jobs:
       - name: Verify hosted proxy and service configuration
         run: node scripts/hosting/smoke.mjs tricord-ci
       - name: Save the tested image for publication
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.HOSTING_ENABLED == 'true'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (vars.HOSTING_ENABLED == 'true' || inputs.publish_only == true)
         run: |
           mkdir -p artifacts
           docker save tricord-ci | gzip > artifacts/tricord-image.tar.gz
       - name: Upload the exact tested image
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.HOSTING_ENABLED == 'true'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (vars.HOSTING_ENABLED == 'true' || inputs.publish_only == true)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-image
@@ -69,7 +74,7 @@ jobs:
 
   publish:
     needs: verify
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.HOSTING_ENABLED == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (vars.HOSTING_ENABLED == 'true' || inputs.publish_only == true)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -112,6 +117,7 @@ jobs:
 
   production-policy:
     needs: publish
+    if: vars.HOSTING_ENABLED == 'true' && inputs.publish_only != true
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -131,6 +137,7 @@ jobs:
 
   production:
     needs: [publish, production-policy]
+    if: vars.HOSTING_ENABLED == 'true' && inputs.publish_only != true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # GitHub waits for the configured reviewer before releasing production secrets.
