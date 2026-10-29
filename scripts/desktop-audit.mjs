@@ -12,11 +12,13 @@ const dir = path.resolve('artifacts/desktop');
 const archive = path.join(dir, 'win-unpacked/resources/app.asar');
 const files = listPackage(archive).map((file) => file.replaceAll('\\', '/'));
 assert.ok(files.includes('/dist/main.js'));
-assert.ok(
-  !files.some((file) =>
-    /(?:\.env|\.local|\.test\.js|smoke\.js|\.pem|\.pfx|\.key|\/apps\/api\/)/i.test(file),
-  ),
-  'Unexpected private/test/server material in package.',
+const unexpectedFiles = files.filter((file) =>
+  /(?:\.env|\.local|\.test\.js|smoke\.js|\.pem|\.pfx|\.key|\/apps\/api\/)/i.test(file),
+);
+assert.equal(
+  unexpectedFiles.length,
+  0,
+  `Unexpected private/test/server material in package: ${unexpectedFiles.join(', ')}`,
 );
 const pkg = JSON.parse(extractFile(archive, 'package.json').toString());
 assert.equal(pkg.name, 'rajcord');

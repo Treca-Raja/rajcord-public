@@ -10,7 +10,7 @@ module.exports = {
   executableName: 'Rajcord',
   artifactName: 'Rajcord-Setup-${version}-${arch}.${ext}',
   directories: { output: '../../artifacts/desktop', buildResources: 'resources' },
-  files: ['dist/**/*.js', '!dist/**/*.test.js', '!dist/smoke.js', 'resources/icon.png'],
+  files: ['dist/**/*.js', '!**/*.test.js', '!**/*smoke.js', 'resources/icon.png'],
   extraMetadata: { name: 'rajcord', description: 'Rajcord private community desktop client' },
   asar: true,
   npmRebuild: false,
