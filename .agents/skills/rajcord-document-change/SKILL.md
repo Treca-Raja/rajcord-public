@@ -10,6 +10,7 @@ Use the actual change/tests already in context. Open only the relevant section o
 - [README](../../../README.md): features, visible behavior, setup and commands.
 - [CONTRIBUTING](../../../CONTRIBUTING.md): branches and contributor workflow.
 - [Hosting](../../../docs/hosting.md) / [deployment](../../../docs/deployment.md): architecture and operator procedures.
+- [Desktop distribution](../../../docs/desktop-distribution.md): installer, tray lifecycle, signing and updates.
 - [MEMORY](../../../MEMORY.md): durable decisions; [verification](../../../docs/verification.md): material new evidence.
 - [AGENTS](../../../AGENTS.md) / [SKILLS](../../../SKILLS.md): changed agent rules or discovery.
 

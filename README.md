@@ -6,7 +6,7 @@ Active public repository: [Treca-Raja/rajcord-public](https://github.com/Treca-R
 
 The project and repository are now Rajcord. Open [rajcord.code-workspace](rajcord.code-workspace) from the current checkout; local folder names are independent of GitHub repository names. AI skill names use the `rajcord-` prefix.
 
-This branch preserves existing technical identifiers: `@tricord/*` workspace packages, `TRICORD_*` environment variables, `tricord_session`, database users/names, Docker projects/volumes, local image tags, server paths and systemd units. Keep using their documented names so existing configuration and data remain accessible. Historical verification and milestone documents retain the names used at the time. The separate [Windows distribution PR](https://github.com/Treca-Raja/rajcord-public/pull/11) owns its application/installer rebrand.
+Existing technical identifiers remain compatible: `@tricord/*` workspace packages, `TRICORD_*` environment variables, `tricord_session`, database users/names, Docker projects/volumes, local image tags, server paths and systemd units. Keep using their documented names so existing configuration and data remain accessible. The Windows client/installer uses Rajcord identity and a separate per-user profile; see [desktop distribution](docs/desktop-distribution.md). Historical verification and milestone documents retain the names used at the time.
 
 Release images now target `ghcr.io/treca-raja/rajcord-public`. Verify package access and host pull credentials before releasing; a repository rename does not migrate a registry package or existing deployed data.
 
@@ -81,7 +81,18 @@ pnpm dev:desktop
 
 The API uses Node’s watch mode with the existing tsx TypeScript loader. Desktop startup waits up to 30 seconds for Vite and a valid Rajcord API health response, then opens Electron. If startup fails, it names the unavailable service and stops the helpers instead of waiting forever.
 
-The same screens run in the sandboxed Electron renderer. A normal desktop exit stops its development helpers and returns success; actual app/helper failures still fail. Minimize retains the session. Closing the window fully quits; there is no tray mode. Temporary sessions are revoked on an orderly online quit and their local cookie is removed. Remembered sessions survive restart for up to 30 days. Settings includes display-name changes, password changes, device revocation and logout.
+The same screens run in the sandboxed Electron renderer. A normal development desktop exit stops its helpers and returns success; actual app/helper failures still fail. Minimize retains the session. Closing a development window quits. Installed Rajcord closes to the tray; **Quit Rajcord** or Ctrl+Q exits and disconnects voice. Temporary sessions are revoked on an orderly online quit and their local cookie is removed. Remembered sessions survive restart for up to 30 days. Settings includes display-name changes, password changes, device revocation and logout.
+
+## Rajcord Windows installer
+
+```powershell
+pnpm desktop:package
+pnpm desktop:audit
+```
+
+The Windows x64 NSIS installer is written to `artifacts/desktop/Rajcord-Setup-0.1.0-x64.exe` (version from `apps/desktop/package.json`). Installed clients always connect to `https://rajcord.com`. The default unsigned build supports manual installation; verified automatic updates require a signed build. See the [desktop distribution runbook](docs/desktop-distribution.md) for signing, versioning, guarded GitHub draft releases, install testing and manual voice/update acceptance gates. No release is published by a local build.
+
+Feature PRs target `develop`; reviewed integration then moves through a separate `develop` → `main` PR. Windows review builds run for both branches, while release publication stays restricted to explicitly authorized dispatches on `main`. Text files use LF on every platform through `.gitattributes`.
 
 From another terminal:
 
@@ -131,7 +142,7 @@ Write **@username** to mention someone (case-insensitive, complete usernames). U
 
 Choose **Enable notifications** in the sidebar on each browser/device. Alerts cover private messages and mentions away from the focused conversation. Notification previews contain no message text or participant names; clicking opens the conversation. Turn them off with **Disable notifications**. Only this per-account notification preference is stored in localStorage; authentication remains in HttpOnly cookies.
 
-On Windows, enabling alerts currently registers a **Tricord development** Start Menu shortcut for Electron notifications; this legacy identifier is unchanged on this branch. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
+On Windows, enabling alerts registers a **Rajcord development** Start Menu shortcut for Electron notifications. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
 
 Notifications require Rajcord to stay open (minimized is fine). There is no push delivery after closing the browser/app and no replay of old alerts on reconnect; persisted unread counts catch up instead. Multiple open browsers/devices may each alert if enabled. Public browser hosting requires trusted HTTPS.
 

@@ -14,7 +14,7 @@ The [production delivery runbook](deployment.md) supplies service configuration,
 - The image smoke uses an isolated Docker network, a PostgreSQL tmpfs and a separate LiveKit container. It verifies migrations twice, web assets, database readiness, registration/login, Secure/HttpOnly/SameSite cookies, pending-account restrictions, authenticated private LiveKit control, and an actual pg_dump/pg_restore round trip.
 - Production voice configuration accepts the private Docker hostname livekit. Browser connections still pass through the authenticated Rajcord signaling gateway; LiveKit bearer tokens remain internal.
 - Hosted leases let LiveKit supply ICE/TURN configuration. Development leases retain an empty ICE-server list and loopback-only configuration.
-- Desktop can load an operator-configured exact HTTPS origin. Its microphone permissions, navigation restrictions and renderer isolation use that same trusted origin. Temporary-cookie cleanup is scoped to the selected server.
+- Unpackaged desktop can load an operator-configured exact HTTPS origin. Installed Rajcord is pinned to `https://rajcord.com`; see [desktop distribution](desktop-distribution.md). Its microphone permissions, navigation restrictions and renderer isolation use that same trusted origin. Temporary-cookie cleanup is scoped to the selected server.
 
 ## Local image verification
 

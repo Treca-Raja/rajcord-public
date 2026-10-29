@@ -3,7 +3,9 @@ contextBridge.exposeInMainWorld(
   'tricordDesktop',
   Object.freeze({
     platform: process.platform,
-    version: '0.1.0',
+    version:
+      process.argv.find((value) => value.startsWith('--rajcord-version='))?.split('=')[1] ??
+      'development',
     enableNotifications: () => ipcRenderer.invoke('notifications:enable'),
     notify: (notice: { conversationId: string; mention: boolean }) =>
       ipcRenderer.invoke('notifications:show', notice),

@@ -22,6 +22,7 @@ Thanks for helping build Rajcord. Contributions are welcome from anyone. You do 
 - Add tests for implemented behavior and run applicable local checks from [rajcord-verify](.agents/skills/rajcord-verify/SKILL.md). Database tests (`pnpm test:db`) require the documented local services. Documentation-only changes need formatting/link checks, not the runtime stack.
 - Update existing documentation for changed features or commands, using [rajcord-document-change](.agents/skills/rajcord-document-change/SKILL.md). Keep code comments limited to non-obvious intent or constraints.
 - Do not include generated output, dependencies, secrets, or unrelated formatting changes.
+- Text checkouts use LF through `.gitattributes`, including on Windows; PNG and ICO assets remain binary. Preserve applied migration files rather than rewriting them to repair formatting.
 - Be respectful and follow the Code of Conduct.
 
 Trusted collaborators may push their feature branches when authorized. Contributors without write access can submit pull requests from forks, also targeting `develop`. Check the PR source/base pair and required checks before merging. Preserve configured branch protections; this document does not change GitHub settings. Review is encouraged for security-sensitive and substantial changes.
