@@ -144,6 +144,23 @@ First implementation slice of chat modernization (AC1), not completion of the co
 
 Local checks used newly generated ignored credentials, loopback-only PostgreSQL/LiveKit and owned disposable databases/profiles. Existing database data, credentials and Docker volumes were preserved.
 
+## CI/CD completion audit — 2026-10-30
+
+Prepared `feature/ci-cd-completion` from freshly fetched `develop` at `264fcc7409c8f776819ba70abb60bfe877434a96`. The Verify workflow now rejects PRs outside `feature/*` or `dependabot/*` into `develop`, and same-repository `develop` into `main`, including base edits. Dependabot version updates target `develop`; default-branch security updates need retargeting. No publication/deployment conditions, registry identities, operator scripts or production settings changed.
+
+Read-only GitHub audit:
+
+- The existing develop commit passed [Linux Verify](https://github.com/Treca-Raja/rajcord-public/actions/runs/40954328870) and [Windows desktop](https://github.com/Treca-Raja/rajcord-public/actions/runs/40954329068). These are baseline runs, not CI evidence for this unpushed change. Their check names are `verify` and `build`, both from GitHub Actions app `15368`.
+- `develop` enforces administrator/PR review rules but has no required status checks. `main` requires up-to-date `verify`, one approving review, administrator enforcement and blocks force pushes/deletion; it is also locked. The active main ruleset blocks deletion and non-fast-forward pushes with no bypass actors. Proposed setup: require up-to-date `verify` and `build` from app `15368` on both branches, preserving other protections and the main lock. Remote configuration remains separately authorized work.
+- `HOSTING_ENABLED=true`. Production has a required reviewer, administrator bypass disabled and exactly one `main` branch policy. The expected deployment variable and secret names exist; values/credentials and actual host access were not tested. The old runbook's disabled/pending statements were removed rather than presented as live facts.
+- `main` remains `613b367edf2671345fc55ed3029523905c1add2a`; its earlier [successful Verify dispatch](https://github.com/Treca-Raja/rajcord-public/actions/runs/40574541747) does not verify develop's newer source/registry policy. New GHCR write/pull access, saved image markers and rollback compatibility remain release gates. The `desktop-release` environment is absent; desktop publication remains blocked pending separately authorized setup. No workflow was dispatched or production host accessed during this audit.
+
+Local Node 24.20.0 / pnpm 11.25.0 verification: `pnpm exec vitest run scripts/pr-policy.test.ts scripts/release-policy.test.ts scripts/desktop-release-policy.test.ts` passed all 30 tests; `pnpm lint` and `pnpm typecheck` passed. Both workflows passed the same pinned actionlint 1.7.12 container used in CI, with a read-only source mount and no container network. Changed-file formatting, relative links and whitespace checks passed. Dependencies were synchronized offline with the frozen lockfile; no dependency versions changed.
+
+No application, database, image, hosted-stack, Windows packaging or physical-device suites were rerun: this change affects PR routing, dependency-update targeting and documentation, not those runtimes. Existing exact-main, immutable-image, publish-only and environment approval behavior is covered by the focused release regressions. The initial audit performed no commit, push, PR, merge, remote settings/Trello write, publication or deployment.
+
+Following explicit maintainer approval, configured up-to-date `verify` and `build` checks from GitHub Actions app `15368` on both `develop` and `main`. Independent API readback confirmed the exact checks and compared the remaining branch-protection objects against their saved pre-change values: review requirements, administrator enforcement, force-push/deletion restrictions and branch locks are unchanged. The active main ruleset was also read back unchanged, with no bypass actors. Main remains locked; no merge, production environment change, release or deployment was authorized or performed.
+
 ## Opt-in application sounds — 2026-10-30
 
 Implemented on `feature/application-sounds` from refreshed develop `264fcc7409c8f776819ba70abb60bfe877434a96`. Sidebar controls independently enable sound, set volume (initially 35%) and preview a cue; sounds start off. Preferences are account-scoped on the current browser/device. The existing private-message/mention eligibility and bounded message-ID deduplication are reused without new notification events or backend policies.
