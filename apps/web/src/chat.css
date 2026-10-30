@@ -220,6 +220,75 @@
 .live-shell .members {
   overflow: auto;
 }
+.members-action {
+  display: none;
+}
+.presence-panel {
+  min-height: 0;
+  min-width: 0;
+}
+.presence-panel header button {
+  margin-left: auto;
+}
+.member-views {
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+}
+.member-views button {
+  padding: 8px;
+  border-radius: 4px;
+}
+.member-views button[aria-pressed='true'] {
+  background: #343e4c;
+  color: #e6eddc;
+}
+.member-identity {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.member-presence {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+.presence-dot {
+  flex: 0 0 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8591a1;
+}
+.presence-dot.online {
+  background: #bddc99;
+}
+.presence-dot.unavailable {
+  background: transparent;
+  border: 1px solid #8591a1;
+}
+.offline-toggle {
+  width: calc(100% - 36px);
+}
+.members-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: #0009;
+}
+@media (max-width: 1200px) {
+  .members-action {
+    display: flex;
+  }
+  .live-shell .members-drawer {
+    display: flex;
+    position: fixed;
+    z-index: 21;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: min(340px, 100vw);
+    box-shadow: -10px 0 30px #0008;
+  }
+}
 .live-shell .profile {
   margin-top: 20px;
 }

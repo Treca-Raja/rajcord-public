@@ -83,6 +83,25 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     assert.equal(await js("!!document.querySelector('.shell')"), false);
     console.log('TRICORD_SMOKE_PENDING');
     await wait("!!document.querySelector('[data-connection=connected]')");
+    await wait("!!document.querySelector('[data-presence-state=ready] [data-presence=online]')");
+    const originalSize = win.getSize();
+    win.setSize(620, 820);
+    await wait(
+      "getComputedStyle(document.querySelector('button[aria-label=Members]')).display!=='none'",
+    );
+    await js(
+      "document.querySelector('button[aria-label=Members]').focus();document.querySelector('button[aria-label=Members]').click()",
+    );
+    await wait("!!document.querySelector('[role=dialog][aria-label=Members]')");
+    assert.equal(
+      await js("!!document.activeElement.closest('[role=dialog][aria-label=Members]')"),
+      true,
+    );
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+    await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await wait("!document.querySelector('[role=dialog][aria-label=Members]')");
+    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Members');
+    win.setSize(originalSize[0]!, originalSize[1]!);
 
     assert.equal(
       await js("window.tricordDesktop.notify({conversationId:'https://evil.test',mention:true})"),

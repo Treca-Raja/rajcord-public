@@ -21,7 +21,28 @@ export interface ConnectionWelcome {
   message: string;
   connectedAt: string;
 }
+// Presence describes authorized application connections, never account approval or activity.
+export interface PresenceSnapshot {
+  epoch: string;
+  revision: number;
+  onlineIds: string[];
+}
+export interface PresenceDelta {
+  epoch: string;
+  revision: number;
+  changes: { userId: string; online: boolean }[];
+  rosterChanged: boolean;
+}
+export const PRESENCE_TIMING = {
+  pingIntervalMs: 25000,
+  pingTimeoutMs: 20000,
+  reconnectGraceMs: 5000,
+  authorizationCheckMs: 15000,
+  snapshotTimeoutMs: 5000,
+} as const;
 export interface ServerToClientEvents {
+  'presence:changed': (payload: PresenceDelta) => void;
+  'presence:unavailable': () => void;
   'connection:welcome': (payload: ConnectionWelcome) => void;
   'account:changed': () => void;
   'inbox:changed': () => void;
@@ -31,6 +52,7 @@ export interface ServerToClientEvents {
   'conversation:closed': (data: { conversationId: string }) => void;
 }
 export interface ClientToServerEvents {
+  'presence:snapshot': (ack: (result: ChatAck<PresenceSnapshot>) => void) => void;
   'conversation:join': (
     data: { conversationId: string },
     ack: (result: ChatAck<{ joined: true }>) => void,
