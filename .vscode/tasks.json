@@ -1,0 +1,21 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Rajcord local app (no build)",
+      "type": "shell",
+      "command": "pnpm",
+      "args": [
+        "exec",
+        "concurrently",
+        "-k",
+        "-n",
+        "api,web",
+        "pnpm --filter @tricord/api dev",
+        "pnpm --filter @tricord/web dev"
+      ],
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

@@ -223,7 +223,7 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
   }
   assert.equal(
     await js(
-      "Object.keys(localStorage).every(key=>key.startsWith('rajcord-sounds:')&&Object.keys(JSON.parse(localStorage.getItem(key))).sort().join(',')==='enabled,volume')",
+      "Object.keys(localStorage).every(key=>(key.startsWith('rajcord-sounds:')&&Object.keys(JSON.parse(localStorage.getItem(key))).sort().join(',')==='enabled,volume')||['tricord-notification','rajcord-appearance'].some(prefix=>key.startsWith(prefix)))",
     ),
     true,
   );

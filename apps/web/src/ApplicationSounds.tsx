@@ -63,7 +63,7 @@ export function SoundControls() {
   const { player, preferences, change, error, clearError } = useApplicationSounds();
   return (
     <details className="sound-settings">
-      <summary>Application sounds</summary>
+      <summary>Voice sounds</summary>
       <button
         aria-pressed={preferences.enabled}
         onClick={() => change({ ...preferences, enabled: !preferences.enabled })}
@@ -93,8 +93,8 @@ export function SoundControls() {
         Preview sound
       </button>
       <small>
-        Join/leave and private-message/mention cues. Uses speakers selected in Audio controls;
-        deafen silences sounds. Popups have their own switch.
+        Join/leave cues for your voice channel. Uses speakers selected in Audio controls; deafen
+        silences them. Message alerts and popups are in Settings → Notifications.
       </small>
       {error && <small role="status">{error}</small>}
     </details>

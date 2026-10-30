@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./emoji-catalog": {
+      "types": "./dist/emoji-catalog.d.ts",
+      "default": "./dist/emoji-catalog.js"
     }
   },
   "scripts": {
@@ -15,5 +19,8 @@
   },
   "files": [
     "dist"
-  ]
+  ],
+  "dependencies": {
+    "emojibase-data": "17.0.0"
+  }
 }

@@ -11,6 +11,7 @@ Repository/guidance names use Rajcord. Existing `@tricord/*`, `TRICORD_*`, datab
 - Load skills only for the current task/phase. [SKILLS.md](SKILLS.md) is a discovery fallback, not a required preload. Use [MEMORY.md](MEMORY.md) only for relevant history, hosting state or decision gaps; read the needed section, not the whole file. Current source/scripts/CI outrank dated notes.
 - Routine fixes need targeted investigation, not a design document or a chain of planning, ticket, hosting and documentation workflows. Ask about material scope/behavior decisions; do not repeat settled approvals. Delegate only substantial independent work.
 - Reuse helpers, preserve types and surface errors; no broad catches or success-shaped fallbacks. Make the simplest complete change, without speculative abstractions or unrelated cleanup. Comment only non-obvious intent/constraints; no narration or commented-out code.
+- UI work follows [rajcord-ui](.agents/skills/rajcord-ui/SKILL.md): compact layouts, quick smooth hover/menu/panel feedback, immediate loading states and uninterrupted typing; preserve keyboard/touch access and reduced motion.
 
 Code map: `apps/api/src/{auth,chat,db,voice}`, `apps/api/drizzle`, `apps/web/src`, `apps/desktop/src`, `packages/shared/src`, `infrastructure`, `scripts`.
 

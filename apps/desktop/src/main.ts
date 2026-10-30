@@ -1,4 +1,12 @@
-import { validNotice, trustedNoticeFrame } from './notification-policy.js';
+import {
+  validNotice,
+  validNativeNotice,
+  trustedNoticeFrame,
+  canCoalesceNativeNotice,
+  nativeNotificationResponse,
+  type NativeNotificationTarget,
+  type NativeNotificationResult,
+} from './notification-policy.js';
 import { createWindowOpenHandler } from './external-links.js';
 import { serverUrl } from './server-url.js';
 import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
@@ -145,6 +153,10 @@ app
         event.senderFrame?.url ?? '',
         event.senderFrame === win.webContents.mainFrame,
       );
+    ipcMain.handle('notifications:capabilities', (event) => {
+      if (!trustedSender(event)) throw new Error('Untrusted notification request.');
+      return { version: 2 };
+    });
     ipcMain.handle('notifications:enable', (event) => {
       if (!trustedSender(event) || !Notification.isSupported()) return false;
       if (process.platform !== 'win32' || app.isPackaged) return true;
@@ -175,42 +187,72 @@ app
       }
     });
     const notices = new Set<Notification>();
-    let lastAlert = 0;
+    let burst:
+      | {
+          at: number;
+          active: boolean;
+          count: number;
+          target: NativeNotificationTarget;
+          shown: Promise<boolean>;
+        }
+      | undefined;
     ipcMain.handle('notifications:show', async (event, value: unknown) => {
-      if (
-        event.sender !== win.webContents ||
-        !trustedNoticeFrame(
-          target,
-          event.senderFrame?.url ?? '',
-          event.senderFrame === win.webContents.mainFrame,
-        ) ||
-        !validNotice(value) ||
-        !Notification.isSupported()
-      )
-        return false;
-      if (Date.now() - lastAlert < 3000) return true;
-      lastAlert = Date.now();
+      const modern = validNativeNotice(value);
+      const requestedModern = !!value && typeof value === 'object' && 'version' in value;
+      const result = (value: NativeNotificationResult) =>
+        nativeNotificationResponse(requestedModern, value);
+      if (!trustedSender(event) || (!modern && !validNotice(value)))
+        return result({ status: 'invalid' });
+      if (!Notification.isSupported()) return result({ status: 'unavailable' });
+      const destination: NativeNotificationTarget = modern
+        ? value.target
+        : { conversationId: (value as { conversationId: string }).conversationId };
+      if (modern && canCoalesceNativeNotice(burst, Date.now()) && burst) {
+        const existing = burst;
+        if (!(await existing.shown)) return result({ status: 'unavailable' });
+        if (existing.active) {
+          existing.target = destination;
+          existing.count++;
+          return result({ status: 'coalesced', count: existing.count });
+        }
+      }
       try {
         const notification = new Notification({
           title: 'Rajcord',
-          body: value.mention
-            ? 'You were mentioned. Open Rajcord to read it.'
-            : 'New private message. Open Rajcord to read it.',
+          body: 'New activity. Open Rajcord to read it.',
           silent: true,
         });
+        while (notices.size >= 8) {
+          const oldest = notices.values().next().value!;
+          notices.delete(oldest);
+          oldest.close();
+        }
         notices.add(notification);
-        notification.on('close', () => notices.delete(notification));
-        notification.on('failed', () => notices.delete(notification));
+        const delivery = {
+          at: Date.now(),
+          active: true,
+          count: 1,
+          target: destination,
+          shown: Promise.resolve(false),
+        };
+        const closed = () => {
+          delivery.active = false;
+          notices.delete(notification);
+        };
+        notification.on('close', closed);
+        notification.on('failed', closed);
         notification.on('click', () => {
           if (win.isDestroyed()) return;
           if (win.isMinimized()) win.restore();
           win.show();
           win.focus();
-          win.webContents.send('notifications:open', value.conversationId);
+          if (modern) win.webContents.send('notifications:open-target', delivery.target);
+          else win.webContents.send('notifications:open', delivery.target.conversationId);
           notification.close();
         });
-        return await new Promise<boolean>((resolve) => {
+        delivery.shown = new Promise<boolean>((resolve) => {
           const timer = setTimeout(() => {
+            closed();
             notification.close();
             resolve(false);
           }, 4000);
@@ -224,13 +266,16 @@ app
           });
           notification.show();
         });
+        if (modern) burst = delivery;
+        return result({ status: (await delivery.shown) ? 'shown' : 'unavailable' });
       } catch {
-        return false;
+        return result({ status: 'unavailable' });
       }
     });
     win.on('closed', () => {
       ipcMain.removeHandler('notifications:show');
       ipcMain.removeHandler('notifications:enable');
+      ipcMain.removeHandler('notifications:capabilities');
       for (const notice of notices) notice.close();
     });
     win.webContents.setWindowOpenHandler(

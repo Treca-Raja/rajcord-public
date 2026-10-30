@@ -1,4 +1,5 @@
 import { singleFlight } from './single-flight';
+import { AppearancePreferences } from './Appearance';
 import {
   createContext,
   useMemo,
@@ -8,6 +9,7 @@ import {
   useState,
   type ReactNode,
   type FormEvent,
+  type Context as ReactContext,
 } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import type {
@@ -21,12 +23,17 @@ type Context = {
   state: AuthState;
   connected: boolean;
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
-  request: <T>(path: string, method?: string, body?: unknown) => Promise<T>;
+  request: <T>(path: string, method?: string, body?: unknown, signal?: AbortSignal) => Promise<T>;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
-  openSettings: () => void;
+  openSettings: (tab?: SettingsTab) => void;
+  notificationSettingsHost: HTMLDivElement | null;
 };
-const AuthContext = createContext<Context | null>(null);
+type SettingsTab = 'account' | 'people' | 'notifications' | 'appearance';
+const hotContext: { authContext?: ReactContext<Context | null> } | undefined = import.meta.hot
+  ?.data;
+const AuthContext = hotContext?.authContext ?? createContext<Context | null>(null);
+if (hotContext) hotContext.authContext = AuthContext;
 export function useAuth() {
   const value = useContext(AuthContext);
   if (!value) throw new Error('Authentication required');
@@ -37,10 +44,12 @@ export async function api<T>(
   method = 'GET',
   body?: unknown,
   csrf?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch('/api' + path, {
     method,
     credentials: 'same-origin',
+    signal,
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
@@ -56,13 +65,16 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState | null>(null),
     [loading, setLoading] = useState(true),
     [connected, setConnected] = useState(false),
-    [settings, setSettings] = useState(false),
+    [settings, setSettings] = useState<SettingsTab | null>(null),
     [error, setError] = useState('');
   const [liveSocket, setLiveSocket] = useState<Socket<
     ServerToClientEvents,
     ClientToServerEvents
   > | null>(null);
   const generation = useRef(0);
+  const [notificationSettingsHost, setNotificationSettingsHost] = useState<HTMLDivElement | null>(
+    null,
+  );
   const refresh = useMemo(
     () =>
       singleFlight(async () => {
@@ -73,7 +85,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
         } catch (error) {
           if (started === generation.current && (error as { status?: number }).status === 401) {
             setState(null);
-            setSettings(false);
+            setSettings(null);
           }
         } finally {
           setLoading(false);
@@ -137,14 +149,14 @@ export function AuthRoot({ children }: { children: ReactNode }) {
       setConnected(false);
     };
   }, [state?.csrfToken, state?.user.status, refresh]);
-  const request = async <T,>(path: string, method = 'GET', body?: unknown) =>
-    api<T>(path, method, body, state?.csrfToken);
+  const request = async <T,>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal) =>
+    api<T>(path, method, body, state?.csrfToken, signal);
   const logout = async () => {
     try {
       generation.current++;
       await request('/auth/logout', 'POST');
       setState(null);
-      setSettings(false);
+      setSettings(null);
       broadcast();
     } catch (e) {
       setError((e as Error).message);
@@ -175,7 +187,8 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     request,
     refresh,
     logout,
-    openSettings: () => setSettings(true),
+    openSettings: (tab = 'account') => setSettings(tab),
+    notificationSettingsHost,
   };
   return (
     <AuthContext.Provider value={context}>
@@ -202,7 +215,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
             <button className="primary" onClick={() => void refresh()}>
               Check account status
             </button>
-            <button className="secondary" onClick={() => setSettings(true)}>
+            <button className="secondary" onClick={() => setSettings('account')}>
               Account settings
             </button>
             <button className="text-button" onClick={() => void logout()}>
@@ -217,7 +230,14 @@ export function AuthRoot({ children }: { children: ReactNode }) {
           <button onClick={() => setError('')}>Dismiss</button>
         </div>
       )}
-      {settings && <AccountPanel close={() => setSettings(false)} />}
+      {settings && (
+        <AccountPanel
+          tab={settings}
+          setTab={setSettings}
+          notificationHostRef={setNotificationSettingsHost}
+          close={() => setSettings(null)}
+        />
+      )}
     </AuthContext.Provider>
   );
 }
@@ -369,7 +389,17 @@ type Device = {
   current: boolean;
 };
 type Audit = { id: string; actor: string; target: string; action: string; created_at: string };
-function AccountPanel({ close }: { close: () => void }) {
+function AccountPanel({
+  close,
+  tab,
+  setTab,
+  notificationHostRef,
+}: {
+  close: () => void;
+  tab: SettingsTab;
+  setTab: (tab: SettingsTab) => void;
+  notificationHostRef: (element: HTMLDivElement | null) => void;
+}) {
   const { state, request, refresh, logout } = useAuth();
   const panel = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -382,11 +412,12 @@ function AccountPanel({ close }: { close: () => void }) {
       }
       if (event.key === 'Tab') {
         const controls = panel.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), [tabindex="0"]',
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]',
         );
-        if (!controls?.length) return;
-        const first = controls[0]!,
-          last = controls[controls.length - 1]!;
+        const visible = [...(controls ?? [])].filter((element) => element.offsetParent !== null);
+        if (!visible.length) return;
+        const first = visible[0]!,
+          last = visible[visible.length - 1]!;
         if (event.shiftKey && document.activeElement === first) {
           event.preventDefault();
           last.focus();
@@ -403,8 +434,7 @@ function AccountPanel({ close }: { close: () => void }) {
     };
   }, []);
 
-  const [tab, setTab] = useState('account'),
-    [users, setUsers] = useState<AuthUser[]>([]),
+  const [users, setUsers] = useState<AuthUser[]>([]),
     [sessions, setSessions] = useState<Device[]>([]),
     [history, setHistory] = useState<Audit[]>([]),
     [message, setMessage] = useState(''),
@@ -458,6 +488,20 @@ function AccountPanel({ close }: { close: () => void }) {
           <button className={tab === 'account' ? 'active' : ''} onClick={() => setTab('account')}>
             My account
           </button>
+          <button
+            className={tab === 'appearance' ? 'active' : ''}
+            onClick={() => setTab('appearance')}
+          >
+            Appearance
+          </button>
+          {state.user.status === 'approved' && (
+            <button
+              className={tab === 'notifications' ? 'active' : ''}
+              onClick={() => setTab('notifications')}
+            >
+              Notifications
+            </button>
+          )}
           {state.user.status === 'approved' && (
             <button className={tab === 'people' ? 'active' : ''} onClick={() => setTab('people')}>
               People & approvals
@@ -470,7 +514,11 @@ function AccountPanel({ close }: { close: () => void }) {
             {message}
           </p>
         )}
-        {tab === 'account' ? (
+        {tab === 'appearance' ? (
+          <AppearancePreferences />
+        ) : tab === 'notifications' && state.user.status === 'approved' ? (
+          <div className="account-content notification-settings-slot" ref={notificationHostRef} />
+        ) : tab === 'account' ? (
           <div className="account-content">
             <div className="account-identity">
               @{state.user.username}
@@ -577,6 +625,12 @@ function AccountPanel({ close }: { close: () => void }) {
             <button className="secondary" onClick={() => void logout()}>
               <LogOut size={16} /> Sign out of Rajcord
             </button>
+            <p className="font-credits">
+              Inter typography & Twemoji artwork · self-hosted ·{' '}
+              <a href="/font-licenses.txt" target="_blank" rel="noopener noreferrer">
+                Font & emoji licenses
+              </a>
+            </p>
           </div>
         ) : (
           <div className="account-content">
