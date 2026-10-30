@@ -749,6 +749,75 @@
 .live-shell .members {
   overflow: auto;
 }
+.members-action {
+  display: none;
+}
+.presence-panel {
+  min-height: 0;
+  min-width: 0;
+}
+.presence-panel header button {
+  margin-left: auto;
+}
+.member-views {
+  display: flex;
+  gap: 8px;
+  padding: 16px;
+}
+.member-views button {
+  padding: 8px;
+  border-radius: 4px;
+}
+.member-views button[aria-pressed='true'] {
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+.member-identity {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.member-presence {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+.presence-dot {
+  flex: 0 0 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.presence-dot.online {
+  background: var(--accent-mint);
+}
+.presence-dot.unavailable {
+  background: transparent;
+  border: 1px solid var(--text-muted);
+}
+.offline-toggle {
+  width: calc(100% - 36px);
+}
+.members-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: #0009;
+}
+@media (max-width: 1200px) {
+  .members-action {
+    display: flex;
+  }
+  .live-shell .members-drawer {
+    display: flex;
+    position: fixed;
+    z-index: 21;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: min(340px, 100vw);
+    box-shadow: -10px 0 30px #0008;
+  }
+}
 .live-shell .profile {
   margin-top: 12px;
   position: sticky;
@@ -869,4 +938,36 @@
   color: #b9d5f1;
   text-align: left;
   padding: 6px 0;
+}
+.sound-settings {
+  margin: 0 18px 12px;
+  font-size: 12px;
+  color: var(--accent-mint);
+}
+.sound-settings summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.sound-settings button {
+  display: block;
+  color: var(--text-secondary);
+  padding: 6px 0;
+}
+.sound-settings button:disabled {
+  opacity: 0.5;
+}
+.sound-settings label {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0;
+  color: var(--text-secondary);
+}
+.sound-settings input {
+  width: 100%;
+  accent-color: var(--accent-mint);
+}
+.sound-settings small {
+  display: block;
+  color: var(--text-muted);
+  line-height: 1.5;
 }

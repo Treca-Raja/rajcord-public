@@ -6,6 +6,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
+import { io, type Socket } from 'socket.io-client';
+import { PRESENCE_TIMING } from '@tricord/shared';
 import { testDatabase } from '../db/test-database.js';
 import { AuthService } from './service.js';
 import { createApp } from '../app.js';
@@ -76,6 +78,7 @@ const executable =
   process.env.TRICORD_BROWSER_PATH ||
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 let child: ReturnType<typeof spawn> | undefined, ws: WebSocket | undefined;
+const presencePeers: Socket[] = [];
 const pending = new Map<
   number,
   {
@@ -104,7 +107,7 @@ async function call<T = Record<string, unknown>>(
 async function js<T = unknown>(expression: string): Promise<T> {
   const result = await call<{ result: { value: T }; exceptionDetails?: unknown }>(
     'Runtime.evaluate',
-    { expression, returnByValue: true, awaitPromise: true },
+    { expression, returnByValue: true, awaitPromise: true, userGesture: true },
   );
   if (result.exceptionDetails) throw new Error('Browser evaluation failed.');
   return result.result.value;
@@ -126,13 +129,18 @@ async function waitCondition(check: () => Promise<boolean>, description: string)
   }
   throw new Error('Browser condition timed out: ' + description);
 }
-async function wait(expression: string) {
-  const end = Date.now() + 15000;
+async function wait(expression: string, deadlineMs = 15000) {
+  const end = Date.now() + deadlineMs;
   while (Date.now() < end) {
     if (await js(expression)) return;
     await delay(100);
   }
-  throw new Error('Browser UI assertion timed out: ' + expression);
+  throw new Error(
+    'Browser UI assertion timed out: ' +
+      expression +
+      '; sound status: ' +
+      (await js("document.querySelector('.sound-settings [role=status]')?.textContent ?? 'none'")),
+  );
 }
 async function click(label: string) {
   await js(
@@ -140,6 +148,11 @@ async function click(label: string) {
       JSON.stringify(label) +
       ");if(!b)throw new Error('Button missing');b.click();})()",
   );
+}
+async function reload() {
+  await js('window.__reloadMarker=true');
+  await call('Page.reload');
+  await wait("window.__reloadMarker!==true && document.readyState==='complete'");
 }
 async function fill(values: Record<string, string>) {
   await js(
@@ -179,6 +192,8 @@ try {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
+      '--use-fake-ui-for-media-stream',
+      '--use-fake-device-for-media-stream',
       '--remote-debugging-address=127.0.0.1',
       '--remote-debugging-port=0',
       '--user-data-dir=' + profile,
@@ -350,6 +365,58 @@ try {
     await wait('!document.querySelector(\'[aria-label="Account settings"]\')');
   }
 
+  // An HTTP login alone is offline. Two independent application connections still
+  // produce one account row, and closing either cannot erase the other connection.
+  const ownerRow = `[data-member-id="${owner.id}"]`;
+  await wait(`document.querySelector('${ownerRow}')?.dataset.presence==='offline'`);
+  async function connectPresencePeer() {
+    const peer = io(origin, {
+      transports: ['websocket'],
+      extraHeaders: { origin, cookie: ownerHeaders.cookie },
+      auth: { csrfToken: ownerLogin.json().csrfToken },
+      reconnection: false,
+    });
+    presencePeers.push(peer);
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Presence peer connection timed out')), 5000);
+      peer.once('connect', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      peer.once('connect_error', (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+    return peer;
+  }
+  const firstPeer = await connectPresencePeer();
+  await wait(`document.querySelector('${ownerRow}')?.dataset.presence==='online'`, 5000);
+  const secondPeer = await connectPresencePeer();
+  firstPeer.disconnect();
+  assert.equal(await js(`document.querySelectorAll('${ownerRow}').length`), 1);
+  await js('document.hasFocus=()=>false');
+  assert.equal(await js(`document.querySelector('${ownerRow}')?.dataset.presence`), 'online');
+  await js('delete document.hasFocus');
+  secondPeer.disconnect();
+  await wait(
+    `document.querySelector('${ownerRow}')?.dataset.presence==='offline'`,
+    PRESENCE_TIMING.reconnectGraceMs + 5000,
+  );
+  await js(
+    `window.rosterRefreshes=0;window.originalPresenceFetch=window.fetch;window.fetch=async(...args)=>{const result=await window.originalPresenceFetch(...args);if(args[0]==='/api/members')window.rosterRefreshes++;return result};document.querySelector('${ownerRow}').focus();window.dispatchEvent(new Event('focus'))`,
+  );
+  await wait('window.rosterRefreshes>0');
+  await wait("!!document.querySelector('[data-presence-state=ready]')");
+  await wait(`document.activeElement?.dataset.memberId===${JSON.stringify(owner.id)}`);
+  await js(
+    "document.querySelector('.chat').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));document.activeElement.blur();window.rosterRefreshes=0;window.dispatchEvent(new Event('focus'))",
+  );
+  await wait('window.rosterRefreshes>0');
+  await wait("!!document.querySelector('[data-presence-state=ready]')");
+  assert.equal(await js('document.activeElement?.hasAttribute("data-member-id")'), false);
+  await js('window.fetch=window.originalPresenceFetch;delete window.originalPresenceFetch');
+
   // Exercise actual controlled React inputs, not API-only message creation.
   async function compose(value: string) {
     await wait("!!document.querySelector('textarea[name=message]')");
@@ -388,7 +455,7 @@ try {
   await wait(secureLinks);
   assert.equal(await js("!!document.querySelector('.message-actions')"), false);
   assert.equal(await js("!!document.querySelector('.message-context-menu')"), false);
-  await call('Page.reload');
+  await reload();
   await wait(secureLinks);
   const reply = await app.inject({
     url: '/api/conversations/' + general + '/messages',
@@ -1443,6 +1510,10 @@ try {
   await js("document.querySelector('select[name=userId]').value=" + JSON.stringify(owner.id));
   await click('Open conversation');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
+  await wait("document.querySelector('button[aria-pressed=true]')?.textContent==='Participants'");
+  await click('Community');
+  await wait("document.querySelector('button[aria-pressed=true]')?.textContent==='Community'");
+  await click('Participants');
   await compose('Private browser DM');
   const dm = (
     await fixture.database.pool.query(
@@ -1477,7 +1548,7 @@ try {
   await wait(
     `document.querySelector('[data-conversation-id="${dm.id}"] .mention-badge')?.textContent==='@1'`,
   );
-  await call('Page.reload');
+  await reload();
   await wait("!!document.querySelector('[data-connection=connected]')");
   await wait(badge);
   await screenshot('unread-browser-badges.png');
@@ -1512,6 +1583,12 @@ try {
     close(){this.onclose?.()}
   }`);
   await notificationSettings();
+  await js(`window.soundCalls=[];window.nativeSoundPlay=HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play=async function(){
+      if(this.dataset.appSound && window.denySounds) throw new DOMException('Test playback denied','NotAllowedError');
+      await window.nativeSoundPlay.call(this);
+      if(this.dataset.appSound)window.soundCalls.push({kind:this.dataset.appSound,sink:this.sinkId,volume:this.volume,at:Date.now()});
+    }`);
   await click('Enable notifications');
   await js('document.querySelector(\'input[aria-label="Notification popups"]\').click()');
   await wait('document.querySelector(\'input[aria-label="Notification popups"]\').checked');
@@ -1542,6 +1619,8 @@ try {
     })`);
     throw new Error('Notification delivery failed: ' + JSON.stringify(diagnostics));
   }
+  assert.equal(await js('window.soundCalls.length'), 0, 'Popup opt-in must not enable sound');
+  assert.equal(await js('window.notificationCalls[0].options.silent'), true);
   assert.equal(
     await js('window.notificationCalls[0].options.body'),
     'New activity. Open Rajcord to read it.',
@@ -1871,6 +1950,94 @@ try {
   assert.equal(await js('window.notificationCalls.length'), beforeDisabled);
   assert.equal(await js('window.notificationSoundStarts'), soundBeforeDisabled);
 
+  await js("document.querySelector('.sound-settings').open=true");
+  await click('Enable sounds');
+  await click('Preview sound');
+  await wait("document.querySelector('.sound-settings').innerText.includes('Choose speakers')");
+  await js("document.querySelector('.voice-settings-toggle').click()");
+  await click('Find audio devices');
+  await wait('document.querySelector(\'select[aria-label="Voice speakers"]\').options.length>1');
+  await js(
+    `(()=>{const s=document.querySelector('select[aria-label="Voice speakers"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+  );
+  await click('Preview sound');
+  await wait('window.soundCalls.length===1');
+  assert.ok(await js('window.soundCalls[0].sink.length>0'));
+  await js(
+    `(()=>{const s=document.querySelector('input[aria-label="Application sound volume"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(s,'0.2');s.dispatchEvent(new Event('input',{bubbles:true}));s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+  );
+  await wait('Date.now()-window.soundCalls.at(-1).at>=300');
+  await click('Preview sound');
+  await wait('window.soundCalls.length===2');
+  assert.equal(await js('window.soundCalls[1].volume'), 0.2);
+  assert.equal(
+    await js('window.notificationCalls.length'),
+    beforeDisabled,
+    'Voice sounds must not enable popups',
+  );
+  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  const unreadBeforeAlert = await js<number>(
+    `Number(document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent || '0')`,
+  );
+  await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Message alerts leave voice sounds alone', clientId: randomUUID() },
+  });
+  await wait(
+    `Number(document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent || '0')===${unreadBeforeAlert + 1}`,
+  );
+  assert.equal(
+    await js('window.soundCalls.length'),
+    2,
+    'Message alerts use the notification settings, not the voice-sound player',
+  );
+  await js('window.denySounds=true');
+  await click('Preview sound');
+  await wait(
+    "document.querySelector('.sound-settings').innerText.includes('Sound playback blocked')",
+  );
+  await js('window.denySounds=false');
+  await click('Preview sound');
+  await wait('window.soundCalls.length===3');
+  await click('Disable sounds');
+  await wait("!document.querySelector('audio[data-app-sound]')");
+  assert.equal(await js('window.soundCalls.length'), 3);
+  await reload();
+  await wait("!!document.querySelector('[data-connection=connected]')");
+  await wait(
+    "document.querySelector('.sound-settings button')?.textContent.trim()==='Enable sounds'",
+  );
+  assert.equal(
+    await js('document.querySelector(\'input[aria-label="Application sound volume"]\').value'),
+    '0.2',
+  );
+  assert.equal(await js("!!document.querySelector('audio[data-app-sound]')"), false);
+  await js("document.querySelector('.sound-settings summary').focus()");
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Enter',
+    code: 'Enter',
+    windowsVirtualKeyCode: 13,
+    text: '\r',
+    unmodifiedText: '\r',
+  });
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Enter',
+    code: 'Enter',
+    windowsVirtualKeyCode: 13,
+  });
+  await wait("document.querySelector('.sound-settings').open");
+  assert.equal(
+    await js(
+      "document.querySelector('.sidebar').scrollWidth<=document.querySelector('.sidebar').clientWidth",
+    ),
+    true,
+  );
+  await screenshot('sounds-browser-controls.png');
+
   // Reading older messages must neither jump to the bottom nor acknowledge newly arrived text.
   for (let i = 0; i < 6; i++)
     await app.inject({
@@ -1936,6 +2103,31 @@ try {
     deviceScaleFactor: 1,
     mobile: true,
   });
+  await js(
+    "document.querySelector('button[aria-label=Members]').focus();document.querySelector('button[aria-label=Members]').click()",
+  );
+  await wait("!!document.querySelector('[role=dialog][aria-label=Members]')");
+  assert.equal(
+    await js("!!document.activeElement.closest('[role=dialog][aria-label=Members]')"),
+    true,
+  );
+  await app.inject({
+    url: '/api/conversations/' + groupId + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Hidden by member drawer', clientId: randomUUID() },
+  });
+  const drawerBadge = `document.querySelector('[data-conversation-id="${groupId}"] .unread-badge')`;
+  await wait(`!!${drawerBadge}`);
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27,
+  });
+  await wait("!document.querySelector('[role=dialog][aria-label=Members]')");
+  assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Members');
+  await wait(`!${drawerBadge}`);
   assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
   await screenshot('messaging-browser-mobile.png');
   await call('Emulation.setDeviceMetricsOverride', {
@@ -1944,8 +2136,10 @@ try {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await call('Page.reload');
-  await wait("!!document.querySelector('textarea[name=message]')");
+  await reload();
+  await wait(
+    "[...document.querySelectorAll('.channels button')].some(b=>b.innerText.includes('Browser invitation group'))",
+  );
   await js(
     "(()=>{[...document.querySelectorAll('.channels button')].find(b=>b.innerText.includes('Browser invitation group')).click();})()",
   );
@@ -1977,6 +2171,13 @@ try {
           'notification opt-in and privacy-safe body (OS adapter mocked)',
           'notification click opens conversation',
           'disabled notifications stay silent',
+          'application sounds off by default and independent of popups',
+          'exact selected sound sink and preview',
+          'sound volume and idempotent message delivery',
+          'focused conversation sound suppression',
+          'denied sound playback and explicit recovery',
+          'sound preferences survive reload without autoplay',
+          'sound controls keyboard access and sidebar layout',
           'reading history keeps new messages unread until jump to latest',
         ],
       },
@@ -2002,7 +2203,7 @@ try {
     'approved',
   );
   await js('document.querySelector(\'button[aria-label="Close settings"]\').click()');
-  await call('Page.reload');
+  await reload();
   await wait("!!document.querySelector('[data-connection=connected]')");
   // Actual revocation is sent over the live account socket, removing the private UI.
   const suspended = await app.inject({
@@ -2052,9 +2253,10 @@ try {
     ),
   );
   console.log(
-    'PASS: Browser authentication, messaging/unread/notifications and channel/category management in the configured headless Chromium browser.',
+    'PASS: Browser authentication, messaging/unread/notifications, voice sounds, channel/category management and live multi-connection presence, scoped views and drawer keyboard/focus in the configured headless Chromium browser.',
   );
 } finally {
+  for (const peer of presencePeers) peer.disconnect();
   if (ws?.readyState === WebSocket.OPEN) {
     await call('Browser.close').catch(() => {});
     ws.close();

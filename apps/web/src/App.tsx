@@ -1,3 +1,5 @@
+import { MemberPanel } from './MemberPanel';
+import { usePresence } from './use-presence';
 import { Notifications } from './Notifications';
 import { ChatComposer } from './ChatComposer';
 import { MessageCard } from './MessageCard';
@@ -12,6 +14,7 @@ import {
 } from './chat-state';
 import { CategoryManager, ChannelFields, ChannelSettings } from './Channels';
 import { channelCategories, channelFields } from './channel-state';
+import { ApplicationSounds, SoundControls } from './ApplicationSounds';
 import { VoicePanel } from './VoicePanel';
 import { compatibleMessage, mergeMessages } from './message-state';
 import {
@@ -69,7 +72,11 @@ export function App() {
 }
 function AccountCommunity() {
   const { state } = useAuth();
-  return <Community key={state.user.id} />;
+  return (
+    <ApplicationSounds key={state.user.id} userId={state.user.id}>
+      <Community key={state.user.id} />
+    </ApplicationSounds>
+  );
 }
 function Community() {
   const { state, connected, socket, request, openSettings, logout } = useAuth();
@@ -93,6 +100,9 @@ function Community() {
   const [navigation, setNavigation] = useState<(NotificationTarget & { version: number }) | null>(
     null,
   );
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [rosterAvailable, setRosterAvailable] = useState(false);
+  const presence = usePresence(socket);
   const [selected, setSelected] = useState<string | null>(null),
     [mobile, setMobile] = useState(false),
     [error, setError] = useState(''),
@@ -110,6 +120,7 @@ function Community() {
   const reloadVersion = useRef(0);
   const reload = useCallback(async () => {
     const version = ++reloadVersion.current;
+    setRosterAvailable(false);
     try {
       const [data, inbox, people, categories] = await Promise.all([
         requestRef.current<{ conversations: Conversation[] }>('/conversations'),
@@ -121,6 +132,7 @@ function Community() {
       setConversations(data.conversations);
       setInvites(inbox.invitations);
       setMembers(people.users);
+      setRosterAvailable(true);
       setCategoryPage(categories);
       const allowed = new Set(data.conversations.map((conversation) => conversation.id));
       for (const id of drafts.current.keys()) if (!allowed.has(id)) drafts.current.forget(id);
@@ -132,6 +144,15 @@ function Community() {
           : (data.conversations.find((c) => c.kind === 'channel' && !c.archived)?.id ?? null),
       );
     } catch (e) {
+      if (version !== reloadVersion.current) return;
+      const status = (e as { status?: number }).status;
+      if (status === 401 || status === 403) {
+        setConversations([]);
+        setInvites([]);
+        setMembers([]);
+        setSelected(null);
+        setModal(null);
+      }
       setError((e as Error).message);
     }
   }, []);
@@ -146,12 +167,16 @@ function Community() {
   );
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, presence.rosterVersion]);
   useEffect(() => {
     if (!socket) return;
     const changed = () => void reload();
     const closed = ({ conversationId }: { conversationId: string }) => {
       closeConversation(conversationId);
+      setInvites((previous) =>
+        previous.filter((invite) => invite.conversationId !== conversationId),
+      );
+      setModal(null);
     };
     const unreadChanged = (data: ConversationUnread) =>
       setConversations((previous) =>
@@ -167,17 +192,27 @@ function Community() {
       );
     socket.on('unread:changed', unreadChanged);
     socket.on('inbox:changed', changed);
+    socket.on('account:changed', changed);
     socket.on('connect', changed);
     socket.on('conversation:closed', closed);
     window.addEventListener('focus', changed);
     return () => {
       socket.off('unread:changed', unreadChanged);
       socket.off('inbox:changed', changed);
+      socket.off('account:changed', changed);
       socket.off('connect', changed);
       socket.off('conversation:closed', closed);
       window.removeEventListener('focus', changed);
     };
   }, [socket, reload, closeConversation]);
+  useEffect(() => {
+    const wide = window.matchMedia('(min-width: 1201px)');
+    const resize = () => {
+      if (wide.matches) setMembersOpen(false);
+    };
+    wide.addEventListener('change', resize);
+    return () => wide.removeEventListener('change', resize);
+  }, []);
   const unreadTotal = conversations.reduce((total, c) => total + c.unreadCount, 0);
   useEffect(() => {
     document.title = (unreadTotal ? '(' + unreadTotal + ') ' : '') + 'Rajcord';
@@ -320,7 +355,7 @@ function Community() {
   };
   return (
     <div className={'shell live-shell' + (mobile ? ' mobile-open' : '')}>
-      <nav className="rail" aria-label="Platform">
+      <nav className="rail" aria-label="Platform" inert={membersOpen}>
         <AppearanceBrand />
         <div className="rail-rule" />
         <button
@@ -336,7 +371,7 @@ function Community() {
         <AppearanceToggle />
         <div className="grow" />
       </nav>
-      <aside className="sidebar" id="community-sidebar" aria-label="Community">
+      <aside className="sidebar" id="community-sidebar" aria-label="Community" inert={membersOpen}>
         <div className="community">
           <div>
             <strong>
@@ -490,6 +525,7 @@ function Community() {
             ))}
           </div>
         )}
+        <SoundControls />
         <VoicePanel onChannels={setVoiceChannels} requestedChannel={voiceNavigation} />
         <div className="grow" />
         <div className="profile">
@@ -521,7 +557,7 @@ function Community() {
           setError('');
         }}
       />
-      <section className="chat">
+      <section className="chat" inert={membersOpen}>
         <header className="channel-header">
           <button
             className="mobile-menu"
@@ -543,6 +579,14 @@ function Community() {
               : 'Only conversation members can read these messages.'}
           </span>
           <div className="grow" />
+          <button
+            className="members-action"
+            aria-label="Members"
+            aria-expanded={membersOpen}
+            onClick={() => setMembersOpen(true)}
+          >
+            <Users size={18} />
+          </button>
           {current && (
             <button aria-label="Manage conversation" onClick={() => openDialog('manage')}>
               <Settings size={18} />
@@ -561,7 +605,7 @@ function Community() {
           <Messages
             key={current.id}
             conversation={current}
-            readingAllowed={!mobile && !modal}
+            readingAllowed={!mobile && !modal && !membersOpen}
             drafts={drafts.current}
             navigation={navigation?.conversationId === current.id ? navigation : null}
             onAccessLost={closeConversation}
@@ -579,62 +623,33 @@ function Community() {
           </div>
         )}
       </section>
-      <aside className="members">
-        <header>
-          <Users size={17} /> {current?.kind === 'channel' ? 'THE PEOPLE' : 'PARTICIPANTS'}
-          <span>{current?.members.length ?? members.length}</span>
-        </header>
-        <div className="section-label">
-          {current?.kind === 'group' ? 'GROUP MEMBERS' : 'COMMUNITY'}
-        </div>
-        {(current?.members ?? members).map((person) => (
-          <button
-            className="member member-button"
-            key={person.id}
-            onClick={() => {
-              if (person.id !== state.user.id)
-                void action(async () => {
-                  const data = await request<{ conversation: Conversation }>(
-                    '/conversations',
-                    'POST',
-                    { kind: 'dm', userId: person.id },
-                  );
-                  setSelected(data.conversation.id);
-                });
-            }}
-            disabled={person.id === state.user.id || person.status !== 'approved'}
-          >
-            <Avatar>{person.displayName.slice(0, 1)}</Avatar>
-            <div>
-              <strong>{person.displayName}</strong>
-              <small>
-                {current?.managerId === person.id
-                  ? 'Group manager'
-                  : person.id === state.user.id
-                    ? 'You'
-                    : person.status === 'approved'
-                      ? '@' + person.username
-                      : 'Unavailable'}
-              </small>
-            </div>
-          </button>
-        ))}
-        <div className="member-note">
-          <button onClick={() => openSettings('people')}>Manage accounts & approvals →</button>
-        </div>
-        <div className="grow" />
-        <div className="system-card" data-connection={connected ? 'connected' : 'disconnected'}>
-          <strong>{connected ? 'Connected' : 'Reconnecting…'}</strong>
-          <p>
-            {connected
-              ? 'Messages are saved to your server.'
-              : 'Your draft stays here. We’ll catch up when connected.'}
-          </p>
-        </div>
-        <div className="version">
-          RAJCORD <span>Good company.</span>
-        </div>
-      </aside>
+      <MemberPanel
+        key={current?.id ?? 'community'}
+        conversation={current}
+        members={members}
+        rosterAvailable={rosterAvailable}
+        snapshot={presence.snapshot}
+        connected={connected}
+        userId={state.user.id}
+        drawer={membersOpen}
+        close={() => setMembersOpen(false)}
+        settings={() => openSettings('people')}
+        retry={() => {
+          presence.retry();
+          void reload();
+        }}
+        contact={(id) => {
+          setMembersOpen(false);
+          if (id !== state.user.id)
+            void action(async () => {
+              const data = await request<{ conversation: Conversation }>('/conversations', 'POST', {
+                kind: 'dm',
+                userId: id,
+              });
+              setSelected(data.conversation.id);
+            });
+        }}
+      />
       {modal && (
         <div className="modal-backdrop">
           <section
@@ -1319,15 +1334,15 @@ function Messages({
     };
     const unavailable = () =>
       setError('Chat updates are temporarily unavailable. Your draft is retained; retry sync.');
-    socket.on('connect', join);
     socket.on('conversation:changed', changed);
+    socket.on('connect', join);
     socket.on('chat:unavailable', unavailable);
     if (socket.connected) join();
     const focus = () => void synchronize();
     window.addEventListener('focus', focus);
     return () => {
-      socket.off('connect', join);
       socket.off('conversation:changed', changed);
+      socket.off('connect', join);
       socket.off('chat:unavailable', unavailable);
       window.removeEventListener('focus', focus);
     };

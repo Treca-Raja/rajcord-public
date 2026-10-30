@@ -17,6 +17,8 @@ import { registerAuth } from './auth/routes.js';
 import { HttpError } from './auth/validation.js';
 import { isIP } from 'node:net';
 import type { GifSearchOptions } from './chat/gif-search.js';
+import { PresenceService } from './presence.js';
+import { PRESENCE_TIMING } from '@tricord/shared';
 
 export function createApp({
   logger = false,
@@ -135,6 +137,8 @@ export function createApp({
     allowRequest: (req, callback) =>
       callback(null, !!req.headers.origin && allowedOrigins.includes(req.headers.origin)),
     maxHttpBufferSize: 16384,
+    pingInterval: PRESENCE_TIMING.pingIntervalMs,
+    pingTimeout: PRESENCE_TIMING.pingTimeoutMs,
     destroyUpgrade: false,
   });
   io.use(async (socket, next) => {
@@ -172,6 +176,7 @@ export function createApp({
       }
     });
   });
+  const presence = database ? new PresenceService(database.pool, io) : undefined;
   const expiry = setInterval(() => {
     for (const socket of io.sockets.sockets.values()) {
       void (async () => {
@@ -220,7 +225,7 @@ export function createApp({
         req.url.startsWith('/api/account') ||
         req.url.startsWith('/api/admin/'))
     )
-      await checkVoice();
+      await Promise.all([checkVoice(), presence?.reconcile()]);
   });
   if (voice) registerGateway(app, voice, allowedOrigins);
   app.get('/health', async (): Promise<HealthResponse> => ({
@@ -242,6 +247,7 @@ export function createApp({
   app.addHook('preClose', async () => {
     clearInterval(expiry);
     clearInterval(voiceTimer);
+    await presence?.close();
     await voice?.close();
     io.disconnectSockets(true);
     io.close();

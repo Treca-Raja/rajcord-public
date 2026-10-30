@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Headphones, PhoneOff, Volume2, Plus } from 'lucide-react';
 import { useAuth } from './Auth';
+import { useApplicationSounds } from './ApplicationSounds';
 import {
   VoiceController,
   concreteDevices,
@@ -15,6 +16,7 @@ export function VoicePanel({
   onChannels?: (channels: VoiceChannel[]) => void;
   requestedChannel?: { id: string; version: number } | null;
 }) {
+  const { player } = useApplicationSounds();
   const { request, state: auth } = useAuth();
   const ref = useRef(request);
   ref.current = request;
@@ -32,7 +34,10 @@ export function VoicePanel({
   useEffect(() => {
     const controller = new VoiceController((...args) => ref.current(...args));
     controllerRef.current = controller;
-    controller.onChange = () => setVoice({ ...controller.state });
+    controller.onChange = () => {
+      player.updateVoice(controller.state);
+      setVoice({ ...controller.state });
+    };
     controller.onChange();
     let live = true;
     const reload = async () => {
@@ -53,9 +58,10 @@ export function VoicePanel({
       live = false;
       clearInterval(timer);
       controller.dispose();
+      player.resetVoice();
       controllerRef.current = null;
     };
-  }, []);
+  }, [player]);
   useEffect(() => {
     if (
       !requestedChannel ||
