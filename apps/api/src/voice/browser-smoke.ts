@@ -48,6 +48,22 @@ try {
   browsers.push(b);
   await setup(a, first.token, origin);
   await setup(b, second.token, origin);
+  await a.js(`window.soundEvents=[];window.nativeSoundPlay=HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play=async function(){await window.nativeSoundPlay.call(this);if(this.dataset.appSound)window.soundEvents.push({kind:this.dataset.appSound,at:Date.now()})};document.querySelector('.sound-settings').open=true`);
+  await a.click('Enable sounds');
+  assert.equal(
+    await a.js('window.soundEvents.length'),
+    0,
+    'Enabling mid-call must not replay the roster',
+  );
+  await b.js('document.querySelector(\'button[aria-label="Leave voice"]\').click()');
+  await a.wait('window.soundEvents.some(e=>e.kind==="leave")');
+  await a.wait('Date.now()-window.soundEvents.at(-1).at>=300');
+  await b.js(
+    `(()=>{const s=document.querySelector('select[aria-label="Join voice channel"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+  );
+  await a.wait('window.soundEvents.length===2');
+  assert.deepEqual(await a.js('window.soundEvents.map(e=>e.kind)'), ['leave', 'join']);
   for (const browser of [a, b]) {
     await browser.wait("document.querySelectorAll('.voice-members li').length===2");
     await browser.js('document.querySelector(\'button[aria-label="Unmute microphone"]\').click()');
@@ -67,11 +83,17 @@ try {
   await a.wait("[...document.querySelectorAll('audio[data-voice-audio]')].every(e=>e.paused)");
   await a.js("document.querySelector('button[aria-label=Deafen]').click()");
   const opened = await a.js('window.__voiceOpens');
+  const cuesBeforeReconnect = await a.js('window.soundEvents.length');
   const lease = server.voice!.leases.get(owner.id)!;
   lease.close?.();
   await a.wait('window.__voiceOpens>' + opened);
   await a.wait("document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'");
   await a.wait("document.querySelectorAll('.voice-members li').length===2");
+  assert.equal(
+    await a.js('window.soundEvents.length'),
+    cuesBeforeReconnect,
+    'Reconnect must not replay join cues',
+  );
   assert.equal(
     await a.js(
       "document.querySelector('button[aria-label=\"Unmute microphone\"]')?.getAttribute('aria-pressed')",
@@ -159,6 +181,9 @@ try {
     'both clients recover after API restart',
     'participant volume changes playback',
     'missing output mutes playback without fallback',
+    'opt-in mid-call produces no historical cues',
+    'real peer leave/rejoin plays distinct sound cues',
+    'signaling reconnect does not replay membership sounds',
   ];
   await writeFile(
     path.join(artifacts, 'voice-browser.json'),

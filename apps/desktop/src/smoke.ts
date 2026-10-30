@@ -15,7 +15,7 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     username: string;
     password: string;
   };
-  const js = (source: string) => win.webContents.executeJavaScript(source);
+  const js = (source: string) => win.webContents.executeJavaScript(source, true);
   async function wait(expression: string) {
     const end = Date.now() + 15000;
     while (Date.now() < end) {
@@ -122,6 +122,19 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
         );
       }
       await wait('!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled');
+      await js(`window.soundCalls=[];window.nativeSoundPlay=HTMLMediaElement.prototype.play;
+        HTMLMediaElement.prototype.play=async function(){await window.nativeSoundPlay.call(this);if(this.dataset.appSound)window.soundCalls.push({kind:this.dataset.appSound,sink:this.sinkId,volume:this.volume,at:Date.now()})};
+        document.querySelector('.sound-settings').open=true`);
+      assert.equal(
+        await js("document.querySelector('.sound-settings button').getAttribute('aria-pressed')"),
+        'false',
+      );
+      await click('Enable sounds');
+      await click('Preview sound');
+      await wait('window.soundCalls.length===1');
+      assert.ok(await js('window.soundCalls[0].sink.length>0'));
+      assert.equal(await js('window.soundCalls[0].volume'), 0.35);
+      await wait('Date.now()-window.soundCalls.at(-1).at>=300');
       await js(
         "(()=>{const s=document.querySelector('select[aria-label=\"Join voice channel\"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
       );
@@ -143,6 +156,10 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
         ),
         'true',
       );
+      await wait('window.soundCalls.length===2');
+      await click('Preview sound');
+      assert.equal(await js('window.soundCalls.length'), 2, 'Deafen must suppress sound preview');
+      await click('Disable sounds');
       await js('document.querySelector(\'button[aria-label="Leave voice"]\').click()');
       await wait("!document.querySelector('[data-voice-status]')");
     }
@@ -185,7 +202,12 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     await click('Sign out of Rajcord');
     await wait("!!document.querySelector('input[name=username]')");
   }
-  assert.equal(await js('Object.keys(localStorage).length'), 0);
+  assert.equal(
+    await js(
+      "Object.keys(localStorage).every(key=>key.startsWith('rajcord-sounds:')&&Object.keys(JSON.parse(localStorage.getItem(key))).sort().join(',')==='enabled,volume')",
+    ),
+    true,
+  );
   fs.writeFileSync(
     path.join(process.env.TRICORD_TEST_PROFILE!, 'smoke-' + payload.stage + '.json'),
     JSON.stringify({ passed: true }),
