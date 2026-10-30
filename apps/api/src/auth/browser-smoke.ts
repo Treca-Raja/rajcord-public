@@ -753,15 +753,9 @@ try {
   })()`);
   assert.ok(
     await js(
-      `parseFloat(getComputedStyle(document.querySelector('${timelineMessage}'),'::before').borderTopWidth)>0`,
+      `(()=>{const row=document.querySelector('${timelineMessage}');const style=getComputedStyle(row);return style.outlineStyle==='solid'&&parseFloat(style.outlineWidth)>0&&parseFloat(style.outlineOffset)>0&&row.scrollWidth<=row.clientWidth})()`,
     ),
-    'Opening a quote keeps the original visibly framed',
-  );
-  assert.ok(
-    await js(
-      `parseFloat(getComputedStyle(document.querySelector('${timelineMessage}'),'::before').left)<0`,
-    ),
-    'The frame leaves space around the avatar without moving the message tracks',
+    'Opening a quote keeps the original framed with space around the avatar and no row overflow',
   );
   assert.ok(
     (await js<number>(

@@ -961,20 +961,6 @@ function Messages({
   historyRef.current = historyMode;
   const loadVersion = useRef(0);
   const pendingJump = useRef<{ id: string | null } | null>(null);
-  useLayoutEffect(() => {
-    if (loading || !pendingJump.current?.id) return;
-    const target = scroll.current?.querySelector<HTMLElement>(
-      '[data-message-id="' + pendingJump.current.id + '"]',
-    );
-    if (!target) return;
-    pinned.current = false;
-    target.scrollIntoView({
-      block: 'center',
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-    });
-    target.focus({ preventScroll: true });
-    pendingJump.current = null;
-  }, [items, loading]);
   const replyVersion = useRef(0);
   const change = useRef('0'),
     loaded = useRef(false),
@@ -997,6 +983,25 @@ function Messages({
       setAtBottom(pinned.current);
     }
   }, []);
+  useLayoutEffect(() => {
+    const pending = pendingJump.current;
+    if (loading || !pending?.id) return;
+    // Settle the navigation on the first committed render; never leave scroll tracking suspended.
+    pendingJump.current = null;
+    const target = scroll.current?.querySelector<HTMLElement>(
+      '[data-message-id="' + pending.id + '"]',
+    );
+    if (target) {
+      pinned.current = false;
+      target.scrollIntoView({
+        block: 'center',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      });
+      target.focus({ preventScroll: true });
+    }
+    // A target already in view emits no scroll event, so recompute the reading position explicitly.
+    requestAnimationFrame(checkPosition);
+  }, [items, loading, checkPosition]);
   const lastReadRequest = useRef(0);
   const latestSeq = items.reduce(
     (max, item) => (BigInt(item.seq) > BigInt(max) ? item.seq : max),

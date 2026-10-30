@@ -32,27 +32,17 @@
   outline: 1px solid #8a9b77;
   outline-offset: 2px;
 }
-.chat-message-row[data-highlighted='true']::before,
-.chat-message-row[data-reply-target='true']::before {
-  content: '';
-  position: absolute;
-  inset: 0 -6px;
-  z-index: -1;
-  border: 1px solid var(--message-cue-border, #b7cf9f40);
-  border-radius: 8px;
-  background: var(--message-cue-bg, #b7cf9f14);
-  pointer-events: none;
-}
 .chat-message-row.mentions-you {
   background: #dc9d2810;
   box-shadow: inset 2px 0 #b88d42;
 }
+/* Outline and shadow paint a padded frame without adding scrollable overflow to the row. */
 .chat-message-row[data-reply-target='true'],
 .chat-message-row[data-highlighted='true'] {
-  isolation: isolate;
-  outline: none;
-  background: transparent;
-  box-shadow: none;
+  background: var(--message-cue-bg, #b7cf9f14);
+  box-shadow: 0 0 0 5px var(--message-cue-bg, #b7cf9f14);
+  outline: 1px solid var(--message-cue-border, #b7cf9f40);
+  outline-offset: 5px;
 }
 .chat-message-avatar {
   grid-column: 1;

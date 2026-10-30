@@ -265,8 +265,9 @@ it('makes missing-provider configuration explicitly unavailable rather than an e
   }
 });
 
-it('omits the public GIPHY key entirely when GIPHY is not configured', async () => {
+it('omits public provider keys entirely when GIPHY and KLIPY are not configured', async () => {
   delete config.giphyApiKey;
+  delete config.klipyApiKey;
   try {
     const result = await server.app.inject({ url: '/api/gifs/providers', headers: headers() });
     expect(result.statusCode).toBe(200);
@@ -282,6 +283,7 @@ it('omits the public GIPHY key entirely when GIPHY is not configured', async () 
     expect(fetcher).not.toHaveBeenCalled();
   } finally {
     config.giphyApiKey = 'fixture-giphy-key';
+    config.klipyApiKey = 'fixture-klipy-key';
   }
 });
 

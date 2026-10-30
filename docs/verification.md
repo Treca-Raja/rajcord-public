@@ -1,3 +1,14 @@
+# PR CI failure and browser-harness regressions — 2026-10-30
+
+The PR's Linux `verify` job failed in `pnpm test:db`: one provider-list assertion in `gif-search.integration.test.ts` removed only the GIPHY key while the fixture also configured KLIPY, so KLIPY correctly stayed enabled. The test now removes and restores both public keys. The full database suite had not been rerun after adding KLIPY.
+
+Rerunning the real-Chromium harness on the final head found two further regressions that CI's `verify` job does not execute:
+
+- The reply-selection frame used a pseudo-element bleeding 6 px beyond its row, so rows reported horizontal overflow at 390 px. It now uses background, box-shadow and outline, which add no scrollable overflow. `overflow: clip` with `overflow-clip-margin` was tried first and rejected because Chromium still counted the margin.
+- After an authorized jump, the reading position was only recomputed by a scroll event. A target already in view therefore left reading disabled and an unread badge uncleared, and a missing target could leave scroll tracking suspended. Jumps now settle on the first committed render and recompute the position explicitly.
+
+`pnpm --filter @tricord/api test:browser` then **passed** on this head with the configured Linux Chromium launcher. The harness's frame assertion was updated to the outline/box-shadow implementation; no assertion threshold or wait was relaxed. `pnpm test:db`, `pnpm test:desktop`, `pnpm test:voice`, image/hosting suites and Windows/physical-device checks were not rerun for this fix.
+
 # Racing-green / stone-gray matte palette — 2026-10-30
 
 Retro now pairs racing-green navigation with a muted stone/blue-gray conversation canvas, rather than the earlier ink or lilac previews. A locally embedded 128×128 SVG supplies fixed monochrome grain to surface backgrounds only; no text overlay, animated noise, external asset request or new dependency is involved. Original and the existing interruptible theme-switch logic are unchanged.
