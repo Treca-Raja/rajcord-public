@@ -16,6 +16,7 @@ import { identity, equal, SESSION_COOKIE } from './auth/service.js';
 import { registerAuth } from './auth/routes.js';
 import { HttpError } from './auth/validation.js';
 import { isIP } from 'node:net';
+import type { GifSearchOptions } from './chat/gif-search.js';
 
 export function createApp({
   logger = false,
@@ -27,6 +28,7 @@ export function createApp({
   trustedProxyAddress,
   staticRoot,
   voiceConfig,
+  gifSearch,
 }: {
   logger?: boolean;
   databaseUrl?: string;
@@ -37,6 +39,7 @@ export function createApp({
   trustedProxyAddress?: string;
   staticRoot?: string;
   voiceConfig?: VoiceConfig;
+  gifSearch?: Pick<GifSearchOptions, 'config' | 'fetcher'>;
 } = {}) {
   if (
     allowedOrigins.some((origin) => {
@@ -185,7 +188,7 @@ export function createApp({
   app.register(async (routes) => {
     if (database) {
       registerAuth(routes, database.pool, io, secureCookies, rateLimits);
-      registerChat(routes, new ChatService(database.pool), io, rateLimits);
+      registerChat(routes, new ChatService(database.pool), io, rateLimits, gifSearch);
       routes.register(async (child) => registerVoice(child, voice, rateLimits));
     } else
       routes.all('/api/*', async () => {

@@ -1,4 +1,7 @@
-import { safeHttpUrl } from '@tricord/shared';
+import { safeHttpUrl, type ChannelReference } from '@tricord/shared';
+import { Fragment } from 'react';
+import { EmojiText } from './EmojiText';
+import { channelReferenceParts } from './channel-references';
 
 export type MessagePart = { text: string; href?: string };
 
@@ -65,7 +68,33 @@ export function messageParts(body: string): MessagePart[] {
   return parts;
 }
 
-export function MessageBody({ body }: { body: string }) {
+function highlighted(text: string, mentions: { username: string }[]) {
+  const names = new Set(mentions.map((mention) => mention.username.toLowerCase()));
+  return text
+    .split(/((?:^|[^\p{L}\p{N}_@])@[a-zA-Z0-9_]{3,32}(?![\p{L}\p{N}_]))/gu)
+    .map((part, index) => {
+      const match = part.match(/^([^\p{L}\p{N}_@]?)@([a-zA-Z0-9_]{3,32})$/u);
+      return match && names.has(match[2]!.toLowerCase()) ? (
+        <span key={index}>
+          {match[1]}
+          <mark>@{match[2]}</mark>
+        </span>
+      ) : (
+        <EmojiText text={part} key={index} />
+      );
+    });
+}
+export function MessageBody({
+  body,
+  mentions = [],
+  channels = [],
+  onChannel,
+}: {
+  body: string;
+  mentions?: { username: string }[];
+  channels?: ChannelReference[];
+  onChannel?: (channel: ChannelReference) => void;
+}) {
   return (
     <p className="message-body">
       {messageParts(body).map((part, index) =>
@@ -77,10 +106,31 @@ export function MessageBody({ body }: { body: string }) {
             target="_blank"
             rel="noopener noreferrer"
           >
-            {part.text}
+            {highlighted(part.text, mentions)}
           </a>
         ) : (
-          part.text
+          <Fragment key={index}>
+            {channelReferenceParts(part.text, channels).map((reference, position) =>
+              reference.channel && onChannel ? (
+                <button
+                  type="button"
+                  className="channel-reference"
+                  key={position}
+                  onClick={() => onChannel(reference.channel!)}
+                  aria-label={
+                    'Open ' +
+                    (reference.channel.kind === 'channel' ? 'text' : 'voice') +
+                    ' channel ' +
+                    reference.channel.name
+                  }
+                >
+                  {reference.channel.kind === 'channel' ? '#' : '◖'} {reference.channel.name}
+                </button>
+              ) : (
+                <Fragment key={position}>{highlighted(reference.text, mentions)}</Fragment>
+              ),
+            )}
+          </Fragment>
         ),
       )}
     </p>

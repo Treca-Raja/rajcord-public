@@ -3,14 +3,18 @@ import type { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents, Conversation } from '@tricord/shared';
 import { SESSION_COOKIE, identity, approved, equal } from '../auth/service.js';
 import { HttpError, input, uuid } from '../auth/validation.js';
-import { mentionsUser } from '@tricord/shared';
 import { ChatService } from './service.js';
+import { ChatFeatures } from './features.js';
+import { noticePreferences, registerNotificationPreferences } from './notification-preferences.js';
+import { registerGifSearch, type GifSearchOptions } from './gif-search.js';
 export function registerChat(
   app: FastifyInstance,
   service: ChatService,
   io: Server<ClientToServerEvents, ServerToClientEvents>,
   limits: boolean,
+  gifOptions: Pick<GifSearchOptions, 'config' | 'fetcher'> = { config: {} },
 ) {
+  const features = new ChatFeatures(service);
   const token = (req: FastifyRequest) => req.cookies[SESSION_COOKIE] ?? '';
   async function guard(req: FastifyRequest) {
     const auth = approved(await identity(service.pool, token(req)));
@@ -48,43 +52,52 @@ export function registerChat(
         if (!messageId) socket.emit('inbox:changed');
         if (conversationId) {
           try {
-            const conversation = await service.get(socket.data.token, conversationId);
+            const delivery = messageId
+              ? await service.delivery(socket.data.token, conversationId, messageId)
+              : {
+                  conversation: await service.get(socket.data.token, conversationId),
+                  notice: null,
+                  deleted: false,
+                };
+            const { conversation } = delivery;
             if (messageId) {
-              const message = await service
-                .one(socket.data.token, conversationId, messageId, true)
-                .catch(() => null);
               // A historical edit outside this membership period must not evict a current subscriber.
-              if (!message) continue;
+              if (!delivery.notice) continue;
               socket.emit('unread:changed', unread(conversation));
-              if (created && !message.deleted && message.author.id !== auth.user.id)
+              if (created && !delivery.deleted && delivery.notice.authorId !== auth.user.id)
                 socket.emit('message:created', {
-                  conversationId,
-                  messageId,
-                  seq: message.seq,
-                  authorId: message.author.id,
-                  kind: conversation.kind,
-                  mention: mentionsUser(message.body ?? '', auth.user.username),
+                  ...delivery.notice,
+                  preferences: await noticePreferences(
+                    service,
+                    socket.data.token,
+                    conversationId,
+                    delivery.notice.authorId,
+                  ),
                 });
             }
             if (socket.rooms.has('conversation:' + conversationId)) {
-              if (messageId) {
-                try {
-                  await service.one(socket.data.token, conversationId, messageId, true);
-                } catch {
-                  continue;
-                }
-              }
               socket.emit('conversation:changed', { conversationId });
             }
-          } catch {
-            if (socket.rooms.has('conversation:' + conversationId)) {
+          } catch (error) {
+            const denied = error instanceof HttpError && [401, 403, 404].includes(error.statusCode);
+            if (denied && socket.rooms.has('conversation:' + conversationId)) {
               await socket.leave('conversation:' + conversationId);
               socket.emit('conversation:closed', { conversationId });
+            } else if (!denied) {
+              app.log.error(
+                { code: error instanceof Error && 'code' in error ? error.code : 'internal' },
+                'Chat delivery unavailable',
+              );
+              socket.emit('chat:unavailable');
             }
           }
         }
-      } catch {
-        /* Database outage: fail closed. Reconnect synchronization reads persisted state. */
+      } catch (error) {
+        app.log.error(
+          { code: error instanceof Error && 'code' in error ? error.code : 'internal' },
+          'Chat delivery unavailable',
+        );
+        socket.emit('chat:unavailable');
       }
     }
   }
@@ -92,6 +105,84 @@ export function registerChat(
     preHandler: guard,
     config: { rateLimit: limits ? { max: 60, timeWindow: 60000 } : (false as const) },
   };
+  registerNotificationPreferences(app, service, io, { token, guard, mutation });
+  registerGifSearch(app, { ...gifOptions, guard, limits });
+  app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>(
+    '/api/conversations/:id/pins',
+    { preHandler: guard },
+    async (req) => features.pins(token(req), uuid(req.params.id), req.query),
+  );
+  app.get<{ Params: { id: string; messageId: string }; Querystring: Record<string, unknown> }>(
+    '/api/conversations/:id/messages/:messageId/context',
+    { preHandler: guard },
+    async (req) =>
+      features.context(token(req), uuid(req.params.id), uuid(req.params.messageId), req.query),
+  );
+  app.get<{ Params: { id: string } }>(
+    '/api/conversations/:id/messages/unread-context',
+    { preHandler: guard },
+    async (req) => features.unreadContext(token(req), uuid(req.params.id)),
+  );
+  app.get<{ Params: { id: string; anchorId: string }; Querystring: Record<string, unknown> }>(
+    '/api/conversations/:id/threads/:anchorId',
+    { preHandler: guard },
+    async (req) =>
+      features.thread(token(req), uuid(req.params.id), uuid(req.params.anchorId), req.query),
+  );
+  for (const remove of [false, true]) {
+    app.route<{ Params: { id: string; messageId: string } }>({
+      method: remove ? 'DELETE' : 'PUT',
+      url: '/api/conversations/:id/messages/:messageId/pin',
+      ...mutation,
+      handler: async (req) => {
+        if (req.body !== undefined) input(req.body, []);
+        const message = await features.pin(
+          token(req),
+          uuid(req.params.id),
+          uuid(req.params.messageId),
+          remove,
+        );
+        await publish(message.conversationId, message.id);
+        return { message };
+      },
+    });
+    app.route<{ Params: { id: string; messageId: string } }>({
+      method: remove ? 'DELETE' : 'PUT',
+      url: '/api/conversations/:id/messages/:messageId/reactions',
+      ...mutation,
+      handler: async (req) => {
+        const message = await features.react(
+          token(req),
+          uuid(req.params.id),
+          uuid(req.params.messageId),
+          req.body,
+          remove,
+        );
+        await publish(message.conversationId, message.id);
+        return { message };
+      },
+    });
+  }
+  app.get<{ Querystring: Record<string, unknown> }>(
+    '/api/channel-categories',
+    { preHandler: guard },
+    async (req) => service.categories(token(req), req.query),
+  );
+  app.post('/api/channel-categories', mutation, async (req, reply) => {
+    const category = await service.createCategory(token(req), req.body);
+    await publish();
+    return reply.code(201).send({ category });
+  });
+  app.patch<{ Params: { id: string } }>('/api/channel-categories/:id', mutation, async (req) => {
+    const category = await service.updateCategory(token(req), uuid(req.params.id), req.body);
+    await publish();
+    return { category };
+  });
+  app.delete<{ Params: { id: string } }>('/api/channel-categories/:id', mutation, async (req) => {
+    await service.updateCategory(token(req), uuid(req.params.id), req.body, true);
+    await publish();
+    return { removed: true };
+  });
   app.get('/api/conversations', { preHandler: guard }, async (req) => ({
     conversations: await service.list(token(req)),
   }));
@@ -242,13 +333,14 @@ export function registerChat(
       if (typeof ack !== 'function') return;
       try {
         budget();
-        const body = input(data, ['conversationId', 'clientId', 'body']);
+        const body = input(data, ['conversationId', 'clientId', 'body', 'replyToId']);
         const { message: result, created } = await service.sendResult(
           socket.data.token,
           uuid(body.conversationId),
           {
             body: body.body,
             clientId: body.clientId,
+            replyToId: body.replyToId,
           },
         );
         ack({ ok: true, data: result });

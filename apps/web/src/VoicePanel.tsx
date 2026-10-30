@@ -8,10 +8,20 @@ import {
   type VoiceState,
 } from './voice-controller';
 import './voice.css';
-export function VoicePanel() {
+export function VoicePanel({
+  onChannels,
+  requestedChannel,
+}: {
+  onChannels?: (channels: VoiceChannel[]) => void;
+  requestedChannel?: { id: string; version: number } | null;
+}) {
   const { request, state: auth } = useAuth();
   const ref = useRef(request);
   ref.current = request;
+  const notifyChannels = useRef(onChannels);
+  notifyChannels.current = onChannels;
+  const loaded = useRef(false),
+    handledReference = useRef(0);
   const controllerRef = useRef<VoiceController | null>(null);
   const [voice, setVoice] = useState<VoiceState | null>(null),
     [channels, setChannels] = useState<VoiceChannel[]>([]),
@@ -28,7 +38,11 @@ export function VoicePanel() {
     const reload = async () => {
       try {
         const data = await ref.current<{ channels: VoiceChannel[] }>('/voice/channels');
-        if (live) setChannels(data.channels);
+        if (live) {
+          loaded.current = true;
+          setChannels(data.channels);
+          notifyChannels.current?.(data.channels);
+        }
       } catch (error) {
         if (live) setError((error as Error).message);
       }
@@ -42,6 +56,32 @@ export function VoicePanel() {
       controllerRef.current = null;
     };
   }, []);
+  useEffect(() => {
+    if (
+      !requestedChannel ||
+      !loaded.current ||
+      handledReference.current === requestedChannel.version
+    )
+      return;
+    handledReference.current = requestedChannel.version;
+    if (!channels.some((channel) => channel.id === requestedChannel.id)) {
+      setError('That voice channel is no longer available.');
+      return;
+    }
+    setExpanded(true);
+    requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLButtonElement>(
+        '.voice-panel [data-voice-channel-id="' + requestedChannel.id + '"]',
+      );
+      target?.scrollIntoView({
+        block: 'nearest',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'instant'
+          : 'smooth',
+      });
+      target?.focus({ preventScroll: true });
+    });
+  }, [requestedChannel, channels]);
   async function action(work: (controller: VoiceController) => Promise<unknown>) {
     const controller = controllerRef.current;
     if (!controller) return;
@@ -66,9 +106,9 @@ export function VoicePanel() {
               const name = window.prompt('Voice channel name');
               if (!name) return;
               await ref.current('/voice/channels', 'POST', { name });
-              setChannels(
-                (await ref.current<{ channels: VoiceChannel[] }>('/voice/channels')).channels,
-              );
+              const data = await ref.current<{ channels: VoiceChannel[] }>('/voice/channels');
+              setChannels(data.channels);
+              notifyChannels.current?.(data.channels);
             })
           }
         >
@@ -79,7 +119,12 @@ export function VoicePanel() {
         {channels.map((channel) => (
           <button
             key={channel.id}
-            className={voice?.channelId === channel.id ? 'selected' : ''}
+            data-voice-channel-id={channel.id}
+            className={
+              voice?.channelId === channel.id || requestedChannel?.id === channel.id
+                ? 'selected'
+                : ''
+            }
             onClick={() => {
               setExpanded(true);
             }}

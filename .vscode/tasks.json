@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Rajcord local app (no build)",
+			"type": "shell",
+			"command": "/home/plea/.copilot/session-state/28ee8326-e7da-4839-a244-c65aac4b1050/files/tools/pnpm-run",
+			"args": [
+				"exec",
+				"concurrently",
+				"-k",
+				"-n",
+				"api,web",
+				"pnpm --filter @tricord/api dev",
+				"pnpm --filter @tricord/web dev"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

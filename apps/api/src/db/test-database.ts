@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createDatabase } from './client.js';
 import { applyMigrations } from './migrations.js';
 // Never reset the development database. Each auth suite owns a newly-created database.
-export async function testDatabase() {
+export async function testDatabase({ migrate = true }: { migrate?: boolean } = {}) {
   const source = process.env.DATABASE_URL;
   if (!source) throw new Error('DATABASE_URL missing. Run db:setup first.');
   const url = new URL(source);
@@ -17,7 +17,7 @@ export async function testDatabase() {
     created = true;
     url.pathname = '/' + name;
     database = createDatabase(url.toString());
-    await applyMigrations(database);
+    if (migrate) await applyMigrations(database);
     return {
       database,
       url: url.toString(),

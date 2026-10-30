@@ -1,3 +1,128 @@
+# Racing-green / stone-gray matte palette — 2026-10-30
+
+Retro now pairs racing-green navigation with a muted stone/blue-gray conversation canvas, rather than the earlier ink or lilac previews. A locally embedded 128×128 SVG supplies fixed monochrome grain to surface backgrounds only; no text overlay, animated noise, external asset request or new dependency is involved. Original and the existing interruptible theme-switch logic are unchanged.
+
+- Inspected the running desktop preview. The actual texture decoded at 128×128 with alpha values **0–7/255**. Contrast measured over the composited grain was at least **7.80:1** for message text and **4.88:1** for timestamps; sidebar-caption contrast against its green surface was **6.21:1**.
+- The selected KLIPY tab measured **4.75:1** text contrast. The local provider remained explicitly unconfigured; no provider search was made.
+- **390 px and 1440 px** layouts had no document-level overflow. The browser was returned to the standard review viewport. Chat typography remains 15 px / 24 px, and the 120–160 ms motion settings were not changed.
+- Changed-file formatting, affected JSX lint, whitespace checks and API health passed. This styling-only revision did not rerun application test suites or full builds; the interaction-regression evidence below remains historical.
+
+# Modern-first appearance and interruptible motion — 2026-10-30
+
+Removed the framed/beveled desktop-window treatment from Retro. Its Y2K references are now restrained green/ice-blue accents and a small asymmetric chrome-like mark on deep-ink surfaces. Replaced conflicting light-theme overrides with a shorter dark token-based theme. Both appearances use 15 px Inter at weight 450 with 24 px line spacing, preserving shared message geometry.
+
+- **219 focused regressions passed across seven files**, including ten appearance persistence/motion cases, existing message/composer/media behavior and KLIPY parser/transport contracts. The first run exposed a stale CSP expectation from the KLIPY addition; the exact four approved KLIPY origins were added to that fixture and only the failing file was rerun. Web typecheck and affected-file ESLint passed. Checks used one worker and a 768 MiB heap cap; no full suite, image build or extra app stack ran.
+- Native theme snapshots crossfade for **120/160 ms**, with a cancelable 160 ms opacity fallback. State/preference updates are immediate; obsolete callbacks cannot restore an old theme. Reduced motion and hidden tabs skip animation. Overlays do not intercept interaction.
+- In the existing Chromium page, native transition readiness was **29.5 ms** in one observed switch, not a production latency guarantee. Rapid switches retained the same textarea node, focus, typed fixture text and exact timeline scroll position. The empty fixture draft was restored afterward; no message was sent.
+- Sampled steady-state text contrast against the actual Retro timeline was **13.33:1** for message text and **7.88:1** for timestamps. Screenshots were inspected. These are targeted observations, not a full assistive-technology audit.
+- **390 px and 1440 px** viewports had no document-level horizontal/vertical overflow and the composer remained within bounds. The original viewport was restored. Browser reduced-motion emulation produced zero native theme calls/active theme animations and was then reset to the user's normal preference.
+
+The app remains running with Retro selected. Live KLIPY search still requires the operator's local key; provider account setup and live requests were not performed.
+
+# KLIPY integration and reply-frame correction — 2026-10-30
+
+Added separate GIPHY/KLIPY picker tabs after explicit approval of direct-browser requests/public client keys. Provider configuration remains approved-session-only; the server rejects KLIPY proxy searches. Search uses the fixed KLIPY migration endpoint, documented static media hosts, original queries/URLs and provider order, with bounded JSON/pages/thumbnail dimensions. Switching providers clears results and requires fresh Search consent. GIF messages retain the existing link-only send identity/draft behavior and opt-in preview budget.
+
+- New parser, client transport, configuration/approval/proxy-denial and CDN regressions were added. Automated tests remain **paused at the user's request**; no live provider call was made and the local KLIPY key is not configured.
+- The small shared package was compiled to expose the new helpers to the running development app. Web/API typechecks passed sequentially with a 768 MiB heap cap; no full workspace/image build or test suite ran.
+- In the shared running browser, KLIPY's tab showed the required `Search KLIPY` placeholder and explicit unconfigured state. API health remained successful. A stale-development-module blank tab was recovered after verifying it contained no app/textarea; existing authentication remained valid.
+- Retro's bright canvas was replaced with a dim mist-blue workspace inside a midnight frame. The revised chat screenshot was inspected. Reply selection now uses one padded pseudo-element behind the article, rather than a tight inset frame plus detached marker; avatars/text stay on their shared tracks and reactions remain outside. Original remains selectable.
+
+# Original / Retro appearance preview — 2026-10-30
+
+Added a per-device Original/Retro switch in the left rail and Settings → Appearance. The initial cream/aqua preview was subsequently revised to deep-blue title bars, a clean white conversation canvas and grass-green accents. Retro now includes lightly beveled controls, framed buddy-style avatars, monospace timestamps and an inset composer, not just palette changes. Both themes keep compact message tracks, contextual actions, detached reactions and quick/reduced-motion-aware panels. The preference is validated, applied without navigation, and synchronized through storage events; failed reads/writes produce visible warnings.
+
+- Manually opened the existing app and its Appearance panel, switched Original → Retro, and inspected the chat/settings screenshots. In the initial cream preview, the timeline background changed from `rgb(30, 33, 40)` to `rgb(250, 246, 234)` without leaving the settings panel. The later blue/white/green chat screenshot was also inspected; Original remains charcoal/green. The saved preview choice is Retro.
+- At the inspected 696×562 viewport, history and composer fit without document-level horizontal or vertical overflow. Non-hovered mouse action trays remained hidden; message text was 14.5 px. The mobile sidebar now uses a short opacity/transform transition instead of a display snap.
+- New preference persistence/error regressions and GIPHY-only picker coverage were added, but automated tests, typechecks, full builds and image checks are **deferred at the user's request until implementation is final**. Existing earlier counts do not validate this preview. Local rollback copies preserve the pre-preview source; no commit/push/deployment was performed.
+- Removed the retired Tenor choice from the client without changing the existing server contract or saved message links. GIPHY's existing `pg` rating is unchanged; no replacement provider or account was configured.
+
+# Reply navigation and GIF setup correction — 2026-10-30
+
+Reproduced a successful reply-context response followed by the timeline snapping back to its bottom. Loading temporarily emptied the scroller, whose scroll event incorrectly restored bottom-following. Pending navigation now suppresses that position update until the original is committed and scrolled into view. Opened originals retain a translucent frame; quoted previews have their own compact frame.
+
+- The existing shared browser demonstrated first-click navigation with the original fully visible, and a later independent geometry/style observation confirmed it remained visible and highlighted. No messages were sent or changed.
+- `pnpm exec vitest run apps/web/src/message-card.test.ts --maxWorkers=1`: **4 passed**. Affected-file ESLint, web/API typechecks and formatting passed. Typechecks ran sequentially with a 768 MiB Node heap cap. No full suites, production builds or image checks were run for this correction; the expanded fixture browser regression was added but not executed.
+- Official provider documentation was checked: GIPHY issues beta API keys with a documented 100-call hourly limit. Google's Tenor FAQ states new integrations closed January 13, 2026 and the API retired June 30, 2026. Setup documentation and the unconfigured Tenor picker now explain this rather than directing operators to obtain a new Tenor key. No live provider search was made.
+
+The normal local app remains running. Earlier interrupted production-build/image attempts are not successful evidence for the latest assets.
+
+# Compact chat headers, not sender columns — 2026-10-30
+
+After confirming the intended Discord/Slack-style direction, removed the reserved sender/table column. Every message now uses a small left avatar, a compact sender header directly above the text, right-aligned time/status icons and a consistent text edge. Reactions remain below and outside the article.
+
+- `pnpm exec vitest run apps/web/src/message-card.test.ts apps/web/src/message-body.test.ts apps/web/src/chat-composer.test.ts`: **37 passed**; lint and the web build passed.
+- `pnpm --filter @tricord/api test:browser`: **passed**, checking shared sender/text left edges, compact header-to-body spacing, non-overlapping timestamps and reaction alignment, plus 390-pixel no-overflow behavior and existing chat/notification/media flows.
+- Desktop/mobile fixture screenshots were inspected. The UI skill and user guide explicitly prohibit the abandoned reserved-sender-column design. No database/API behavior changed, and the user's app remains running.
+
+# Consistent inline message tracks — 2026-10-30
+
+Replaced the mixed avatar/stacked/grouped-row styling with an isolated message-row layout. Desktop messages use shared avatar, sender, text and timestamp tracks; reactions occupy the text track beneath the article, not its highlight. Every row keeps a compact avatar and sender rather than changing indentation for consecutive authors. Narrow history panes deliberately wrap text below the sender and keep long identities bounded with full-value tooltips.
+
+- `pnpm test`: **270 passed**; focused message/body/composer/state checks: **41 passed**. Lint, web build and API typecheck passed.
+- `pnpm --filter @tricord/api test:browser`: **passed** with actual desktop inline-baseline, column non-overlap, fixed reaction geometry/alignment, and 390-pixel no-overflow assertions, plus prior chat/notification/GIF/emoji/drawer regressions.
+- Inspected desktop and mobile fixture screenshots. Read-only geometry checks on the shared running page also showed equal sender/text positions across consecutive and non-consecutive rows, with all sampled columns fitting without overlap. Tests and screenshots use disposable fixture content, not copied user conversations.
+- Removed the obsolete message-row selectors rather than adding another override layer. The repository UI skill now explicitly requires consistent tracks and protection from generic stylesheet collisions.
+
+No database/API behavior changed in this refinement, so database/image suites were not repeated. The user's local app remains running; no commit, push or deployment was performed.
+
+# Compact messages, responsive drawers and complete emoji — 2026-10-30
+
+Follow-up interactive feedback is implemented: every message retains its sender, consecutive rows no longer reserve hidden-avatar height, reaction pills sit outside the message highlight, and the same pinned button smoothly opens/closes an overlay drawer without resizing history. The left-sidebar Categories control has quick hover/press feedback. GIF-button and `/gif` entry insert links only. The repository UI skill records compact, responsive, reduced-motion-aware interaction standards.
+
+- `pnpm test`: **270 passed** in 46 files; `pnpm test:db`: **112 passed** in seven files. `pnpm typecheck`, `pnpm lint`, the affected web build and changed-file formatting passed.
+- `pnpm --filter @tricord/api test:browser`: **passed** with the configured Linux Chromium launcher. A deliberately paused pins request proves the loading shell appears before the response; the final observed first-frame time was **6.6 ms** on this workstation, not a production latency guarantee. The browser observes an actual running drawer transition, verifies repeat-click closure/reopen and inert exit state, unchanged timeline width and reduced-motion behavior.
+- Actual message geometry checks confirm one-line consecutive messages with sender names stay within 56 pixels, adjacent gaps stay within 4 pixels, and reaction insertion leaves the article's height unchanged. Detached pills and consecutive text align with the message column. Desktop screenshots were inspected; this also caught/fixed a global stylesheet specificity conflict.
+- Full Unicode 17 coverage uses pinned offline `emojibase-data`: **3,953 named entries**, including flags, tones, joined sequences and newer faces. All entries pass server validation and fit the existing database field. Browser search selects a Croatian flag and persists a woman-technologist skin-tone reaction. Popular entries remain immediate; the full catalog is lazy-loaded and no picker page renders over 64 choices. Existing normalized favorite reaction keys remain unchanged. The server preserves a 32-distinct-kind message limit so expanding the catalog does not create unbounded response payloads; retries/existing choices/removal at capacity are tested.
+- The final web build emits the optional catalog separately at **85.91 kB gzip**, with the main application chunk **119.70 kB gzip**. Both the pre-existing LiveKit and the optional raw catalog chunk exceed the bundler's 500 kB advisory; the catalog is not part of initial chat loading and never calls an external emoji service.
+- Browser checks cover both the composer GIF button and `/gif`, draft-preserving cancellation, plain-link insertion and **zero media requests before preview consent**. Existing decoded-frame play/pause, membership, unread, notification and two-tab checks also pass.
+- The Dockerfile build (host networking) and `pnpm test:server-image` **passed**, covering packaging of the new offline dependency and disposable backup/restore. No new schema migration is required. UI skill metadata/name/path and relative links were validated; instructions/discovery links point to the canonical skill.
+
+The existing local app/services remain running; no user database/profile was reset. Checks use owned disposable databases/profiles. Windows-native, physical audio and assistive-technology certification remain separate from this local evidence. No ticket, commit, push or deployment was performed.
+
+# Chat interaction and layout refinement — 2026-10-30
+
+Follow-up to interactive UX feedback; no persistence, API permissions or notification-delivery policy changed.
+
+- `pnpm test`: **265 tests passed** in 43 files. Regressions cover self-inclusive bounded autocomplete, an enabled composer during pending delivery, inline emoji placement, hidden action rows, settings-only notification controls and one-time setup preferences. Existing legacy popup opt-in and sound-off defaults remain covered.
+- `pnpm typecheck`, `pnpm lint` and `pnpm --filter @tricord/web build`: **passed**; the existing LiveKit bundle-size advisory remains.
+- `pnpm --filter @tricord/api typecheck` and `pnpm --filter @tricord/api test:browser`: **passed** using the configured Linux Chromium launcher. Actual flows open message actions by right-click, navigate them with Shift+F10/arrows/Escape, add/remove reactions without a second picker trigger, preserve composer focus after sends, insert/highlight a self mention while persisting zero self recipients, and retain prior thread/pin/media/privacy assertions.
+- The browser verifies the automatic setup invitation opens **Settings → Notifications** without enabling alerts. Closing settings leaves notification delivery active; subsequent two-tab deduplication, popup/sound/mute/priority and public-reply navigation checks pass. Notification controls are absent from the sidebar; the 390-pixel settings panel has no horizontal overflow.
+- Desktop-width chat/menu and desktop/mobile notification screenshots were visually inspected. Metadata is right-aligned, actions are contextual, the smile control sits within the compact composer, and category management has a visible sidebar label plus links in channel forms. These are local Chromium observations, not Windows/native-banner or assistive-technology certification.
+
+The user's existing local app and Docker services remain running. Browser checks use owned disposable databases/profiles, not the user's account or messages. No ticket, commit, push or deployment was performed.
+
+# Coordinated chat modernization — 2026-10-30
+
+The remaining chat scope is implemented on `feature/chat-improvements`: canonical replies/single-level threads, authorized pins/context jumps, persisted Unicode reactions and resolved mentions, private alert rules, independent popup/sound controls, coordinated tabs, consent-gated native GIF playback and account-scoped in-memory drafts/identity UI. This is implementation/local evidence, not ticket completion, Windows certification or deployment authorization.
+
+- Final local suites: `pnpm test` **passed 261 tests** in 41 files; `pnpm test:db` **passed 110 tests** in seven files. Lint, workspace types and production builds passed. Changed-file formatting is checked separately.
+- Database verification covers reference/item/count visibility across membership gaps, unavailable/deleted roots, canonical ordering, reply-aware and legacy idempotency, concurrent pin/reaction retries, author-only edits, archives, CSRF/origin, exact Unicode-aware mention boundaries and account-private preferences. Hydration uses **five queries for either one or 50 messages**, rather than per-item queries.
+- Migration verification: the disposable upgrade fixture starts at 0000–0004, preserves original messages/read progress and earlier journal entries through 0005–0007, retains historical recipients for a suspended account and supports legacy ASCII writes/repeated startup. `pnpm db:generate` reports no schema drift. Existing applied SQL was not rewritten.
+- `pnpm --filter @tricord/api test:browser` **passed** with the configured Linux Chromium launcher. Actual UI checks include replies/reply-to-reply, thread reads leaving the parent cursor unchanged, pin jumps beyond the loaded page, reaction add/remove, canonical autocomplete, draft switching/reload clearing and prior channel/auth/unread flows.
+- Native GIF evidence uses an intercepted, generated two-frame fixture, **not a live CDN request**: zero requests before consent; one bounded fetch after consent; actual canvas pixels change while playing and remain unchanged over 15 animation frames while paused. Stop resets/hides the canvas and leaves the original link usable.
+- Two actual authenticated browser documents receive the same notice over their sockets and **one** popup adapter is invoked through real Web Locks. This exposed and fixed a dead-page ownership bug after reload: lifetime document locks now exclude stale peers instead of losing one-shot alerts. OS popups are mocked; no real desktop banner is claimed.
+- Browser sound evidence uses the native `AudioContext` with an explicit user gesture and observes scheduled oscillator starts; volume `0.25` persists. Conversation mute and sender mute/priority suppress both deliveries without suppressing unread badges. A public reply without an @mention produces an in-app toast plus one sound, not an OS popup; opening it navigates to the authorized thread without acknowledging unseen timeline messages. Global disable still overrides priority. This does **not** certify physical audio output or OS denial behavior.
+- Final regressions distinguish transient delivery outages from lost access: a failed delivery reports unavailability without evicting the subscribed room or discarding drafts; original-history authorization failures clear dependent private views. Actual viewport resizing followed by a new arrival leaves scroll position/read progress unchanged until explicit latest navigation. Latest reloads also scroll correctly when the replacement page has the same item count.
+- `pnpm --filter @tricord/desktop test:links` **passed** in real Electron after rebuilding: renderer isolation, unsafe destinations, untrusted origin and popup denial remain intact; external OS launches use a recording adapter. The authenticated desktop smoke remains **blocked on Linux by its existing Windows-only platform assertion**. Windows native banners, permission/Do Not Disturb behavior, physical sound and assistive-technology/touch checks remain manual gates.
+- The production image smoke now creates and restores replies, unique pins/reactions, resolved mentions and private conversation/sender preferences in addition to original read progress. `pnpm test:server-image` **passed**, including repeated migrations, non-root runtime, readiness and disposable backup/restore. Dockerfile builds used host networking because the default build network previously timed out downloading dependencies.
+
+All data-bearing checks use owned disposable databases/profiles and generated ignored credentials. No real messages/media, secrets, tickets, pushes or production operations were involved. The existing LiveKit bundle-size advisory remains; native GIF decoding adds no codec dependency.
+
+# Channel metadata and categories — 2026-10-30
+
+First implementation slice of chat modernization (AC1), not completion of the coordinated ticket. Approved defaults are implemented: Unicode channel/category names, normalized uniqueness, optional topics, shared ordering, revision-fenced edits and non-destructive category removal. No ticket, push, release or production deployment was performed.
+
+- `pnpm test`: **170 tests passed** across 30 files.
+- `pnpm test:db`: **97 tests passed** across five files. New coverage includes concurrent normalized duplicates, stale edits/reorders, category pagination, archive restrictions, session/approval/CSRF/origin checks, category-removal invalidation and preserved message IDs/read cursors.
+- The upgrade regression applies migrations 0000–0004 to an isolated database, inserts existing chat/read data, applies 0005 and verifies that data and prior journal entries survive. Legacy ASCII channel inserts/renames remain compatible; repeated migration execution is unchanged. `pnpm db:generate` reports no schema drift.
+- `pnpm --filter @tricord/api test:browser`: **passed** with Linux Chromium selected through `TRICORD_BROWSER_PATH`. The local launcher used `--disable-dev-shm-usage` after the default shared-memory launch stalled. New actual UI assertions cover category create/rename/removal, Unicode names/topics/order, reload persistence, stale edits retaining local text, archive/restore, keyboard focus containment/restoration and a 390-pixel dialog without horizontal overflow. Existing authentication/chat/unread/notification flows also passed; OS notification delivery remains mocked. Linux screenshot fonts do not certify emoji appearance on Windows.
+- `pnpm lint`, `pnpm typecheck`, `pnpm build` and the final affected web build: **passed**. The existing LiveKit chunk-size advisory remains.
+- `pnpm server:build` initially failed during registry downloads. Retrying the unchanged Dockerfile with `docker build --network=host -f infrastructure/server/Dockerfile -t tricord-server:alpha .` **passed**. `pnpm test:server-image` **passed**, including non-root runtime, repeated migrations, static assets, readiness and disposable backup/restore with read progress.
+- `pnpm --filter @tricord/api test:desktop --chat-only`: **blocked on Linux** by the existing smoke assertion requiring `window.tricordDesktop.platform === 'win32'`, before authenticated chat checks. Electron launched; retrying with the shared-memory-safe launcher reached the same assertion. No sandbox/IPC checks were weakened, and no Windows/OS notification evidence is claimed.
+
+Local checks used newly generated ignored credentials, loopback-only PostgreSQL/LiveKit and owned disposable databases/profiles. Existing database data, credentials and Docker volumes were preserved.
+
 # Authenticated hyperlink verification — 2026-10-28
 
 Windows verification on `feature/chat-hyperlinks` after `a11e3be`. Installed Docker was confirmed running Linux containers. Existing setup commands generated ignored local credentials without printing them; loopback-only PostgreSQL/LiveKit started and additive migrations applied. Test suites used disposable databases and isolated Edge/Electron profiles. Existing data and volumes were preserved.
