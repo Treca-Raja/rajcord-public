@@ -10,6 +10,7 @@ import {
   DraftStore,
   emptyDraft,
   isConversationAccessError,
+  isReplyTargetGone,
   nearLatest,
 } from './chat-state';
 import { CategoryManager, ChannelFields, ChannelSettings } from './Channels';
@@ -952,6 +953,7 @@ function Messages({
     [olderBusy, setOlderBusy] = useState(false);
   const [reply, setReply] = useState<ChatMessage | null>(null);
   const [replyLoading, setReplyLoading] = useState(false);
+  const [replyFailed, setReplyFailed] = useState(false);
   const [panel, setPanel] = useState<OpenChatPanel | null>(
     navigation?.thread && navigation.messageId
       ? { kind: 'thread', anchorId: navigation.messageId }
@@ -1114,6 +1116,9 @@ function Messages({
   const chooseReply = useCallback(
     (item: ChatMessage) => {
       if (item.deleted) return;
+      replyVersion.current++;
+      setReplyLoading(false);
+      setReplyFailed(false);
       setReply(item);
       const stored = drafts.get(conversation.id) ?? emptyDraft;
       drafts.set(conversation.id, { ...stored, replyToId: item.id });
@@ -1126,6 +1131,7 @@ function Messages({
   const cancelReply = useCallback(() => {
     replyVersion.current++;
     setReplyLoading(false);
+    setReplyFailed(false);
     setReply(null);
     const stored = drafts.get(conversation.id) ?? emptyDraft;
     drafts.set(conversation.id, { ...stored, replyToId: null });
@@ -1135,33 +1141,46 @@ function Messages({
     if (storedDraft.replyToId === null) {
       setReply(null);
       setReplyLoading(false);
+      setReplyFailed(false);
     }
   }, [storedDraft.replyToId]);
+  const restoreReply = useCallback(
+    (targetId: string) => {
+      const current = ++replyVersion.current;
+      setReplyLoading(true);
+      setReplyFailed(false);
+      void requestRef
+        .current<{ message: ChatMessage }>(path + '/messages/' + targetId)
+        .then(({ message }) => {
+          if (alive.current && current === replyVersion.current) setReply(message);
+        })
+        .catch((error: Error) => {
+          if (!alive.current || current !== replyVersion.current) return;
+          if (isReplyTargetGone(error)) {
+            setReply(null);
+            const previous = drafts.get(conversation.id);
+            if (previous) drafts.set(conversation.id, { ...previous, replyToId: null });
+            setError('Reply target unavailable: ' + error.message);
+          } else setReplyFailed(true);
+        })
+        .finally(() => {
+          if (alive.current && current === replyVersion.current) setReplyLoading(false);
+        });
+    },
+    [conversation.id, drafts, path],
+  );
+  const retryReply = useCallback(() => {
+    const targetId = drafts.get(conversation.id)?.replyToId;
+    if (targetId) restoreReply(targetId);
+  }, [conversation.id, drafts, restoreReply]);
   useEffect(() => {
     const targetId = drafts.get(conversation.id)?.replyToId;
     if (!targetId) return;
-    const current = ++replyVersion.current;
-    setReplyLoading(true);
-    void requestRef
-      .current<{ message: ChatMessage }>(path + '/messages/' + targetId)
-      .then(({ message }) => {
-        if (alive.current && current === replyVersion.current) setReply(message);
-      })
-      .catch((error: Error) => {
-        if (alive.current && current === replyVersion.current) {
-          setReply(null);
-          const previous = drafts.get(conversation.id);
-          if (previous) drafts.set(conversation.id, { ...previous, replyToId: null });
-          setError('Reply target unavailable: ' + error.message);
-        }
-      })
-      .finally(() => {
-        if (alive.current && current === replyVersion.current) setReplyLoading(false);
-      });
+    restoreReply(targetId);
     return () => {
       replyVersion.current++;
     };
-  }, [conversation.id, drafts, path]);
+  }, [conversation.id, drafts, restoreReply]);
   const jump = useCallback(
     async (id: string | null) => {
       const version = ++loadVersion.current;
@@ -1384,6 +1403,7 @@ function Messages({
       sending ||
       conversation.archived ||
       replyLoading ||
+      replyFailed ||
       (panel?.kind === 'thread' && !reply)
     )
       return;
@@ -1425,7 +1445,7 @@ function Messages({
     }
   }
   async function sendGif(url: string) {
-    if (sending || conversation.archived || replyLoading)
+    if (sending || conversation.archived || replyLoading || replyFailed)
       throw new Error('Wait for the current send, or choose an active conversation.');
     const stored = drafts.get(conversation.id) ?? emptyDraft;
     const pending = attemptFor({
@@ -1655,6 +1675,8 @@ function Messages({
               onSendGif={sendGif}
               reply={reply}
               replyLoading={replyLoading}
+              replyFailed={replyFailed}
+              onRetryReply={retryReply}
               onCancelReply={cancelReply}
               disabled={conversation.archived || (panel?.kind === 'thread' && !reply)}
               sending={sending}

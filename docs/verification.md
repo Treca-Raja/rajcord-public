@@ -1,3 +1,9 @@
+# Reply-target restoration review fixes — 2026-10-30
+
+Two review findings on #19 were reproduced and fixed. Choosing a new reply target now invalidates any pending restoration of an older one, so the displayed target and the sent `replyToId` cannot diverge. A restoration failure clears the retained target only for HTTP 403/404; network errors and 5xx keep it, pause sending and show Retry and Cancel reply.
+
+Verification: `pnpm exec vitest run --maxWorkers=1` passed **468 tests in 56 files** (new status-classification and composer-state tests); `pnpm lint` and serial workspace typecheck passed; `pnpm --filter @tricord/api test:browser` **passed** with new held-response and HTTP 503 assertions (retained draft, paused send, Retry, correct `reply_to_id`). With the fix reverted, the held-response assertion failed as expected. One unrelated earlier run of that reverted-code check timed out waiting for the socket connection and was not counted. DB, voice, desktop, image and hosting suites were not rerun.
+
 # Develop merge with presence and voice sounds — 2026-10-30
 
 `develop` (`f00e3e2`) was merged into this branch after #18 (application sounds) and #16 (live presence) landed. Their merge into develop was an exact union of the two PRs; conflicts here were resolved from a local rehearsal that was run on all three PRs.

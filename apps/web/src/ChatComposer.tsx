@@ -19,6 +19,8 @@ export function ChatComposer({
   onSend,
   reply,
   replyLoading,
+  replyFailed = false,
+  onRetryReply,
   onCancelReply,
   disabled,
   sending,
@@ -34,6 +36,8 @@ export function ChatComposer({
   onSend: (event: FormEvent) => void;
   reply: ChatMessage | null;
   replyLoading: boolean;
+  replyFailed?: boolean;
+  onRetryReply?: () => void;
   onCancelReply: () => void;
   disabled: boolean;
   sending: boolean;
@@ -44,6 +48,7 @@ export function ChatComposer({
   onReference?: (channel: ChannelReference) => boolean;
   onSendGif?: (url: string) => Promise<void>;
 }) {
+  const replyBlocked = replyLoading || replyFailed;
   const textarea = useRef<HTMLTextAreaElement>(null);
   const controls = useRef<HTMLDivElement>(null);
   const [caret, setCaret] = useState(body.length);
@@ -150,6 +155,22 @@ export function ChatComposer({
   return (
     <div className="chat-composer-controls" ref={controls}>
       {replyLoading && <p role="status">Checking reply target…</p>}
+      {replyFailed && !replyLoading && (
+        <div className="reply-target form-error" role="alert">
+          <span>Could not load the message you were replying to. Sending is paused.</span>
+          <button type="button" onClick={onRetryReply}>
+            Retry
+          </button>
+          <button
+            type="button"
+            title="Cancel reply"
+            aria-label="Cancel reply"
+            onClick={onCancelReply}
+          >
+            <X size={15} aria-hidden="true" />
+          </button>
+        </div>
+      )}
       {reply && (
         <div className="reply-target" role="status">
           <span>
@@ -180,7 +201,7 @@ export function ChatComposer({
         className="composer live-composer"
         onSubmit={(event) => {
           event.preventDefault();
-          if (sending || disabled || replyLoading || !body.trim()) return;
+          if (sending || disabled || replyBlocked || !body.trim()) return;
           if (gifCommand) {
             openGif();
             return;
@@ -227,7 +248,7 @@ export function ChatComposer({
         />
         <EmojiPicker
           compact
-          disabled={disabled || replyLoading}
+          disabled={disabled || replyBlocked}
           onSelect={(emoji) => insert(emoji)}
         />
         <button
@@ -235,7 +256,7 @@ export function ChatComposer({
           className="composer-gif"
           aria-label="Search GIFs"
           title="Search GIFs · /gif"
-          disabled={disabled || replyLoading}
+          disabled={disabled || replyBlocked}
           aria-expanded={gifOpen}
           onClick={() => (gifOpen ? closeGif() : openGif())}
         >
@@ -246,7 +267,7 @@ export function ChatComposer({
           className="composer-send"
           aria-label="Send message"
           title={sending ? 'Saving…' : retrying ? 'Retry send' : 'Send message'}
-          disabled={disabled || sending || replyLoading || !body.trim()}
+          disabled={disabled || sending || replyBlocked || !body.trim()}
         >
           <SendHorizontal size={19} aria-hidden="true" />
         </button>

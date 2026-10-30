@@ -873,6 +873,99 @@ try {
     )
   ).rows[0];
   assert.deepEqual(nestedReply, { reply_to_id: replyId, thread_root_id: rootMessage });
+  async function revisitChannel() {
+    await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+    await wait("document.querySelector('.channel-header strong')?.textContent==='general'");
+    await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
+    await wait(
+      "document.querySelector('.channel-header strong')?.textContent==='Café 🎮 Club renamed'",
+    );
+  }
+  const rootLookup = origin + '/api/conversations/' + createdChannel + '/messages/' + rootMessage;
+  const replyBody = (
+    await fixture.database.pool.query('SELECT body FROM messages WHERE id=$1', [replyId])
+  ).rows[0].body;
+  // A delayed restoration of an older target must not replace a newly chosen one.
+  await messageAction(rootMessage, 'Reply');
+  await wait("!!document.querySelector('.reply-target')");
+  let heldRestoration: string | undefined;
+  cdpEvents.set('Fetch.requestPaused', (value) => {
+    if (value && typeof value === 'object' && 'requestId' in value)
+      heldRestoration = String(value.requestId);
+  });
+  await call('Fetch.enable', { patterns: [{ urlPattern: rootLookup, requestStage: 'Request' }] });
+  await revisitChannel();
+  await waitCondition(async () => heldRestoration !== undefined, 'reply restoration held');
+  await messageAction(replyId, 'Reply');
+  await wait(
+    `document.querySelector('.reply-target .truncate')?.textContent.includes(${JSON.stringify(replyBody)})`,
+  );
+  await call('Fetch.continueRequest', { requestId: heldRestoration });
+  await call('Fetch.disable');
+  cdpEvents.delete('Fetch.requestPaused');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(
+    await js(
+      `document.querySelector('.reply-target .truncate')?.textContent.includes(${JSON.stringify(replyBody)})`,
+    ),
+    true,
+    'A late restoration response must not replace the newly selected reply target',
+  );
+  await compose('Reply after late restoration');
+  assert.equal(
+    (
+      await fixture.database.pool.query(
+        'SELECT reply_to_id FROM messages WHERE conversation_id=$1 AND body=$2',
+        [createdChannel, 'Reply after late restoration'],
+      )
+    ).rows[0].reply_to_id,
+    replyId,
+    'Displayed and sent reply targets must match',
+  );
+  // A transient lookup failure keeps the target, pauses sending and recovers through Retry.
+  await messageAction(rootMessage, 'Reply');
+  await writeDraft('Keep this draft');
+  cdpEvents.set('Fetch.requestPaused', (value) => {
+    if (value && typeof value === 'object' && 'requestId' in value)
+      void call('Fetch.fulfillRequest', {
+        requestId: String(value.requestId),
+        responseCode: 503,
+        responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+        body: Buffer.from(JSON.stringify({ error: 'Temporarily unavailable' })).toString('base64'),
+      });
+  });
+  await call('Fetch.enable', { patterns: [{ urlPattern: rootLookup, requestStage: 'Request' }] });
+  await revisitChannel();
+  await wait("!!document.querySelector('.reply-target.form-error')");
+  assert.equal(
+    await js("document.querySelector('textarea[name=message]').value"),
+    'Keep this draft',
+  );
+  assert.equal(
+    await js(`document.querySelector('button[aria-label="Send message"]').disabled`),
+    true,
+    'Sending must pause while the reply target is unresolved',
+  );
+  await call('Fetch.disable');
+  cdpEvents.delete('Fetch.requestPaused');
+  await js(
+    "[...document.querySelectorAll('.reply-target.form-error button')].find(button=>button.textContent.trim()==='Retry').click()",
+  );
+  await wait(
+    "!!document.querySelector('.reply-target:not(.form-error)') && !document.querySelector('.reply-target.form-error')",
+  );
+  await js(`document.querySelector('button[aria-label="Send message"]').click()`);
+  await wait("document.querySelector('textarea[name=message]').value===''");
+  assert.equal(
+    (
+      await fixture.database.pool.query(
+        'SELECT reply_to_id FROM messages WHERE conversation_id=$1 AND body=$2',
+        [createdChannel, 'Keep this draft'],
+      )
+    ).rows[0].reply_to_id,
+    rootMessage,
+    'A retained reply target must survive a transient lookup failure',
+  );
   const beforeReactionHeight = await js<number>(
     `document.querySelector('${timelineMessage}').getBoundingClientRect().height`,
   );

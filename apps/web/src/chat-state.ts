@@ -33,6 +33,11 @@ export function isConversationAccessError(error: unknown) {
     (error.status === 401 || error.status === 403 || error.status === 404)
   );
 }
+export function isReplyTargetGone(error: unknown) {
+  return (
+    error instanceof Error && 'status' in error && (error.status === 403 || error.status === 404)
+  );
+}
 export class DraftStore extends Map<string, ChatDraft> {
   readonly mediaAttempts = new Map<string, SendAttempt>();
   private readonly listeners = new Map<string, Set<() => void>>();

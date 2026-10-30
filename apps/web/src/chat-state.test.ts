@@ -5,6 +5,7 @@ import {
   DraftStore,
   sendPayload,
   isConversationAccessError,
+  isReplyTargetGone,
   nearLatest,
   mentionSuggestions,
 } from './chat-state';
@@ -75,6 +76,13 @@ it('distinguishes lost access from transient failures before clearing private vi
   for (const status of [400, 409, 429, 500, 503])
     expect(isConversationAccessError(Object.assign(new Error('Retry'), { status }))).toBe(false);
   expect(isConversationAccessError(new TypeError('Network unavailable'))).toBe(false);
+});
+it('clears a retained reply target only when it is definitively unavailable', () => {
+  for (const status of [403, 404])
+    expect(isReplyTargetGone(Object.assign(new Error('Gone'), { status }))).toBe(true);
+  for (const status of [401, 408, 429, 500, 502, 503])
+    expect(isReplyTargetGone(Object.assign(new Error('Retry'), { status }))).toBe(false);
+  expect(isReplyTargetGone(new TypeError('Network unavailable'))).toBe(false);
 });
 it('rechecks actual geometry when media or viewport resizing moves latest content out of view', () => {
   expect(nearLatest({ scrollHeight: 1000, scrollTop: 500, clientHeight: 500 })).toBe(true);

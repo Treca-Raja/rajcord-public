@@ -27,3 +27,28 @@ it('keeps the input enabled during delivery and puts the emoji trigger inside th
   expect(form).toContain('aria-label="Send message"');
   expect(html).not.toContain('😀');
 });
+
+it('pauses sending and offers retry or cancel when a retained reply target could not load', () => {
+  const html = renderToStaticMarkup(
+    createElement(ChatComposer, {
+      body: 'Draft',
+      onChange: () => {},
+      onSend: () => {},
+      reply: null,
+      replyLoading: false,
+      replyFailed: true,
+      onRetryReply: () => {},
+      onCancelReply: () => {},
+      disabled: false,
+      sending: false,
+      retrying: false,
+      members: [],
+      userId: 'me',
+    }),
+  );
+  expect(html).toContain('role="alert"');
+  expect(html).toContain('Retry');
+  expect(html).toContain('aria-label="Cancel reply"');
+  expect(html.match(/<button[^>]*aria-label="Send message"[^>]*>/)?.[0]).toContain('disabled');
+  expect(html.match(/<button[^>]*aria-label="Search GIFs"[^>]*>/)?.[0]).toContain('disabled');
+});
