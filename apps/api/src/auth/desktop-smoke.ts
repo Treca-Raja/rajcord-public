@@ -154,9 +154,15 @@ try {
         clearInterval(replyPoll);
         clearTimeout(timer);
         void (async () => {
-          const report = JSON.parse(
-            await readFile(path.join(profile, 'smoke-' + stage + '.json'), 'utf8'),
-          );
+          if (code !== 0) throw new Error('Electron smoke failed: ' + output + ' ' + stderr);
+          const contents = await readFile(
+            path.join(profile, 'smoke-' + stage + '.json'),
+            'utf8',
+          ).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error;
+            throw new Error('Electron exited without its smoke report: ' + output + ' ' + stderr);
+          });
+          const report = JSON.parse(contents);
           if (code !== 0 || !report.passed)
             throw new Error('Electron smoke failed: ' + output + ' ' + stderr);
           passed.push(stage);
@@ -202,6 +208,8 @@ try {
             'voice joins muted',
             'microphone reaches LiveKit',
             'deafen control',
+            'application sound opt-in and real preview on selected speakers',
+            'deafen suppresses application sound preview',
             'manual voice leave',
           ]),
       'notification IPC rejects invalid payload',
