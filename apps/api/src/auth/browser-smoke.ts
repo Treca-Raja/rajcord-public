@@ -58,7 +58,7 @@ async function call<T = Record<string, unknown>>(
 async function js<T = unknown>(expression: string): Promise<T> {
   const result = await call<{ result: { value: T }; exceptionDetails?: unknown }>(
     'Runtime.evaluate',
-    { expression, returnByValue: true, awaitPromise: true },
+    { expression, returnByValue: true, awaitPromise: true, userGesture: true },
   );
   if (result.exceptionDetails) throw new Error('Browser evaluation failed.');
   return result.result.value;
@@ -69,7 +69,12 @@ async function wait(expression: string, deadlineMs = 15000) {
     if (await js(expression)) return;
     await delay(100);
   }
-  throw new Error('Browser UI assertion timed out: ' + expression);
+  throw new Error(
+    'Browser UI assertion timed out: ' +
+      expression +
+      '; sound status: ' +
+      (await js("document.querySelector('.sound-settings [role=status]')?.textContent ?? 'none'")),
+  );
 }
 async function click(label: string) {
   await js(
@@ -77,6 +82,11 @@ async function click(label: string) {
       JSON.stringify(label) +
       ");if(!b)throw new Error('Button missing');b.click();})()",
   );
+}
+async function reload() {
+  await js('window.__reloadMarker=true');
+  await call('Page.reload');
+  await wait("window.__reloadMarker!==true && document.readyState==='complete'");
 }
 async function fill(values: Record<string, string>) {
   await js(
@@ -116,6 +126,8 @@ try {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
+      '--use-fake-ui-for-media-stream',
+      '--use-fake-device-for-media-stream',
       '--remote-debugging-address=127.0.0.1',
       '--remote-debugging-port=0',
       '--user-data-dir=' + profile,
@@ -294,7 +306,7 @@ try {
   const messageSelector = '[data-message-id="' + original.id + '"]';
   const secureLinks = `(()=>{const body=document.querySelector('${messageSelector} .message-body');if(!body)return false;const links=[...body.querySelectorAll('a')];return links.length===2 && links[0].textContent==='https://github.com' && links[1].textContent==='Docs' && links.every(a=>a.target==='_blank' && a.rel==='noopener noreferrer' && a.title===a.href && /^https:/.test(a.href)) && !body.querySelector('img') && body.textContent.includes('[bad](javascript:alert(1))')})()`;
   await wait(secureLinks);
-  await call('Page.reload');
+  await reload();
   await wait(secureLinks);
   const reply = await app.inject({
     url: '/api/conversations/' + general + '/messages',
@@ -378,7 +390,7 @@ try {
   await wait(
     `document.querySelector('[data-conversation-id="${dm.id}"] .mention-badge')?.textContent==='@1'`,
   );
-  await call('Page.reload');
+  await reload();
   await wait("!!document.querySelector('[data-connection=connected]')");
   await wait(badge);
   await screenshot('unread-browser-badges.png');
@@ -411,6 +423,12 @@ try {
     constructor(title,options){this.title=title;this.options=options;window.notificationCalls.push(this)}
     close(){this.onclose?.()}
   }`);
+  await js(`window.soundCalls=[];window.nativeSoundPlay=HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play=async function(){
+      if(this.dataset.appSound && window.denySounds) throw new DOMException('Test playback denied','NotAllowedError');
+      await window.nativeSoundPlay.call(this);
+      if(this.dataset.appSound)window.soundCalls.push({kind:this.dataset.appSound,sink:this.sinkId,volume:this.volume,at:Date.now()});
+    }`);
   await click('Enable notifications');
   await wait(
     "document.querySelector('.notification-settings button')?.getAttribute('aria-pressed')==='true'",
@@ -424,6 +442,8 @@ try {
     payload: { body: 'Secret alert body @' + username, clientId: randomUUID() },
   });
   await wait('window.notificationCalls.length===1');
+  assert.equal(await js('window.soundCalls.length'), 0, 'Popup opt-in must not enable sound');
+  assert.equal(await js('window.notificationCalls[0].options.silent'), true);
   assert.equal(
     await js('window.notificationCalls[0].options.body'),
     'You were mentioned. Open Rajcord to read it.',
@@ -445,6 +465,115 @@ try {
   });
   await wait(badge);
   assert.equal(await js('window.notificationCalls.length'), 1);
+
+  await js("document.querySelector('.sound-settings').open=true");
+  await click('Enable sounds');
+  await click('Preview sound');
+  await wait("document.querySelector('.sound-settings').innerText.includes('Choose speakers')");
+  await js("document.querySelector('.voice-settings-toggle').click()");
+  await click('Find audio devices');
+  await wait('document.querySelector(\'select[aria-label="Voice speakers"]\').options.length>1');
+  await js(
+    `(()=>{const s=document.querySelector('select[aria-label="Voice speakers"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+  );
+  await click('Preview sound');
+  await wait('window.soundCalls.length===1');
+  assert.ok(await js('window.soundCalls[0].sink.length>0'));
+  await js(
+    `(()=>{const s=document.querySelector('input[aria-label="Application sound volume"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(s,'0.2');s.dispatchEvent(new Event('input',{bubbles:true}));s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+  );
+  await wait('Date.now()-window.soundCalls.at(-1).at>=300');
+  const soundMessageId = randomUUID();
+  for (let attempt = 0; attempt < 2; attempt++)
+    await app.inject({
+      url: '/api/conversations/' + dm.id + '/messages',
+      method: 'POST',
+      headers: ownerHeaders,
+      payload: { body: 'Sound-only alert', clientId: soundMessageId },
+    });
+  await wait('window.soundCalls.length===2');
+  assert.equal(await js('window.soundCalls[1].volume'), 0.2);
+  assert.equal(
+    await js('window.notificationCalls.length'),
+    1,
+    'Sound-only alerts must not enable popups',
+  );
+  await js(`document.querySelector('[data-conversation-id="${dm.id}"]').click()`);
+  await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
+  await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Focused sound suppression', clientId: randomUUID() },
+  });
+  await wait(
+    "document.querySelector('.message-scroll').innerText.includes('Focused sound suppression')",
+  );
+  assert.equal(await js('window.soundCalls.length'), 2);
+  await js(
+    `document.querySelector('[data-conversation-id="${general}"]').click();window.denySounds=true`,
+  );
+  await wait('Date.now()-window.soundCalls.at(-1).at>=300');
+  await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Denied sound', clientId: randomUUID() },
+  });
+  await wait(
+    "document.querySelector('.sound-settings').innerText.includes('Sound playback blocked')",
+  );
+  await js('window.denySounds=false');
+  await click('Preview sound');
+  await wait('window.soundCalls.length===3');
+  await click('Disable sounds');
+  await wait("!document.querySelector('audio[data-app-sound]')");
+  const unreadBeforeDisabledSound = await js<number>(
+    `Number(document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent || '0')`,
+  );
+  await app.inject({
+    url: '/api/conversations/' + dm.id + '/messages',
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { body: 'Disabled sound', clientId: randomUUID() },
+  });
+  await wait(
+    `Number(document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent || '0')===${unreadBeforeDisabledSound + 1}`,
+  );
+  assert.equal(await js('window.soundCalls.length'), 3);
+  await reload();
+  await wait("!!document.querySelector('[data-connection=connected]')");
+  await wait(
+    "document.querySelector('.sound-settings button')?.textContent.trim()==='Enable sounds'",
+  );
+  assert.equal(
+    await js('document.querySelector(\'input[aria-label="Application sound volume"]\').value'),
+    '0.2',
+  );
+  assert.equal(await js("!!document.querySelector('audio[data-app-sound]')"), false);
+  await js("document.querySelector('.sound-settings summary').focus()");
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Enter',
+    code: 'Enter',
+    windowsVirtualKeyCode: 13,
+    text: '\r',
+    unmodifiedText: '\r',
+  });
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Enter',
+    code: 'Enter',
+    windowsVirtualKeyCode: 13,
+  });
+  await wait("document.querySelector('.sound-settings').open");
+  assert.equal(
+    await js(
+      "document.querySelector('.sidebar').scrollWidth<=document.querySelector('.sidebar').clientWidth",
+    ),
+    true,
+  );
+  await screenshot('sounds-browser-controls.png');
 
   // Reading older messages must neither jump to the bottom nor acknowledge newly arrived text.
   for (let i = 0; i < 6; i++)
@@ -543,8 +672,10 @@ try {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await call('Page.reload');
-  await wait("!!document.querySelector('textarea[name=message]')");
+  await reload();
+  await wait(
+    "[...document.querySelectorAll('.channels button')].some(b=>b.innerText.includes('Browser invitation group'))",
+  );
   await js(
     "(()=>{[...document.querySelectorAll('.channels button')].find(b=>b.innerText.includes('Browser invitation group')).click();})()",
   );
@@ -576,6 +707,13 @@ try {
           'notification opt-in and privacy-safe body (OS adapter mocked)',
           'notification click opens conversation',
           'disabled notifications stay silent',
+          'application sounds off by default and independent of popups',
+          'exact selected sound sink and preview',
+          'sound volume and idempotent message delivery',
+          'focused conversation sound suppression',
+          'denied sound playback and explicit recovery',
+          'sound preferences survive reload without autoplay',
+          'sound controls keyboard access and sidebar layout',
           'reading history keeps new messages unread until jump to latest',
         ],
       },
@@ -601,7 +739,7 @@ try {
     'approved',
   );
   await js('document.querySelector(\'button[aria-label="Close settings"]\').click()');
-  await call('Page.reload');
+  await reload();
   await wait("!!document.querySelector('[data-connection=connected]')");
   // Actual revocation is sent over the live account socket, removing the private UI.
   const suspended = await app.inject({
@@ -646,7 +784,7 @@ try {
     ),
   );
   console.log(
-    'PASS: Browser authentication (11 checks), messaging/unread/notification (20 checks), and live multi-connection presence, scoped views, drawer keyboard/focus and covered-chat unread regressions in headless Microsoft Edge.',
+    'PASS: Browser authentication (11 checks) and messaging/unread/notification/sound (27 checks) in headless Microsoft Edge.',
   );
 } finally {
   for (const peer of presencePeers) peer.disconnect();

@@ -1,6 +1,7 @@
 import { MemberPanel } from './MemberPanel';
 import { usePresence } from './use-presence';
 import { Notifications } from './Notifications';
+import { ApplicationSounds, SoundControls } from './ApplicationSounds';
 import { MessageBody } from './MessageBody';
 import { mentionsUser } from '@tricord/shared';
 import { VoicePanel } from './VoicePanel';
@@ -35,8 +36,16 @@ import './chat.css';
 export function App() {
   return (
     <AuthRoot>
-      <Community />
+      <SoundSession />
     </AuthRoot>
+  );
+}
+function SoundSession() {
+  const { state } = useAuth();
+  return (
+    <ApplicationSounds key={state.user.id} userId={state.user.id}>
+      <Community />
+    </ApplicationSounds>
   );
 }
 function Community() {
@@ -319,6 +328,7 @@ function Community() {
           </div>
         )}
         <Notifications key={state.user.id} selected={selected} onOpen={choose} />
+        <SoundControls />
         <VoicePanel />
         <div className="grow" />
         <div className="profile">

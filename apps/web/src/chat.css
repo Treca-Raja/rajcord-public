@@ -388,3 +388,34 @@
   font-size: 10px;
   line-height: 1.5;
 }
+.sound-settings {
+  margin: 0 18px 12px;
+  font-size: 12px;
+  color: #c3dba4;
+}
+.sound-settings summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.sound-settings button {
+  display: block;
+  color: #b9d5f1;
+  padding: 6px 0;
+}
+.sound-settings button:disabled {
+  opacity: 0.5;
+}
+.sound-settings label {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0;
+}
+.sound-settings input {
+  width: 100%;
+  accent-color: #bddf91;
+}
+.sound-settings small {
+  display: block;
+  color: #9ca8b8;
+  line-height: 1.5;
+}
