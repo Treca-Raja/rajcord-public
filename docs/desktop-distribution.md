@@ -56,7 +56,7 @@ Version-specific sources: [v26 Windows verification API](https://www.electron.bu
 
 ## Authorized release process
 
-`.github/workflows/desktop.yml` builds unsigned review artifacts on PRs, pushes to `develop`/`main`, and manual runs. Feature work follows `feature/*` → `develop` → `main`; desktop release publication remains restricted to explicitly authorized dispatches on `main`. Those review artifacts have a seven-day retention and are not published Releases. The existing Linux Verify workflow still owns the database/server checks. The new workflow does not deploy production.
+`.github/workflows/desktop.yml` builds unsigned review artifacts on pushes to `develop`/`main`, manual runs, and PRs that change desktop-relevant paths (the PR run skips the format, lint, type and unit steps already covered by `CI`). Feature work follows `feature/*` → `develop` → `main`; desktop release publication remains restricted to explicitly authorized dispatches on `main`. Those review artifacts have a seven-day retention and are not published Releases. The Linux `CI` workflow (and `Verify` on `main`) still owns the database/server checks. The new workflow does not deploy production.
 
 Before the first release, an authorized repository administrator must create `desktop-release` with a required maintainer reviewer, administrator bypass disabled, and a selected-branch policy allowing exactly `main`. The workflow checks those settings before entering the environment and again after approval. This change does not create or modify remote environments or secrets.
 
