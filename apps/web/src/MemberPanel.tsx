@@ -227,7 +227,7 @@ export function MemberPanel({
           </p>
         </div>
         <div className="version">
-          RAJCORD <span>Voice & text</span>
+          RAJCORD <span>Good company.</span>
         </div>
       </aside>
     </>
