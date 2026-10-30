@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { MessageNotice } from '@tricord/shared';
 import { useAuth } from './Auth';
 import { shouldNotify, notificationBody } from './notification-policy';
+import { useApplicationSounds } from './ApplicationSounds';
 export function Notifications({
   selected,
   onOpen,
@@ -10,6 +11,7 @@ export function Notifications({
   onOpen: (id: string) => void;
 }) {
   const { state, socket } = useAuth();
+  const { player } = useApplicationSounds();
   const preference = 'tricord-notifications:' + state.user.id;
   const [enabled, setEnabled] = useState(() => {
     try {
@@ -30,11 +32,9 @@ export function Notifications({
       seen.current.add(notice.messageId);
       if (seen.current.size > 500) seen.current.delete(seen.current.values().next().value!);
       const focused = document.visibilityState === 'visible' && document.hasFocus();
-      if (
-        !current.current.enabled ||
-        !shouldNotify(notice, state.user.id, current.current.selected, focused)
-      )
-        return;
+      if (!shouldNotify(notice, state.user.id, current.current.selected, focused)) return;
+      void player.play('message');
+      if (!current.current.enabled) return;
       if (window.tricordDesktop) {
         void window.tricordDesktop
           .notify({ conversationId: notice.conversationId, mention: notice.mention })
@@ -48,6 +48,7 @@ export function Notifications({
           const notification = new Notification('Rajcord', {
             body: notificationBody(notice.mention),
             tag: 'tricord:' + notice.conversationId,
+            silent: true,
           });
           notifications.add(notification);
           notification.onclose = () => notifications.delete(notification);
@@ -67,7 +68,7 @@ export function Notifications({
       remove?.();
       for (const item of notifications) item.close();
     };
-  }, [socket, state.user.id]);
+  }, [socket, state.user.id, player]);
   async function toggle() {
     setError('');
     let next = !enabled;
