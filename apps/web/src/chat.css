@@ -1,3 +1,9 @@
+@font-face {
+  font-family: 'Rajcord Composer Emoji';
+  src: url('./assets/composer-emoji.woff2') format('woff2');
+  font-display: swap;
+}
+
 .live-shell .sidebar {
   overflow-y: auto;
   min-height: 0;
@@ -616,6 +622,8 @@
   padding: 10px 12px;
   resize: none;
   font-size: 14px;
+  /* Text fonts keep ordinary digits visible; the emoji font supplies joined color glyphs. */
+  font-family: 'Inter Variable', 'Segoe UI', 'Rajcord Composer Emoji', sans-serif;
   line-height: 24px;
 }
 .composer.live-composer textarea:focus-visible {
