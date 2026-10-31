@@ -111,6 +111,8 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     setLiveSocket(socket);
     socket.on('connect', () => {
       socket.emit('connection:ping', (value: { ok: boolean }) => setConnected(value.ok));
+      // Account changes can occur before the socket joins its notification room.
+      void refresh();
     });
     socket.on('account:changed', () => {
       void refresh();
