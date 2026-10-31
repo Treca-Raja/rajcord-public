@@ -113,6 +113,15 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       true,
     );
     await wait("!!document.querySelector('textarea[name=message]')");
+    assert.equal(
+      await js(`(async()=>{
+        const input=document.querySelector('textarea[name=message]');
+        const family=getComputedStyle(input).fontFamily;
+        const fonts=await document.fonts.load('14px "Rajcord Composer Emoji"','👩🏽‍💻 🇭🇷 🍉');
+        return family.includes('Rajcord Composer Emoji')&&fonts.length===1&&fonts[0].status==='loaded';
+      })()`),
+      true,
+    );
     await js(
       "(()=>{const input=document.querySelector('textarea[name=message]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Electron says hello https://example.com/desktop [Docs](https://example.com/docs)');input.dispatchEvent(new Event('input',{bubbles:true}));})()",
     );
