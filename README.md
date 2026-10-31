@@ -1,6 +1,6 @@
 # Tricord
 
-Active public repository: [fakebane/tricord-public](https://github.com/fakebane/tricord-public).
+This checkout's repository: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public).
 
 Milestone 2C adds local community voice channels to the authenticated React/Electron application, alongside persistent shared text channels, private DMs and group DMs. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
 
@@ -247,8 +247,12 @@ This is ten real software clients on one Windows host using loopback networking,
 
 See [hosting preparation](docs/hosting.md) for the tested server image, automated GitHub checks, HTTPS desktop configuration and remaining deployment steps. Local development commands remain unchanged.
 
+The [Verify workflow](.github/workflows/verify.yml) runs Linux integration/image checks and Windows unit tests/builds in parallel. Linux also exercises browser authentication, chat, unread progress and notifications with headless Edge. The required `verify` check succeeds only when both jobs pass. Windows CI builds Electron code but does not launch its GUI or certify native notifications, audio devices or WAN voice.
+
+Eligible `main` runs publish the exact tested image to `ghcr.io/treca-raja/rajcord-public` and deploy its digest only after production approval. Keep `HOSTING_ENABLED` unset or `false` until this repository's GitHub environment, deployment credentials, registry access and server are verified. Settings and server-readiness notes from the predecessor repository do not establish those prerequisites for this checkout. The deployment guide lists every variable and secret; credentials never belong in workflow YAML.
+
 The [production deployment runbook](docs/deployment.md) describes the prepared CI/CD pipeline, production approval, certificate renewal and encrypted off-server backup/restore jobs. CI uses disposable test environments; a permanent staging server is not required. Delivery stays disabled until the production host and GitHub environment are configured and `HOSTING_ENABLED=true` is set. Verify the hosted stack locally with `pnpm test:hosting` after `pnpm server:build`. Generate server-only configuration with `pnpm hosting:init production PUBLIC_IPV4 ABSOLUTE_DIRECTORY rajcord.com turn.rajcord.com`; omitting the last two arguments retains IP-only TLS. Domain DNS, public certificate issuance and renewal rehearsal have been verified; deployed service reloads and WAN voice still need live validation.
 
-For the Linux VPS, the reviewed host helpers under `scripts/hosting/` prepare Docker/firewall rules, key-only SSH and a separate CI deployment account. `initialize-runtime.sh` generates server-only configuration using the pinned Node container, so host Node installation is optional. The existing VPS now has these foundations and issued public certificates; the encrypted R2 repository is initialized and its storage round trip is verified. The application, live database backup/recovery and active release maintenance jobs remain pending. See the dated verification record before treating a prepared component as live.
+For the Linux VPS, the reviewed host helpers under `scripts/hosting/` prepare Docker/firewall rules, key-only SSH and a separate CI deployment account. `initialize-runtime.sh` generates server-only configuration using the pinned Node container, so host Node installation is optional. Historical preparation on 2026-10-27 for the predecessor repository verified those foundations, issued certificates and an initialized encrypted R2 repository. Application deployment, live database recovery and active release maintenance jobs remained pending. Recheck the intended host and this repository's access; see the dated verification record before treating a prepared component as live.
 
 For first-release image preparation, `gh workflow run verify.yml --ref main -f publish_only=true` tests and publishes the current-main image without entering production policy/approval/deployment jobs. Keep `HOSTING_ENABLED=false` while configuring GHCR image access. The normal workflow's publication and approval-gated deployment behavior is unchanged when this manual input is false.
