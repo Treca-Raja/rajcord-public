@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -10,18 +10,24 @@ import { testDatabase } from '../db/test-database.js';
 import { AuthService } from './service.js';
 import { createApp } from '../app.js';
 import { voiceConfig } from '../voice/config.js';
+import { waitForBrowserPort } from './browser-startup.js';
 const origin = 'http://127.0.0.1:3003';
 const fixture = await testDatabase(),
   service = new AuthService(fixture.database.pool);
 const config = voiceConfig();
 if (!config) throw new Error('Run voice:setup and voice:up.');
-const app = createApp({
+const { app, io } = createApp({
   voiceConfig: { ...config, prefix: 'tricord-browser-smoke-' + randomUUID() + '-' },
   databaseUrl: fixture.url,
   allowedOrigins: [origin],
   rateLimits: false,
   staticRoot: fileURLToPath(new URL('../../../web/dist', import.meta.url)),
-}).app;
+});
+// Smoke-only gate for account changes that occur before notification subscription.
+let holdSocketConnections = false;
+io.use((_socket, next) =>
+  next(holdSocketConnections ? new Error('Authentication unavailable.') : undefined),
+);
 const profile = await mkdtemp(path.join(tmpdir(), 'tricord-browser-smoke-'));
 const artifacts = fileURLToPath(new URL('../../../../artifacts/', import.meta.url));
 await mkdir(artifacts, { recursive: true });
@@ -118,23 +124,9 @@ try {
       '--user-data-dir=' + profile,
       'about:blank',
     ],
-    { windowsHide: true, stdio: 'ignore' },
+    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] },
   );
-  let launchError: Error | undefined;
-  child.on('error', (error) => {
-    launchError = error;
-  });
-  let port = '';
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (launchError) throw launchError;
-    try {
-      port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]!;
-      break;
-    } catch {
-      await delay(100);
-    }
-  }
-  assert.match(port, /^\d+$/);
+  const port = await waitForBrowserPort(child, profile);
   const pages = (await (await fetch('http://127.0.0.1:' + port + '/json/list')).json()) as {
     type: string;
     webSocketDebuggerUrl: string;
@@ -516,6 +508,32 @@ try {
   });
   await screenshot('auth-browser-mobile.png');
   assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+
+  // Force approval before any socket can receive account:changed. Connecting must resync.
+  holdSocketConnections = true;
+  const delayed = await service.register({
+    username: 'delayed_' + randomUUID().replaceAll('-', '').slice(0, 20),
+    displayName: 'Delayed approval member',
+    password: secret,
+  });
+  await fill({ username: delayed.username, password: secret });
+  await js("document.querySelector('form').requestSubmit()");
+  await wait("!!document.querySelector('[data-account-status=pending]')");
+  assert.equal(await js("fetch('/api/members').then(r=>r.status)"), 403);
+  assert.equal(io.sockets.sockets.size, 0);
+  const delayedApproval = await app.inject({
+    url: '/api/admin/accounts/' + delayed.id,
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { action: 'approve' },
+  });
+  assert.equal(delayedApproval.statusCode, 200);
+  assert.equal(io.sockets.sockets.size, 0);
+  assert.equal(await js("!!document.querySelector('[data-account-status=pending]')"), true);
+  holdSocketConnections = false;
+  await wait("!!document.querySelector('[data-connection=connected]')");
+  assert.equal(await js("fetch('/api/members').then(r=>r.status)"), 200);
+
   await writeFile(
     path.join(artifacts, 'auth-browser.json'),
     JSON.stringify(
@@ -533,6 +551,7 @@ try {
           'reload restores session',
           'suspension removes private UI',
           'mobile layout',
+          'approval before socket subscription recovers on connect',
         ],
         profile,
       },
@@ -541,7 +560,7 @@ try {
     ),
   );
   console.log(
-    'PASS: Browser authentication (11 checks) and messaging/unread/notification (19 checks) in headless Microsoft Edge.',
+    'PASS: Browser authentication (12 checks) and messaging/unread/notification (19 checks) in the configured headless Chromium browser.',
   );
 } finally {
   if (ws?.readyState === WebSocket.OPEN) {

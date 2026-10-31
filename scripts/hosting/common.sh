@@ -5,7 +5,7 @@ umask 077
 
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 validate_environment() { [[ ${1:-} == staging || ${1:-} == production ]] || fail 'Use staging or production.'; }
-validate_image() { [[ ${1:-} =~ ^ghcr\.io/fakebane/tricord-public@sha256:[0-9a-f]{64}$ ]] || fail 'Use the tested GHCR image by sha256 digest.'; }
+validate_image() { [[ ${1:-} =~ ^ghcr\.io/treca-raja/rajcord-public@sha256:[0-9a-f]{64}$ ]] || fail 'Use the tested GHCR image by sha256 digest.'; }
 validate_commit() { [[ ${1:-} =~ ^[0-9a-f]{40}$ ]] || fail 'Use a full commit SHA.'; }
 
 initialize_host() {
@@ -35,7 +35,7 @@ initialize_host() {
     TRICORD_IMAGE=$(cat "$TRICORD_CONFIG_DIR/image")
   fi
   # Bootstrap and first backup need interpolation before the first release exists.
-  TRICORD_IMAGE=${TRICORD_IMAGE:-ghcr.io/fakebane/tricord-public@sha256:0000000000000000000000000000000000000000000000000000000000000000}
+  TRICORD_IMAGE=${TRICORD_IMAGE:-ghcr.io/treca-raja/rajcord-public@sha256:0000000000000000000000000000000000000000000000000000000000000000}
   validate_image "$TRICORD_IMAGE"
 }
 

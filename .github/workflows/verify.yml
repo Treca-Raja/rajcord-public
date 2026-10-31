@@ -15,7 +15,8 @@ concurrency:
   # Never cancel a running main deployment or a job waiting for approval.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  verify:
+  linux:
+    name: Linux integration and image checks
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
@@ -46,6 +47,13 @@ jobs:
       - run: pnpm db:migrate
       - run: pnpm test:db
       - run: pnpm build
+      - name: Verify browser authentication, chat and notifications
+        run: |
+          # Ubuntu permits Chrome stable's sandbox through its AppArmor profile.
+          TRICORD_BROWSER_PATH="$(command -v google-chrome)"
+          export TRICORD_BROWSER_PATH
+          test -x "$TRICORD_BROWSER_PATH"
+          pnpm --filter @tricord/api test:browser
       - name: Build deployable server image
         run: docker build --label org.opencontainers.image.revision="$GITHUB_SHA" -f infrastructure/server/Dockerfile -t tricord-ci .
       - name: Verify image and backup restore
@@ -71,6 +79,41 @@ jobs:
         run: |
           if test -f infrastructure/.env.voice; then pnpm voice:down; fi
           if test -f infrastructure/.env; then pnpm db:down; fi
+
+  windows:
+    name: Windows unit tests and build
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm.cmd install --frozen-lockfile
+      - run: pnpm.cmd typecheck
+      - run: pnpm.cmd test
+      - run: pnpm.cmd build
+
+  # Keep one required status check named verify for branch protection.
+  verify:
+    needs: [linux, windows]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require successful Linux and Windows checks
+        env:
+          LINUX_RESULT: ${{ needs.linux.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+        run: |
+          printf 'Linux integration and image checks: %s\nWindows unit tests and build: %s\n' "$LINUX_RESULT" "$WINDOWS_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          test "$LINUX_RESULT" = success
+          test "$WINDOWS_RESULT" = success
 
   publish:
     needs: verify
@@ -108,12 +151,13 @@ jobs:
           test "$(docker inspect tricord-ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           trap 'docker logout ghcr.io' EXIT
-          tag="ghcr.io/fakebane/tricord-public:$GITHUB_SHA"
+          tag="ghcr.io/treca-raja/rajcord-public:$GITHUB_SHA"
           docker tag tricord-ci "$tag"
           docker push "$tag"
           image=$(docker inspect "$tag" --format '{{index .RepoDigests 0}}')
           TRICORD_IMAGE="$image" node scripts/ci/policy.mjs main
           printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+          printf 'Published commit: %s\n\nTested image: %s\n' "$GITHUB_SHA" "$image" >> "$GITHUB_STEP_SUMMARY"
 
   production-policy:
     needs: publish
@@ -163,3 +207,8 @@ jobs:
           DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      - name: Record successful deployment
+        env:
+          TRICORD_IMAGE: ${{ needs.publish.outputs.image }}
+        run: |
+          printf 'Production deployment passed readiness checks.\n\nCommit: %s\n\nImage: %s\n' "$GITHUB_SHA" "$TRICORD_IMAGE" >> "$GITHUB_STEP_SUMMARY"
