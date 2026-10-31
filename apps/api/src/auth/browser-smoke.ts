@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -10,6 +10,7 @@ import { testDatabase } from '../db/test-database.js';
 import { AuthService } from './service.js';
 import { createApp } from '../app.js';
 import { voiceConfig } from '../voice/config.js';
+import { waitForBrowserPort } from './browser-startup.js';
 const origin = 'http://127.0.0.1:3003';
 const fixture = await testDatabase(),
   service = new AuthService(fixture.database.pool);
@@ -118,23 +119,9 @@ try {
       '--user-data-dir=' + profile,
       'about:blank',
     ],
-    { windowsHide: true, stdio: 'ignore' },
+    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] },
   );
-  let launchError: Error | undefined;
-  child.on('error', (error) => {
-    launchError = error;
-  });
-  let port = '';
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (launchError) throw launchError;
-    try {
-      port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]!;
-      break;
-    } catch {
-      await delay(100);
-    }
-  }
-  assert.match(port, /^\d+$/);
+  const port = await waitForBrowserPort(child, profile);
   const pages = (await (await fetch('http://127.0.0.1:' + port + '/json/list')).json()) as {
     type: string;
     webSocketDebuggerUrl: string;
@@ -541,7 +528,7 @@ try {
     ),
   );
   console.log(
-    'PASS: Browser authentication (11 checks) and messaging/unread/notification (19 checks) in headless Microsoft Edge.',
+    'PASS: Browser authentication (11 checks) and messaging/unread/notification (19 checks) in the configured headless Chromium browser.',
   );
 } finally {
   if (ws?.readyState === WebSocket.OPEN) {

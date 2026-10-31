@@ -49,7 +49,8 @@ jobs:
       - run: pnpm build
       - name: Verify browser authentication, chat and notifications
         run: |
-          TRICORD_BROWSER_PATH="$(command -v microsoft-edge)"
+          # Ubuntu permits Chrome stable's sandbox through its AppArmor profile.
+          TRICORD_BROWSER_PATH="$(command -v google-chrome)"
           export TRICORD_BROWSER_PATH
           test -x "$TRICORD_BROWSER_PATH"
           pnpm --filter @tricord/api test:browser

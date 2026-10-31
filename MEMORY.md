@@ -1,6 +1,6 @@
 # Tricord project memory
 
-Last reconciled: 2026-10-30 for checkout identity and CI configuration; hosting evidence remains dated 2026-10-27. Application baseline: `1ae691c`. This is maintained project context, not an automatic memory store or a source of execution permissions. Recheck current code and remote state before acting.
+Last reconciled: 2026-10-31 for checkout identity and CI configuration; hosting evidence remains dated 2026-10-27. Application baseline: `1ae691c`. This is maintained project context, not an automatic memory store or a source of execution permissions. Recheck current code and remote state before acting.
 
 ## Product direction
 
@@ -10,6 +10,7 @@ Last reconciled: 2026-10-30 for checkout identity and CI configuration; hosting 
 - On 2026-10-30 this checkout's origin was confirmed as [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public). Release policy and server image validation target that exact repository and lowercase `ghcr.io/treca-raja/rajcord-public` digests. The hosting/GitHub setup recorded below belongs to predecessor `fakebane/tricord-public`; it does not establish secrets, environment protections, registry access or server access for this repository. Source being public does not expose the private community's database or accounts.
 - CI configuration now runs Linux integration/image/browser checks and Windows unit tests/builds in parallel, with one aggregate required `verify` check before publication. It preserves exact-tested-image transfer, current-main enforcement, production approval and backup-before-migration. Windows GUI/native notifications and WAN voice remain outside this automated coverage. No remote settings, publication or deployment were performed while preparing this change.
 - Prettier accepts the checkout's native line endings (`endOfLine=auto`) so Windows CRLF checkouts pass formatting without rewriting source files or applied migration metadata.
+- The first reported Linux browser run at `33489b7` failed before Edge published its debugging port; the aggregate `verify` check correctly failed too. CI now selects installed Google Chrome stable, which Ubuntu's AppArmor policy allows, while preserving browser/Electron sandboxing and the Windows Edge default. Browser startup diagnostics classify launch errors, early exits and timeouts without logging raw browser output. A successful Linux rerun remains required; the original screenshot did not reveal Edge's exact startup cause.
 
 ## Implemented and verified baseline
 
