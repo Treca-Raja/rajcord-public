@@ -49,7 +49,7 @@ beforeEach(() => {
     else if (endpoint === 'environments/desktop-release') response = environment;
     else if (endpoint === 'environments/desktop-release/deployment-branch-policies?per_page=100')
       response = branches;
-    else if (endpoint === `actions/workflows/verify.yml/runs?head_sha=${sha}&per_page=100`)
+    else if (endpoint === `actions/workflows/delivery.yml/runs?head_sha=${sha}&per_page=100`)
       response = runs;
     else throw new Error('Unexpected policy API request.');
     return new Response(JSON.stringify(response));
@@ -138,6 +138,6 @@ it.each([
   async (value) => {
     const valid = (runs.workflow_runs as Record<string, unknown>[])[0];
     runs.workflow_runs = [{ ...valid, ...value }];
-    await expect(check()).rejects.toThrow('full Verify workflow');
+    await expect(check()).rejects.toThrow('full Delivery workflow');
   },
 );

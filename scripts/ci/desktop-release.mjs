@@ -40,7 +40,7 @@ assert.equal(branches.total_count, 1);
 assert.equal(branches.branch_policies?.[0]?.name, 'main');
 assert.equal(branches.branch_policies?.[0]?.type, 'branch');
 const runs = await request(
-  `actions/workflows/verify.yml/runs?head_sha=${process.env.GITHUB_SHA}&per_page=100`,
+  `actions/workflows/delivery.yml/runs?head_sha=${process.env.GITHUB_SHA}&per_page=100`,
 );
 assert.ok(
   runs.workflow_runs.some(
@@ -51,6 +51,6 @@ assert.ok(
       run.event === 'push' &&
       run.conclusion === 'success',
   ),
-  'The exact main commit must have passed the full Verify workflow first.',
+  'The exact main commit must have passed the full Delivery workflow first.',
 );
 console.log('Desktop draft release policy passed.');

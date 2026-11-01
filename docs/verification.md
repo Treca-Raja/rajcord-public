@@ -1,3 +1,11 @@
+# Separate main-branch delivery — 2026-11-01
+
+Prepared `feature/ci-cd-delivery` from `develop` at `a030be8`. `verify.yml` retains the single Linux verification job and can be called by the new `delivery.yml`. Non-main pushes and PRs verify without publication; every main push runs verification through Delivery, including when hosting is disabled. Enabled main pushes publish the exact same-run tested image and retain current-main checks, immutable digests, production approval and backup-before-migration. Manual Delivery dispatches verify only unless `publish_only=true`, which permits publication but never production deployment. The existing separate Windows desktop workflow is unchanged.
+
+Local Node 26.13.0 verification: **38 focused tests in four files passed**, covering PR routing, server release policy, desktop release provenance and eight new workflow regressions. The new cases exercise main-only triggers, disabled-hosting verification, artifact ordering, same-run downloads, manual dispatch isolation, approvals and deployment serialization. Affected ESLint, strict TypeScript for the new regression file (including `noUncheckedIndexedAccess`), changed-file Prettier, 27 relative documentation links and whitespace checks passed. Actionlint 1.7.12 with ShellCheck 0.11.0 validated all three workflows.
+
+Docker and local database/media configuration remain unavailable in this checkout, so database, image and hosted-stack suites were not run locally. Their existing commands remain in CI; this change does not alter image contents or operator scripts. First execution of Delivery on main, GHCR/VPS access and real deployment remain unverified. The reviewer-linked Trello ticket requires authentication, so its full acceptance criteria and status were not verified or changed. No workflow dispatch, merge, production setting change or deployment was performed.
+
 # Reply-target restoration review fixes — 2026-10-30
 
 Two review findings on #19 were reproduced and fixed. Choosing a new reply target now invalidates any pending restoration of an older one, so the displayed target and the sent `replyToId` cannot diverge. A restoration failure clears the retained target only for HTTP 403/404; network errors and 5xx keep it, pause sending and show Retry and Cancel reply.
