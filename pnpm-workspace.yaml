@@ -8,5 +8,6 @@ allowBuilds:
   esbuild: true
 
 overrides:
+  '@fastify/static@10>glob': '14.0.2' # Patch glob cancellation and its minimatch amplification dependency.
   'electron-updater@6.8.11>js-yaml': '4.3.2' # Patch YAML parser advisories without changing updater APIs.
   'drizzle-kit@0.31.11>@esbuild-kit/esm-loader': '-'
