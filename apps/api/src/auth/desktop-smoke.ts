@@ -11,6 +11,7 @@ import { testDatabase } from '../db/test-database.js';
 import { AuthService } from './service.js';
 import { createApp } from '../app.js';
 const origin = 'http://127.0.0.1:3002';
+const chatOnly = process.argv.includes('--chat-only');
 const fixture = await testDatabase(),
   service = new AuthService(fixture.database.pool);
 const config = voiceConfig();
@@ -53,7 +54,8 @@ try {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TRICORD_TEST_PROFILE: profile,
-      TRICORD_VOICE_SMOKE: '1',
+      TRICORD_VOICE_SMOKE: chatOnly ? '0' : '1',
+      TRICORD_CHAT_SMOKE_ONLY: chatOnly ? '1' : '0',
       TRICORD_SMOKE_INPUT: JSON.stringify({ stage, username, password: secret }),
     };
     delete env.ELECTRON_RUN_AS_NODE;
@@ -70,7 +72,7 @@ try {
           void (async () => {
             const row = (
               await fixture.database.pool.query(
-                "SELECT m.conversation_id FROM messages m JOIN users u ON u.id=m.author_id WHERE u.username=$1 AND m.body='Electron says hello'",
+                "SELECT m.conversation_id FROM messages m JOIN users u ON u.id=m.author_id WHERE u.username=$1 AND m.body LIKE 'Electron says hello%'",
                 [username],
               )
             ).rows[0];
@@ -80,7 +82,10 @@ try {
               url: '/api/conversations/' + row.conversation_id + '/messages',
               method: 'POST',
               headers: { origin, cookie, 'x-csrf-token': csrf },
-              payload: { body: 'Reply to Electron', clientId: randomUUID() },
+              payload: {
+                body: 'Reply to Electron https://example.com/reply',
+                clientId: randomUUID(),
+              },
             });
             assert.equal(result.statusCode, 200);
           })().catch((error) => {
@@ -149,9 +154,15 @@ try {
         clearInterval(replyPoll);
         clearTimeout(timer);
         void (async () => {
-          const report = JSON.parse(
-            await readFile(path.join(profile, 'smoke-' + stage + '.json'), 'utf8'),
-          );
+          if (code !== 0) throw new Error('Electron smoke failed: ' + output + ' ' + stderr);
+          const contents = await readFile(
+            path.join(profile, 'smoke-' + stage + '.json'),
+            'utf8',
+          ).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error;
+            throw new Error('Electron exited without its smoke report: ' + output + ' ' + stderr);
+          });
+          const report = JSON.parse(contents);
           if (code !== 0 || !report.passed)
             throw new Error('Electron smoke failed: ' + output + ' ' + stderr);
           passed.push(stage);
@@ -188,12 +199,19 @@ try {
       'independent-session realtime reply',
       'own history survives app restart',
       'received history survives app restart',
-      'camera capture denied',
-      'explicit voice devices',
-      'voice joins muted',
-      'microphone reaches LiveKit',
-      'deafen control',
-      'manual voice leave',
+      'secure chat hyperlinks after send, receive and restart',
+      ...(chatOnly
+        ? []
+        : [
+            'camera capture denied',
+            'explicit voice devices',
+            'voice joins muted',
+            'microphone reaches LiveKit',
+            'deafen control',
+            'application sound opt-in and real preview on selected speakers',
+            'deafen suppresses application sound preview',
+            'manual voice leave',
+          ]),
       'notification IPC rejects invalid payload',
       'Windows development notification registration',
       'native notification reports show event',
@@ -208,7 +226,11 @@ try {
     JSON.stringify(report, null, 2),
   );
   console.log(
-    'PASS: 26 Electron authentication, messaging, voice, notification and lifecycle checks across 3 launches.',
+    'PASS: ' +
+      report.checks.length +
+      ' Electron authentication, messaging, ' +
+      (chatOnly ? '' : 'voice, ') +
+      'notification and lifecycle checks across 3 launches.',
   );
 } finally {
   await app.close();

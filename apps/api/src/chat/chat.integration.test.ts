@@ -5,7 +5,14 @@ import { testDatabase } from '../db/test-database.js';
 import { createApp } from '../app.js';
 import { AuthService } from '../auth/service.js';
 import { ChatService } from './service.js';
-import type { ChatAck, ChatMessage, Conversation, MessagePage } from '@tricord/shared';
+import type {
+  ChatAck,
+  ChatMessage,
+  Conversation,
+  MessagePage,
+  ChannelCategory,
+  ChannelCategoryPage,
+} from '@tricord/shared';
 const origin = 'http://127.0.0.1:5173',
   secret = 'Messaging-' + randomUUID();
 type Person = { id: string; username: string; token: string; cookie: string; csrf: string };
@@ -131,6 +138,7 @@ it('creates shared channels, permits member management, and archives without des
       await request(b, '/api/conversations/' + c.id, 'PATCH', {
         name: 'renamed-' + randomUUID().slice(0, 8),
         archived: true,
+        expectedRevision: c.metadataRevision,
       })
     ).statusCode,
   ).toBe(200);
@@ -144,8 +152,310 @@ it('creates shared channels, permits member management, and archives without des
   ).toBe(409);
   expect((await history(b!, c)).messages[0]?.id).toBe(message.id);
   expect(
-    (await request(b, '/api/conversations/' + c.id, 'PATCH', { archived: false })).statusCode,
+    (
+      await request(b, '/api/conversations/' + c.id, 'PATCH', {
+        archived: false,
+        expectedRevision: '1',
+      })
+    ).statusCode,
   ).toBe(200);
+});
+async function categoryFor(user: Person, name = 'Category ' + randomUUID(), position = 0) {
+  const result = await request(user, '/api/channel-categories', 'POST', { name, position });
+  expect(result.statusCode, result.body).toBe(201);
+  return result.json().category as ChannelCategory;
+}
+it('persists readable channel metadata, categories and shared ordering without changing history', async () => {
+  const [a, b] = await people();
+  const category = await categoryFor(a!, 'Friends 🎮 ' + randomUUID(), 20);
+  const c = await create(a!, {
+    kind: 'channel',
+    name: '  Cafe\u0301   🎮  ' + randomUUID(),
+    topic: '  Games and friends  ',
+    categoryId: category.id,
+    position: 20,
+  });
+  expect(c.name).toMatch(/^Café 🎮 /);
+  expect(c).toMatchObject({
+    topic: 'Games and friends',
+    category,
+    position: 20,
+    metadataRevision: '0',
+  });
+  const m = await send(a!, c);
+  const earlier = await create(b!, {
+    kind: 'channel',
+    name: 'Earlier ' + randomUUID(),
+    categoryId: category.id,
+    position: 10,
+  });
+  const list = (await request(b, '/api/conversations')).json().conversations as Conversation[];
+  expect(list.findIndex((x) => x.id === earlier.id)).toBeLessThan(
+    list.findIndex((x) => x.id === c.id),
+  );
+  const changed = await request(b, '/api/conversations/' + c.id, 'PATCH', {
+    name: 'Evening chat ' + randomUUID(),
+    topic: 'Tonight',
+    position: 5,
+    expectedRevision: c.metadataRevision,
+  });
+  expect(changed.statusCode, changed.body).toBe(200);
+  expect(changed.json().conversation).toMatchObject({
+    id: c.id,
+    topic: 'Tonight',
+    category,
+    position: 5,
+    metadataRevision: '1',
+  });
+  expect((await history(b!, c)).messages[0]?.id).toBe(m.id);
+  expect((await request(b, '/api/conversations/' + c.id)).json().conversation).toEqual(
+    changed.json().conversation,
+  );
+});
+it('normalizes names and enforces uniqueness across archives and concurrent creates', async () => {
+  const a = await person();
+  const name = 'Café 🎮 ' + randomUUID();
+  const attempts = await Promise.all([
+    request(a, '/api/conversations', 'POST', { kind: 'channel', name }),
+    request(a, '/api/conversations', 'POST', {
+      kind: 'channel',
+      name: name.toUpperCase().replace('É', 'E\u0301'),
+    }),
+  ]);
+  expect(attempts.map((x) => x.statusCode).sort()).toEqual([201, 409]);
+  const c = attempts.find((x) => x.statusCode === 201)!.json().conversation as Conversation;
+  expect(
+    (
+      await request(a, '/api/conversations/' + c.id, 'PATCH', {
+        archived: true,
+        expectedRevision: c.metadataRevision,
+      })
+    ).statusCode,
+  ).toBe(200);
+  expect(
+    (await request(a, '/api/conversations', 'POST', { kind: 'channel', name: name.toLowerCase() }))
+      .statusCode,
+  ).toBe(409);
+  const categoryName = 'Café category ' + randomUUID().slice(0, 12);
+  const categories = await Promise.all([
+    request(a, '/api/channel-categories', 'POST', { name: categoryName }),
+    request(a, '/api/channel-categories', 'POST', { name: categoryName.toUpperCase() }),
+  ]);
+  expect(categories.map((x) => x.statusCode).sort()).toEqual([201, 409]);
+});
+it('rejects stale channel edits and reorders while preserving the winning change', async () => {
+  const [a, b] = await people(),
+    c = await channel(a!);
+  const attempts = await Promise.all([
+    request(a, '/api/conversations/' + c.id, 'PATCH', {
+      topic: 'First',
+      expectedRevision: c.metadataRevision,
+    }),
+    request(b, '/api/conversations/' + c.id, 'PATCH', {
+      position: 123,
+      expectedRevision: c.metadataRevision,
+    }),
+  ]);
+  expect(attempts.map((x) => x.statusCode).sort()).toEqual([200, 409]);
+  const current = (await request(a, '/api/conversations/' + c.id)).json()
+    .conversation as Conversation;
+  expect(current.metadataRevision).toBe('1');
+  expect(current.topic === 'First' || current.position === 123).toBe(true);
+  expect(current.topic === 'First' && current.position === 123).toBe(false);
+  expect(
+    (await request(a, '/api/conversations/' + c.id, 'PATCH', { name: 'Missing revision' }))
+      .statusCode,
+  ).toBe(409);
+});
+it('deletes categories without losing archived channels, messages, IDs or read cursors', async () => {
+  const [a, b] = await people();
+  const category = await categoryFor(a!);
+  const c = await create(a!, {
+    kind: 'channel',
+    name: 'Keep history ' + randomUUID(),
+    categoryId: category.id,
+  });
+  const m = await send(a!, c);
+  await chat.markRead(b!.token, c.id, { seq: m.seq });
+  await chat.update(a!.token, c.id, { archived: true, expectedRevision: c.metadataRevision });
+  const listener = connectSocket(b!);
+  await ready(listener);
+  const notice = new Promise((resolve) => listener.once('inbox:changed', resolve));
+  const removed = await request(b, '/api/channel-categories/' + category.id, 'DELETE', {
+    expectedRevision: category.revision,
+  });
+  expect(removed.statusCode, removed.body).toBe(200);
+  await notice;
+  const current = (await request(b, '/api/conversations/' + c.id)).json()
+    .conversation as Conversation;
+  expect(current).toMatchObject({
+    id: c.id,
+    category: null,
+    archived: true,
+    lastReadSeq: m.seq,
+    unreadCount: 0,
+    metadataRevision: '2',
+  });
+  expect((await history(b!, c)).messages[0]?.id).toBe(m.id);
+  expect(
+    (
+      await request(a, '/api/conversations/' + c.id, 'PATCH', {
+        topic: 'No',
+        expectedRevision: current.metadataRevision,
+      })
+    ).statusCode,
+  ).toBe(409);
+  expect(
+    (
+      await request(a, '/api/conversations/' + c.id + '/messages/' + m.id, 'PATCH', {
+        body: 'Still editable',
+      })
+    ).statusCode,
+  ).toBe(200);
+});
+it('rejects stale category changes and fences a channel form when its category is removed', async () => {
+  const [a, b] = await people(),
+    category = await categoryFor(a!);
+  const attempts = await Promise.all([
+    request(a, '/api/channel-categories/' + category.id, 'PATCH', {
+      position: 30,
+      expectedRevision: category.revision,
+    }),
+    request(b, '/api/channel-categories/' + category.id, 'PATCH', {
+      position: 40,
+      expectedRevision: category.revision,
+    }),
+  ]);
+  expect(attempts.map((x) => x.statusCode).sort()).toEqual([200, 409]);
+  const updated = attempts.find((x) => x.statusCode === 200)!.json().category as ChannelCategory;
+  const c = await create(a!, {
+    kind: 'channel',
+    name: 'Category removal ' + randomUUID(),
+    categoryId: category.id,
+  });
+  expect(
+    (
+      await request(b, '/api/channel-categories/' + category.id, 'DELETE', {
+        expectedRevision: category.revision,
+      })
+    ).statusCode,
+  ).toBe(409);
+  expect(
+    (
+      await request(b, '/api/channel-categories/' + category.id, 'DELETE', {
+        expectedRevision: updated.revision,
+      })
+    ).statusCode,
+  ).toBe(200);
+  expect(
+    (
+      await request(a, '/api/conversations/' + c.id, 'PATCH', {
+        name: 'Stale category',
+        categoryId: category.id,
+        expectedRevision: c.metadataRevision,
+      })
+    ).statusCode,
+  ).toBe(409);
+  expect(
+    (
+      await request(a, '/api/conversations', 'POST', {
+        kind: 'channel',
+        name: 'Missing category',
+        categoryId: category.id,
+      })
+    ).statusCode,
+  ).toBe(409);
+});
+it('bounds category pages, rejects invalid cursors and preserves deterministic order', async () => {
+  const a = await person();
+  await categoryFor(a!, 'Paged first ' + randomUUID().slice(0, 12), 101);
+  await categoryFor(a!, 'Paged second ' + randomUUID().slice(0, 12), 102);
+  const items: ChannelCategory[] = [];
+  let after: string | null = null;
+  do {
+    const response = await request(
+      a,
+      '/api/channel-categories?limit=2' + (after ? '&after=' + encodeURIComponent(after) : ''),
+    );
+    expect(response.statusCode).toBe(200);
+    const page = response.json() as ChannelCategoryPage;
+    expect(page.categories.length).toBeLessThanOrEqual(2);
+    items.push(...page.categories);
+    after = page.nextAfter;
+  } while (after);
+  expect(new Set(items.map((x) => x.id)).size).toBe(items.length);
+  expect(items.map((x) => x.position)).toEqual(items.map((x) => x.position).sort((a, b) => a - b));
+  for (const query of ['limit=0', 'limit=101', 'after=bad', 'after=2147483648:' + randomUUID()])
+    expect((await request(a, '/api/channel-categories?' + query)).statusCode).toBe(400);
+});
+it('validates Unicode metadata and refuses channel fields on private conversations', async () => {
+  const [a, b] = await people();
+  const accepted = await create(a!, {
+    kind: 'channel',
+    name: '🎮'.repeat(80),
+    topic: '🎮'.repeat(500),
+  });
+  expect(accepted.name).toHaveLength(160);
+  for (const fields of [
+    { name: '🎮'.repeat(81) },
+    { name: '   ' },
+    { name: 'Hidden\u202e' },
+    { name: 'Topic ' + randomUUID(), topic: 'x'.repeat(501) },
+    { name: 'Order ' + randomUUID(), position: -1 },
+    { name: 'Order ' + randomUUID(), position: 1.5 },
+    { name: 'Category ' + randomUUID(), categoryId: randomUUID() },
+  ]) {
+    const result = await request(a, '/api/conversations', 'POST', { kind: 'channel', ...fields });
+    expect([400, 409]).toContain(result.statusCode);
+  }
+  const dm = await create(a!, { kind: 'dm', userId: b!.id });
+  expect(
+    (await request(a, '/api/conversations/' + dm.id, 'PATCH', { topic: 'Not public' })).statusCode,
+  ).toBe(403);
+  expect(
+    (
+      await request(a, '/api/conversations', 'POST', {
+        kind: 'group',
+        name: 'Group',
+        topic: 'Not public',
+      })
+    ).statusCode,
+  ).toBe(400);
+});
+it('requires approval, a live session, CSRF and trusted origins for category mutations', async () => {
+  const a = await person(),
+    pending = await person(false),
+    category = await categoryFor(a);
+  for (const actor of [undefined, pending]) {
+    expect([401, 403]).toContain((await request(actor, '/api/channel-categories')).statusCode);
+    expect([401, 403]).toContain(
+      (await request(actor, '/api/channel-categories', 'POST', { name: 'No access' })).statusCode,
+    );
+  }
+  for (const method of ['PATCH', 'DELETE'] as const) {
+    const result = await server.app.inject({
+      method,
+      url: '/api/channel-categories/' + category.id,
+      headers: { origin, cookie: a.cookie },
+      payload: {
+        expectedRevision: category.revision,
+        ...(method === 'PATCH' ? { position: 1 } : {}),
+      },
+    });
+    expect(result.statusCode).toBe(403);
+  }
+  expect(
+    (
+      await server.app.inject({
+        method: 'POST',
+        url: '/api/channel-categories',
+        headers: { origin: 'https://untrusted.invalid', cookie: a.cookie, 'x-csrf-token': a.csrf },
+        payload: { name: 'No access' },
+      })
+    ).statusCode,
+  ).toBe(403);
+  expect((await request(a, '/api/auth/logout', 'POST')).statusCode).toBe(200);
+  expect((await request(a, '/api/channel-categories')).statusCode).toBe(401);
 });
 it('persists authorship, content, timestamps and stable ordering in PostgreSQL', async () => {
   const a = await person(),
@@ -804,6 +1114,8 @@ it('delivers notices for unselected private conversations only to authorized rec
       authorId: a!.id,
       kind: 'dm',
       mention: true,
+      reply: false,
+      preferences: { mode: 'all', senderMuted: false, priority: false },
     },
   ]);
   expect(leaks).toEqual([]);

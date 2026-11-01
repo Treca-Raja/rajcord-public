@@ -3,7 +3,7 @@
 name: tricord-${TRICORD_ENVIRONMENT:?Set staging or production}
 services:
   proxy:
-    image: nginx:1.30.6-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+    image: nginx:1.31.0-alpine@sha256:2f07d83bf561b506400dc183b1b2003803e39efbd22451f848adaba14d28c7c7
     restart: unless-stopped
     ports: ['80:80/tcp']
     volumes:
@@ -18,7 +18,7 @@ services:
         max-size: '10m'
         max-file: '3'
   certbot:
-    image: certbot/certbot:v5.4.0@sha256:c23159d30afdd9c97960578aa4654f5901de6cae394958f894074dedd55e599d
+    image: certbot/certbot:v5.8.0@sha256:f70ad0adbb7e117f0fe42a63c553f28ea451edabc0148757b6efcd9735acaa20
     profiles: [tools]
     volumes:
       - ${TRICORD_CONFIG_DIR:?Set the initialized runtime directory}/acme:/var/www/acme

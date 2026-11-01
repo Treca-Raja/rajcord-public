@@ -249,8 +249,15 @@ export class VoiceController {
     });
     this.room = room;
     const current = () => this.wanted && this.generation === generation && this.room === room;
+    let participantUpdatePending = false;
     const participants = () => {
-      if (current()) this.updateParticipants();
+      if (!current() || participantUpdatePending) return;
+      participantUpdatePending = true;
+      // The SDK can clear peers before emitting its reconnect state in the same turn.
+      queueMicrotask(() => {
+        participantUpdatePending = false;
+        if (current()) this.updateParticipants();
+      });
     };
     room
       .on(RoomEvent.ParticipantConnected, participants)
@@ -283,10 +290,12 @@ export class VoiceController {
     room.on(RoomEvent.Reconnecting, () => {
       if (current()) this.update({ status: 'reconnecting' });
     });
+    room.on(RoomEvent.SignalReconnecting, () => {
+      if (current()) this.update({ status: 'reconnecting' });
+    });
     room.on(RoomEvent.Reconnected, () => {
       if (current()) {
-        this.update({ status: 'connected', error: '' });
-        participants();
+        this.updateParticipants({ status: 'connected', error: '' });
       }
     });
     room.on(RoomEvent.Disconnected, () => {
@@ -315,8 +324,7 @@ export class VoiceController {
         return;
       }
       this.retryCount = 0;
-      this.update({ status: 'connected', error: '' });
-      this.updateParticipants();
+      this.updateParticipants({ status: 'connected', error: '' });
       if (!this.state.inputMissing)
         try {
           await this.capture(generation);
@@ -449,11 +457,12 @@ export class VoiceController {
         this.update({ error: 'Audio output needs attention: ' + (error as Error).message });
     }
   }
-  private updateParticipants() {
+  private updateParticipants(values: Partial<VoiceState> = {}) {
     const room = this.room;
     if (!room) return;
     const list = [room.localParticipant, ...room.remoteParticipants.values()];
     this.update({
+      ...values,
       participants: list.map((p) => ({
         id: p.identity,
         name: p.name || p.identity,
