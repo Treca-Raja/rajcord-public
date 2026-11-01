@@ -95,10 +95,11 @@ async function call<T = Record<string, unknown>>(
   sessionId?: string,
 ): Promise<T> {
   const id = ++sequence;
+  const timeoutError = new Error('Browser command timed out: ' + method);
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error('Browser command timed out: ' + method));
+      reject(timeoutError);
     }, 10000);
     pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
     ws!.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
@@ -109,7 +110,8 @@ async function js<T = unknown>(expression: string): Promise<T> {
     'Runtime.evaluate',
     { expression, returnByValue: true, awaitPromise: true, userGesture: true },
   );
-  if (result.exceptionDetails) throw new Error('Browser evaluation failed.');
+  if (result.exceptionDetails)
+    throw new Error('Browser evaluation failed: ' + JSON.stringify(result.exceptionDetails));
   return result.result.value;
 }
 async function tabJs<T = unknown>(sessionId: string, expression: string): Promise<T> {
@@ -536,7 +538,7 @@ try {
     true,
   );
   await compose('History stays with this channel');
-  await call('Page.reload');
+  await reload();
   await wait(`!!document.querySelector('[data-conversation-id="${createdChannel}"]')`);
   await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
   await wait(
@@ -636,7 +638,7 @@ try {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await call('Page.reload');
+  await reload();
   await wait(`!!document.querySelector('[data-conversation-id="${createdChannel}"]')`);
   await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
   await wait(
@@ -1174,7 +1176,7 @@ try {
     "document.querySelector('.channel-header strong')?.textContent==='Café 🎮 Club renamed'",
   );
   assert.equal(await js("document.querySelector('textarea[name=message]').value"), unsent);
-  await call('Page.reload');
+  await reload();
   await wait(`!!document.querySelector('[data-conversation-id="${createdChannel}"]')`);
   await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
   await wait("document.querySelector('textarea[name=message]')?.value===''");
@@ -1223,6 +1225,130 @@ try {
     "[...document.querySelectorAll('.chat-composer-controls .emoji-picker-grid button')].find(button=>button.textContent==='🇭🇷').click()",
   );
   await wait("document.querySelector('textarea[name=message]').value==='🇭🇷'");
+  const emojiDraft = '😀 👍🏽 👩🏽‍💻 🇭🇷 ❤️‍🔥 🍉 1️⃣ 0123456789 # *';
+  async function screenshotComposer(name: string) {
+    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await wait(
+      "document.querySelector('.chat-composer-controls').getAnimations({subtree:true}).every(animation=>animation.playState!=='running')",
+    );
+    await screenshot(name);
+  }
+  await compose(emojiDraft);
+  await wait(
+    `[...document.querySelectorAll('.message-scroll .message-body')].some(body=>body.textContent===${JSON.stringify(emojiDraft)}&&body.querySelectorAll('.emoji-glyph').length===7)`,
+  );
+  await writeDraft(emojiDraft);
+  const emojiDifferences = await js<number[]>(`(async()=>{
+    const input=document.querySelector('textarea[name=message]');
+    await document.fonts.load('14px "Rajcord Composer Emoji"',input.value);
+    const family=getComputedStyle(input).fontFamily;
+    const textContext=document.createElement('canvas').getContext('2d');
+    textContext.font='14px '+family;
+    if([...'0123456789#*'].some(character=>textContext.measureText(character).width===0))
+      throw new Error('Composer text fonts must keep ordinary digits and punctuation visible');
+    const examples=[['😀','1f600'],['👍🏽','1f44d-1f3fd'],['👩🏽‍💻','1f469-1f3fd-200d-1f4bb'],['🇭🇷','1f1ed-1f1f7'],['❤️‍🔥','2764-fe0f-200d-1f525'],['🍉','1f349'],['1️⃣','31-20e3']];
+    function normalize(canvas){
+      const pixels=canvas.getContext('2d').getImageData(0,0,160,160).data;
+      let left=160,top=160,right=0,bottom=0;
+      for(let y=0;y<160;y++)for(let x=0;x<160;x++)if(pixels[(y*160+x)*4+3]>32){
+        left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);
+      }
+      const result=document.createElement('canvas');result.width=result.height=64;
+      const w=right-left+1,h=bottom-top+1,scale=60/Math.max(w,h);
+      result.getContext('2d').drawImage(canvas,left,top,w,h,(64-w*scale)/2,(64-h*scale)/2,w*scale,h*scale);
+      return result.getContext('2d').getImageData(0,0,64,64).data;
+    }
+    return Promise.all(examples.map(async([emoji,icon])=>{
+      const image=new Image();image.src='/emoji/17-b6b55fef/'+icon+'.svg';await image.decode();
+      const font=document.createElement('canvas'),svg=document.createElement('canvas');
+      font.width=font.height=svg.width=svg.height=160;
+      const context=font.getContext('2d');context.font='100px '+family;context.fillText(emoji,20,120);
+      const scale=100/Math.max(image.naturalWidth,image.naturalHeight);
+      const width=image.naturalWidth*scale,height=image.naturalHeight*scale;
+      svg.getContext('2d').drawImage(image,20+(100-width)/2,20+(100-height)/2,width,height);
+      const a=normalize(font),b=normalize(svg);let difference=0;
+      for(let i=0;i<a.length;i+=4){
+        for(let k=0;k<3;k++)difference+=Math.abs(a[i+k]*a[i+3]/255-b[i+k]*b[i+3]/255);
+        difference+=Math.abs(a[i+3]-b[i+3]);
+      }
+      return difference/(a.length*255);
+    }));
+  })()`);
+  assert.ok(
+    emojiDifferences.every((difference) => difference < 0.06),
+    'Composer emoji must match picker/sent SVG artwork: ' + JSON.stringify(emojiDifferences),
+  );
+  await openEmoji('.chat-composer-controls');
+  await wait("!!document.querySelector('.chat-composer-controls .emoji-picker-panel')");
+  await screenshotComposer('emoji-composer-consistent.png');
+  const emojiTheme = await js<string>('document.documentElement.dataset.appearance');
+  await js("document.documentElement.dataset.appearance='retro'");
+  await screenshotComposer('emoji-composer-retro.png');
+  await js(
+    "document.querySelector('textarea[name=message]').focus();document.querySelector('textarea[name=message]').setSelectionRange(0,2)",
+  );
+  await call('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true,
+  });
+  assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+  await wait(
+    "document.querySelector('textarea[name=message]').scrollHeight<=document.querySelector('textarea[name=message]').clientHeight",
+  );
+  await screenshotComposer('emoji-composer-mobile.png');
+  await call('Emulation.setDeviceMetricsOverride', {
+    width: 1360,
+    height: 880,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await js(`document.documentElement.dataset.appearance=${JSON.stringify(emojiTheme)}`);
+  await call('Input.insertText', { text: '🇭🇷' });
+  assert.equal(
+    await js("document.querySelector('textarea[name=message]').value"),
+    '🇭🇷' + emojiDraft.slice(2),
+  );
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'z',
+    code: 'KeyZ',
+    modifiers: 2,
+    windowsVirtualKeyCode: 90,
+    nativeVirtualKeyCode: 90,
+  });
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'z',
+    code: 'KeyZ',
+    modifiers: 2,
+    windowsVirtualKeyCode: 90,
+    nativeVirtualKeyCode: 90,
+  });
+  assert.equal(await js("document.querySelector('textarea[name=message]').value"), emojiDraft);
+  await js("document.querySelector('textarea[name=message]').setSelectionRange(0,0)");
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Enter',
+    code: 'Enter',
+    text: '\r',
+    modifiers: 8,
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+  });
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Enter',
+    code: 'Enter',
+    modifiers: 8,
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+  });
+  assert.equal(
+    await js("document.querySelector('textarea[name=message]').value"),
+    '\n' + emojiDraft,
+  );
   await writeDraft('');
 
   await fixture.database.pool.query(
@@ -1231,7 +1357,7 @@ try {
      SELECT $1,$2,gen_random_uuid(),$3,last_seq-60+n,last_change-60+n,'Older fixture '||n,now()-interval '2 minutes' FROM updated,generate_series(1,60) n`,
     [createdChannel, owner.id, 'a'.repeat(64)],
   );
-  await call('Page.reload');
+  await reload();
   await wait(`!!document.querySelector('[data-conversation-id="${createdChannel}"]')`);
   await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
   await wait("document.querySelector('.message-scroll')?.textContent.includes('Older fixture 60')");
@@ -1837,13 +1963,7 @@ try {
         }),
     );
   }
-  await Promise.all([
-    js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'),
-    tabJs(
-      attached.sessionId,
-      'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
-    ),
-  ]);
+  // Hidden tabs can stop painting; the claim state below is the synchronization boundary.
   await waitCondition(
     () =>
       js('navigator.locks.query().then(state=>state.pending.length===0 && state.held.length===2)'),
