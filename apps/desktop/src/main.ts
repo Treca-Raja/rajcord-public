@@ -2,6 +2,8 @@ import { validNotice, trustedNoticeFrame } from './notification-policy.js';
 import { createWindowOpenHandler } from './external-links.js';
 import { serverUrl } from './server-url.js';
 import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
+import { installNativeCapture, type NativeCapturePermissions } from './native-capture.js';
+import { createSessionCaptureAuthority } from './capture-authority-http.js';
 import { app, BrowserWindow, session, dialog, ipcMain, Notification, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -73,50 +75,55 @@ app
   .then(async () => {
     await clearTemporarySession();
     let microphoneAllowed = authSmoke && process.env.TRICORD_VOICE_SMOKE === '1';
-    session.defaultSession.setPermissionRequestHandler(
-      (contents, permission, callback, details) => {
-        if (
-          !contents ||
-          !trustedAudioRequest(
-            target,
-            details.requestingUrl,
-            details.isMainFrame,
-            permission,
-            'mediaTypes' in details ? details.mediaTypes : undefined,
-          )
-        ) {
-          callback(false);
-          return;
-        }
-        if (microphoneAllowed || (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1')) {
-          microphoneAllowed = true;
-          callback(true);
-          return;
-        }
-        void dialog
-          .showMessageBox({
-            type: 'question',
-            title: 'Allow microphone access?',
-            message: 'Allow Rajcord to use your microphone for voice?',
-            detail:
-              'You select a device and join muted. Camera and screen capture remain disabled.',
-            buttons: ['Cancel', 'Allow microphone'],
-            defaultId: 0,
-            cancelId: 0,
-          })
-          .then((result) => {
-            microphoneAllowed = result.response === 1;
-            callback(microphoneAllowed);
-          })
-          .catch(() => callback(false));
-      },
-    );
-    session.defaultSession.setPermissionCheckHandler(
-      (contents, permission, origin, details) =>
-        !!contents &&
-        microphoneAllowed &&
-        trustedAudioCheck(target, origin, details.isMainFrame, permission, details.mediaType),
-    );
+    const microphoneRequest: NativeCapturePermissions['request'] = (
+      contents,
+      permission,
+      callback,
+      details,
+    ) => {
+      if (
+        !contents ||
+        !trustedAudioRequest(
+          target,
+          details.requestingUrl,
+          details.isMainFrame,
+          permission,
+          'mediaTypes' in details ? details.mediaTypes : undefined,
+        )
+      ) {
+        callback(false);
+        return;
+      }
+      if (microphoneAllowed || (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1')) {
+        microphoneAllowed = true;
+        callback(true);
+        return;
+      }
+      void dialog
+        .showMessageBox({
+          type: 'question',
+          title: 'Allow microphone access?',
+          message: 'Allow Rajcord to use your microphone for voice?',
+          detail: 'You select a device and join muted. Camera and screen capture remain disabled.',
+          buttons: ['Cancel', 'Allow microphone'],
+          defaultId: 0,
+          cancelId: 0,
+        })
+        .then((result) => {
+          microphoneAllowed = result.response === 1;
+          callback(microphoneAllowed);
+        })
+        .catch(() => callback(false));
+    };
+    const microphoneCheck: NativeCapturePermissions['check'] = (
+      contents,
+      permission,
+      origin,
+      details,
+    ) =>
+      !!contents &&
+      microphoneAllowed &&
+      trustedAudioCheck(target, origin, details.isMainFrame, permission, details.mediaType);
     const win = new BrowserWindow({
       title: 'Rajcord',
       icon: path.join(__dirname, '../resources/icon.png'),
@@ -135,6 +142,23 @@ app
         backgroundThrottling: false,
         additionalArguments: ['--rajcord-version=' + app.getVersion()],
       },
+    });
+    const captureAuthority = createSessionCaptureAuthority({
+      owner: win,
+      session: session.defaultSession,
+      origin: target,
+      context: () => captureBoundary?.context() ?? null,
+      shutdown: app,
+      onError: (code) => console.warn('Capture authority unavailable:', code),
+    });
+    const captureBoundary: ReturnType<typeof installNativeCapture> = installNativeCapture({
+      owner: win,
+      session: session.defaultSession,
+      targetOrigin: target,
+      permissions: { request: microphoneRequest, check: microphoneCheck },
+      shutdown: app,
+      authority: captureAuthority,
+      onError: (code) => console.warn('Display capture boundary unavailable:', code),
     });
     const notificationAppId = app.isPackaged ? 'com.rajcord.desktop' : process.execPath;
     app.setAppUserModelId(notificationAppId);

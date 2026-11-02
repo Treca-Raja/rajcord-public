@@ -1,3 +1,8 @@
+export * from './screen.js';
+export * from './screen-signaling.js';
+export * from './desktop-capture.js';
+export * from './capture-authorization.js';
+import type { ScreenServerEvents, ScreenClientEvents } from './screen.js';
 export type AccountStatus = 'pending' | 'approved' | 'rejected' | 'suspended' | 'removed';
 export interface AuthUser {
   id: string;
@@ -21,7 +26,7 @@ export interface ConnectionWelcome {
   message: string;
   connectedAt: string;
 }
-export interface ServerToClientEvents {
+export interface ServerToClientEvents extends ScreenServerEvents {
   'connection:welcome': (payload: ConnectionWelcome) => void;
   'account:changed': () => void;
   'inbox:changed': () => void;
@@ -30,7 +35,7 @@ export interface ServerToClientEvents {
   'conversation:changed': (data: { conversationId: string }) => void;
   'conversation:closed': (data: { conversationId: string }) => void;
 }
-export interface ClientToServerEvents {
+export interface ClientToServerEvents extends ScreenClientEvents {
   'conversation:join': (
     data: { conversationId: string },
     ack: (result: ChatAck<{ joined: true }>) => void,

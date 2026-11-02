@@ -1,4 +1,6 @@
 import { singleFlight } from './single-flight';
+import { CallProvider } from './CallProvider';
+import { VerifiedVoiceSessions, type ApprovedVoiceSession } from './voice-session';
 import {
   createContext,
   useMemo,
@@ -63,30 +65,56 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     ClientToServerEvents
   > | null>(null);
   const generation = useRef(0);
-  const refresh = useMemo(
-    () =>
-      singleFlight(async () => {
-        const started = generation.current;
+  const mounted = useRef(false);
+  const logoutGeneration = useRef<number | null>(null);
+  const verifiedAuth = useRef<Readonly<{ account: string; csrf: string }> | null>(null);
+  const sessions = useRef(new VerifiedVoiceSessions());
+  const [callSession, setCallSession] = useState<ApprovedVoiceSession | null>(null);
+  function acceptVerified(next: AuthState | null) {
+    const csrf = next?.csrfToken;
+    if (!next) verifiedAuth.current = null;
+    else if (verifiedAuth.current?.account !== next.user.id || verifiedAuth.current.csrf !== csrf) {
+      verifiedAuth.current = { account: next.user.id, csrf: next.csrfToken };
+    }
+    // Bind cleanup requests to this verified session's CSRF, never a replacement's credentials.
+    setCallSession(
+      sessions.current.acceptVerified(next, <T,>(path: string, method?: string, body?: unknown) =>
+        api<T>(path, method, body, csrf),
+      ),
+    );
+    setState(next);
+  }
+  const refresh = useMemo(() => {
+    let flight: { generation: number; run: () => Promise<void> } | undefined;
+    return () => {
+      if (!mounted.current) return Promise.resolve();
+      const started = generation.current;
+      if (flight?.generation === started) return flight.run();
+      const run = singleFlight(async () => {
         try {
           const next = await api<AuthState>('/auth/me');
-          if (started === generation.current) setState(next);
+          if (started === generation.current && logoutGeneration.current !== started)
+            acceptVerified(next);
         } catch (error) {
           if (started === generation.current && (error as { status?: number }).status === 401) {
-            setState(null);
+            acceptVerified(null);
             setSettings(false);
           }
         } finally {
-          setLoading(false);
+          if (started === generation.current) setLoading(false);
         }
-      }),
-    [],
-  );
+      });
+      flight = { generation: started, run };
+      return run();
+    };
+  }, []);
   const broadcast = () => {
     const channel = new BroadcastChannel('tricord-account');
     channel.postMessage('changed');
     channel.close();
   };
   useEffect(() => {
+    mounted.current = true;
     void refresh();
     const channel = new BroadcastChannel('tricord-account');
     channel.onmessage = () => void refresh();
@@ -94,6 +122,10 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     window.addEventListener('focus', focus);
     const timer = setInterval(focus, 60000);
     return () => {
+      mounted.current = false;
+      verifiedAuth.current = null;
+      generation.current++;
+      sessions.current.invalidate();
       channel.close();
       window.removeEventListener('focus', focus);
       clearInterval(timer);
@@ -139,14 +171,25 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   }, [state?.csrfToken, state?.user.status, refresh]);
   const request = async <T,>(path: string, method = 'GET', body?: unknown) =>
     api<T>(path, method, body, state?.csrfToken);
+  const logoutLifetime = verifiedAuth.current;
   const logout = async () => {
+    if (!mounted.current || !logoutLifetime || verifiedAuth.current !== logoutLifetime) return;
+    // Consume this verified lifetime before any reentrant/stale intention can affect another one.
+    verifiedAuth.current = null;
+    const started = ++generation.current;
+    logoutGeneration.current = started;
+    sessions.current.invalidate();
+    setCallSession(null);
     try {
-      generation.current++;
-      await request('/auth/logout', 'POST');
-      setState(null);
+      await api('/auth/logout', 'POST', undefined, logoutLifetime.csrf);
+      if (started !== generation.current) return;
+      logoutGeneration.current = null;
+      acceptVerified(null);
       setSettings(false);
       broadcast();
     } catch (e) {
+      if (started !== generation.current) return;
+      logoutGeneration.current = null;
       setError((e as Error).message);
       await refresh();
     }
@@ -161,8 +204,10 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     return (
       <SignIn
         onSignedIn={(value) => {
+          if (!mounted.current) return;
           generation.current++;
-          setState(value);
+          logoutGeneration.current = null;
+          acceptVerified(value);
           setError('');
           broadcast();
         }}
@@ -180,7 +225,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={context}>
       {state.user.status === 'approved' ? (
-        children
+        <CallProvider session={callSession}>{children}</CallProvider>
       ) : (
         <div className="auth-page">
           <section className="auth-card" data-account-status={state.user.status}>

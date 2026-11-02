@@ -1,29 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Headphones, PhoneOff, Volume2, Plus } from 'lucide-react';
 import { useAuth } from './Auth';
-import {
-  VoiceController,
-  concreteDevices,
-  type VoiceChannel,
-  type VoiceState,
-} from './voice-controller';
+import { useCall, type VoiceControls } from './CallProvider';
+import { concreteDevices, type VoiceChannel } from './voice-controller';
 import './voice.css';
 export function VoicePanel() {
   const { request, state: auth } = useAuth();
   const ref = useRef(request);
   ref.current = request;
-  const controllerRef = useRef<VoiceController | null>(null);
-  const [voice, setVoice] = useState<VoiceState | null>(null),
-    [channels, setChannels] = useState<VoiceChannel[]>([]),
-    [devices, setDevices] = useState<MediaDeviceInfo[]>([]),
+  const call = useCall();
+  const controlsRef = useRef(call?.controls);
+  controlsRef.current = call?.controls;
+  const voice = call?.voice;
+  const devices = call?.devices ?? [];
+  const [channels, setChannels] = useState<VoiceChannel[]>([]),
     [error, setError] = useState(''),
     [expanded, setExpanded] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    const controller = new VoiceController((...args) => ref.current(...args));
-    controllerRef.current = controller;
-    controller.onChange = () => setVoice({ ...controller.state });
-    controller.onChange();
     let live = true;
     const reload = async () => {
       try {
@@ -38,23 +32,25 @@ export function VoicePanel() {
     return () => {
       live = false;
       clearInterval(timer);
-      controller.dispose();
-      controllerRef.current = null;
     };
   }, []);
-  async function action(work: (controller: VoiceController) => Promise<unknown>) {
-    const controller = controllerRef.current;
+  async function action(work: (controller: VoiceControls) => Promise<unknown>) {
+    const controller = call?.controls;
     if (!controller) return;
     setBusy(true);
     setError('');
     try {
       await work(controller);
     } catch (error) {
-      setError((error as Error).message);
+      if (controlsRef.current === controller) setError((error as Error).message);
     } finally {
-      setBusy(false);
+      if (controlsRef.current === controller) setBusy(false);
     }
   }
+  useEffect(() => {
+    setBusy(false);
+    setError('');
+  }, [call?.controls]);
   return (
     <section className="voice-panel">
       <div className="section-label voice-label">
@@ -96,10 +92,7 @@ export function VoicePanel() {
       {expanded && voice && (
         <div className="voice-controls">
           <p className="voice-help">Choose your devices. You join muted.</p>
-          <button
-            disabled={busy}
-            onClick={() => void action(async (c) => setDevices(await c.devices()))}
-          >
+          <button disabled={busy} onClick={() => void action((c) => c.devices())}>
             Find audio devices
           </button>
           <label>
@@ -196,9 +189,7 @@ export function VoicePanel() {
                         max="1"
                         step=".05"
                         value={p.volume}
-                        onChange={(e) =>
-                          controllerRef.current?.volume(p.id, Number(e.target.value))
-                        }
+                        onChange={(e) => call?.controls.volume(p.id, Number(e.target.value))}
                       />
                     )}
                   </li>

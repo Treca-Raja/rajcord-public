@@ -18,7 +18,10 @@ export type VoiceState = {
 };
 type Request = <T>(path: string, method?: string, body?: unknown) => Promise<T>;
 type Lease = { id: string; channelId: string; credential: string; useServerIceServers?: boolean };
-export const concreteDevices = (devices: MediaDeviceInfo[], kind: MediaDeviceKind) =>
+export const concreteDevices = <T extends Pick<MediaDeviceInfo, 'kind' | 'deviceId'>>(
+  devices: readonly T[],
+  kind: MediaDeviceKind,
+) =>
   devices.filter(
     (d) => d.kind === kind && d.deviceId && !['default', 'communications'].includes(d.deviceId),
   );
@@ -50,9 +53,37 @@ export class VoiceController {
   private retryCount = 0;
   private beating = false;
   private disposed = false;
+  private leaseInvalidations = new Set<() => void>();
+  private notifyingLease = false;
   onChange: () => void = () => {};
   constructor(private request: Request) {
     navigator.mediaDevices?.addEventListener('devicechange', this.devicesChanged);
+  }
+  // Revocation only: no lease IDs, credentials, deadlines or authorization grants escape.
+  onLeaseInvalidated(listener: () => void) {
+    if (this.disposed) throw new Error('Voice controller was disposed.');
+    this.leaseInvalidations.add(listener);
+    return () => {
+      this.leaseInvalidations.delete(listener);
+    };
+  }
+  private invalidateLease() {
+    if (this.notifyingLease) return;
+    this.notifyingLease = true;
+    try {
+      for (const listener of [...this.leaseInvalidations]) {
+        try {
+          listener();
+        } catch (error) {
+          // Subscriber failures cannot interrupt local voice cleanup or other revocations.
+          queueMicrotask(() => {
+            throw error;
+          });
+        }
+      }
+    } finally {
+      this.notifyingLease = false;
+    }
   }
   update(values: Partial<VoiceState>) {
     this.state = { ...this.state, ...values };
@@ -202,7 +233,8 @@ export class VoiceController {
     try {
       await this.request('/voice/heartbeat', 'POST', { leaseId: previous.id });
     } catch (error) {
-      if (!this.wanted || generation !== this.generation) return;
+      if (!this.wanted || generation !== this.generation || this.lease !== previous) return;
+      this.invalidateLease();
       const status = (error as { status?: number }).status;
       if (status === 410) {
         try {
@@ -366,6 +398,7 @@ export class VoiceController {
   async leave() {
     this.wanted = false;
     this.generation++;
+    this.invalidateLease();
     clearTimeout(this.retry);
     clearInterval(this.heartbeat);
     const room = this.room,
@@ -502,9 +535,11 @@ export class VoiceController {
     }
   };
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     navigator.mediaDevices?.removeEventListener('devicechange', this.devicesChanged);
     this.onChange = () => {};
     void this.leave();
+    this.leaseInvalidations.clear();
   }
 }

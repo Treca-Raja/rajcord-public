@@ -30,6 +30,8 @@ export function registerGateway(app: FastifyInstance, voice: VoiceService, origi
       if (!url.pathname.startsWith('/socket.io/')) socket.destroy();
       return;
     }
+    // ws owns errors after upgrade; the raw TCP socket can reset while authorization waits.
+    socket.on('error', () => socket.destroy());
     void (async () => {
       try {
         if (
@@ -41,12 +43,15 @@ export function registerGateway(app: FastifyInstance, voice: VoiceService, origi
         const token = app.parseCookie(req.headers.cookie ?? '')[SESSION_COOKIE] ?? '';
         const credential = url.searchParams.get('access_token') ?? '';
         await voice.exclusive(async () => {
+          if (socket.destroyed) return;
           const lease = await voice.authorize(token, credential);
+          if (socket.destroyed) return;
           const upstream = new URL(voice.config.url);
           upstream.protocol = 'ws:';
           upstream.pathname = url.pathname.replace('/media', '');
           upstream.search = url.search;
           upstream.searchParams.set('access_token', await voice.jwt(lease));
+          if (socket.destroyed) return;
           // SDK metadata is forwarded, but credentials/room/identity are generated only by this backend.
           server.handleUpgrade(req, socket, head, (client) => {
             const remote = new WebSocket(upstream, {

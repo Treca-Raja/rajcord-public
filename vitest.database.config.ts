@@ -4,7 +4,11 @@ import { loadEnvFile } from 'node:process';
 if (existsSync('apps/api/.env')) loadEnvFile('apps/api/.env');
 export default defineConfig({
   test: {
-    include: ['apps/api/src/**/*.integration.test.ts'],
+    include: [
+      'apps/api/src/**/*.integration.test.ts',
+      'scripts/capture-authority.integration.test.ts',
+    ],
+    exclude: ['**/*.browser.integration.test.ts'],
     testTimeout: 15000,
     hookTimeout: 20000,
     fileParallelism: false,

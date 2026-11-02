@@ -8,13 +8,15 @@
   "repository": "https://github.com/Treca-Raja/rajcord-public",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node ../../scripts/copy-picker-assets.mjs",
     "typecheck": "tsc --noEmit",
     "dev": "cross-env TRICORD_DEV_URL=http://127.0.0.1:5173 electron .",
     "start": "electron .",
     "smoke": "electron . --smoke",
     "package:win": "pnpm build && electron-builder --config electron-builder.cjs --win nsis --x64 --publish never",
-    "test:links": "node ../../scripts/test-desktop-links.mjs"
+    "test:links": "node ../../scripts/test-desktop-links.mjs",
+    "test:picker": "node ../../scripts/test-screen-picker.mjs",
+    "test:capture": "node ../../scripts/test-screen-picker.mjs --native"
   },
   "dependencies": {
     "@tricord/shared": "workspace:*",
