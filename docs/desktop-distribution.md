@@ -1,6 +1,6 @@
 # Rajcord Windows distribution
 
-Rajcord uses the existing Electron client and the shared hosted React UI. Windows x64 installers are built with pinned electron-builder 26.18.0; electron-updater 6.8.11 handles signed NSIS updates. Electron remains pinned to 45.0.0. The updater's YAML parser has a scoped override to patched `js-yaml` 4.3.2, also used directly to validate its packaged trust configuration. This work does not deploy the web/API or change production infrastructure.
+Rajcord uses the existing Electron client and the shared hosted React UI. Windows x64 installers are built with pinned electron-builder 26.18.0; electron-updater 6.8.11 handles signed NSIS updates. Electron remains pinned to 45.1.0. The updater's YAML parser has a scoped override to patched `js-yaml` 4.3.2, also used directly to validate its packaged trust configuration. This work does not deploy the web/API or change production infrastructure.
 
 ## Build locally
 
