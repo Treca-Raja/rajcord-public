@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow } from 'electron';
-import { session } from 'electron';
+import { Menu, session } from 'electron';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 // Private test harness: enabled only by --auth-smoke with a separate disposable profile.
@@ -70,6 +70,11 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     true,
   );
   if (payload.stage === 'temporary') {
+    assert.equal(
+      Menu.getApplicationMenu()?.getMenuItemById('reset-microphone-permission')?.enabled,
+      false,
+      'Reset stays disabled until the trusted audio UI subscribes',
+    );
     await click('Create an account');
     await fill({
       username: payload.username,
@@ -103,6 +108,153 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Members');
     win.setSize(originalSize[0]!, originalSize[1]!);
 
+    if (!chatOnly) {
+      assert.equal(
+        await js(
+          "navigator.mediaDevices.getUserMedia({video:true}).then(s=>{s.getTracks().forEach(t=>t.stop());return false}).catch(e=>e.name==='NotAllowedError')",
+        ),
+        true,
+      );
+      await js(`window.deviceProbes=[];const capture=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia=async(...args)=>{const stream=await capture(...args);window.deviceProbes.push(stream);return stream};void 0;`);
+      await js(`window.originalDeviceEnumeration=navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
+        window.deviceInventoryGate=new Promise(resolve=>window.releaseDeviceInventory=resolve);
+        navigator.mediaDevices.enumerateDevices=async()=>{await window.deviceInventoryGate;return window.originalDeviceEnumeration()};void 0;`);
+      await js("document.querySelector('.voice-settings-toggle').click()");
+      await wait(
+        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='loading'",
+      );
+      assert.equal(
+        await js('!!document.querySelector(\'select[aria-label="Voice microphone"]\')'),
+        true,
+      );
+      assert.equal(await js('window.deviceProbes.length'), 0);
+      const audioArtifacts = path.resolve(__dirname, '../../../artifacts');
+      fs.mkdirSync(audioArtifacts, { recursive: true });
+      fs.writeFileSync(
+        path.join(audioArtifacts, 'audio-setup-loading.png'),
+        (await win.capturePage()).toPNG(),
+      );
+      await js(
+        'navigator.mediaDevices.enumerateDevices=window.originalDeviceEnumeration;window.releaseDeviceInventory();void 0;',
+      );
+      await wait(
+        "['ready','permission-needed'].includes(document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus)",
+      );
+      assert.equal(
+        await js('window.deviceProbes.length'),
+        0,
+        'Opening audio setup must not capture',
+      );
+      if (
+        await js(
+          "document.querySelector('[data-audio-devices-status]').dataset.audioDevicesStatus==='permission-needed'",
+        )
+      )
+        await click('Allow microphone access');
+      await wait(
+        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
+      );
+      assert.equal(
+        await js("window.deviceProbes.every(s=>s.getTracks().every(t=>t.readyState==='ended'))"),
+        true,
+      );
+      const probes = await js('window.deviceProbes.length');
+      await js("document.querySelector('.voice-settings-toggle').click()");
+      await wait("!document.querySelector('.voice-controls')");
+      await js("document.querySelector('.voice-settings-toggle').click()");
+      await wait(
+        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
+      );
+      assert.equal(
+        await js('window.deviceProbes.length'),
+        probes,
+        'Granted setup must refresh without another probe',
+      );
+      await wait(
+        'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
+      );
+      assert.equal(
+        await js(
+          "document.querySelector('.voice-controls').scrollWidth<=document.querySelector('.voice-controls').clientWidth",
+        ),
+        true,
+      );
+      win.setSize(720, 820);
+      await wait('innerWidth<=720');
+      await js("document.querySelector('.voice-controls').scrollIntoView({block:'center'})");
+      assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+      assert.equal(
+        await js(
+          "document.querySelector('.voice-controls').scrollWidth<=document.querySelector('.voice-controls').clientWidth",
+        ),
+        true,
+      );
+      fs.writeFileSync(
+        path.join(audioArtifacts, 'audio-setup-narrow.png'),
+        (await win.capturePage()).toPNG(),
+      );
+      win.setSize(originalSize[0]!, originalSize[1]!);
+      for (const label of ['Voice microphone', 'Voice speakers']) {
+        await js(
+          "(()=>{const select=document.querySelector('select[aria-label=" +
+            JSON.stringify(label) +
+            "]');select.value=select.options[1].value;select.dispatchEvent(new Event('change',{bubbles:true}))})()",
+        );
+      }
+      await wait('!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled');
+      await js(
+        "(()=>{const select=document.querySelector('select[aria-label=\"Join voice channel\"]');select.value=select.options[1].value;select.dispatchEvent(new Event('change',{bubbles:true}))})()",
+      );
+      await wait(
+        "document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'",
+      );
+      await js('document.querySelector(\'button[aria-label="Unmute microphone"]\').click()');
+      await wait(
+        "fetch('/test/voice-published').then(response=>response.json()).then(result=>result.published)",
+      );
+      await js(`(()=>{const field=document.querySelector('textarea[name=message]');window.permissionDraftField=field;
+        window.permissionOriginalDraft=field.value;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'Microphone reset draft');
+        field.dispatchEvent(new Event('input',{bubbles:true}));field.focus()})()`);
+      const reset = Menu.getApplicationMenu()?.getMenuItemById('reset-microphone-permission');
+      assert.ok(reset);
+      assert.equal(reset.enabled, true);
+      reset.click();
+      await wait(
+        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='permission-needed'",
+      );
+      await wait("!document.querySelector('[data-voice-status]')");
+      await wait(
+        "window.deviceProbes.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))",
+      );
+      await wait(
+        "fetch('/test/voice-published').then(response=>response.json()).then(result=>!result.published)",
+      );
+      assert.equal(
+        await js(
+          "window.permissionDraftField===document.querySelector('textarea[name=message]')&&window.permissionDraftField.value==='Microphone reset draft'&&document.activeElement===window.permissionDraftField",
+        ),
+        true,
+      );
+      assert.equal(
+        await js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
+        '',
+      );
+      assert.equal(
+        await js('document.querySelector(\'select[aria-label="Voice speakers"]\').value'),
+        '',
+      );
+      await click('Allow microphone access');
+      await wait(
+        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
+      );
+      await js(
+        "(()=>{const field=window.permissionDraftField;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,window.permissionOriginalDraft);field.dispatchEvent(new Event('input',{bubbles:true}))})()",
+      );
+      console.log('TRICORD_SMOKE_MICROPHONE_RESET_PASS');
+      console.log('TRICORD_SMOKE_AUDIO_DISCOVERY_PASS');
+    }
+
     assert.equal(
       await js("window.tricordDesktop.notify({conversationId:'https://evil.test',mention:true})"),
       false,
@@ -122,17 +274,6 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     await checkLinks();
 
     if (!chatOnly) {
-      assert.equal(
-        await js(
-          "navigator.mediaDevices.getUserMedia({video:true}).then(s=>{s.getTracks().forEach(t=>t.stop());return false}).catch(e=>e.name==='NotAllowedError')",
-        ),
-        true,
-      );
-      await js("document.querySelector('.voice-settings-toggle').click()");
-      await click('Find audio devices');
-      await wait(
-        'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
-      );
       for (const label of ['Voice microphone', 'Voice speakers']) {
         await js(
           "(()=>{const s=document.querySelector('select[aria-label=" +

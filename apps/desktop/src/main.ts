@@ -9,7 +9,7 @@ import {
 } from './notification-policy.js';
 import { createWindowOpenHandler } from './external-links.js';
 import { serverUrl } from './server-url.js';
-import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
+import { MicrophonePermission, installMicrophonePermissions } from './microphone-permission.js';
 import { app, BrowserWindow, session, dialog, ipcMain, Notification, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -80,51 +80,30 @@ app
   .whenReady()
   .then(async () => {
     await clearTemporarySession();
-    let microphoneAllowed = authSmoke && process.env.TRICORD_VOICE_SMOKE === '1';
-    session.defaultSession.setPermissionRequestHandler(
-      (contents, permission, callback, details) => {
-        if (
-          !contents ||
-          !trustedAudioRequest(
-            target,
-            details.requestingUrl,
-            details.isMainFrame,
-            permission,
-            'mediaTypes' in details ? details.mediaTypes : undefined,
-          )
-        ) {
-          callback(false);
-          return;
+    const microphone = new MicrophonePermission({
+      profileDirectory: app.getPath('userData'),
+      target,
+      ask: async () => {
+        if (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1') {
+          console.log('TRICORD_SMOKE_MICROPHONE_PERMISSION_PROMPT');
+          return true;
         }
-        if (microphoneAllowed || (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1')) {
-          microphoneAllowed = true;
-          callback(true);
-          return;
-        }
-        void dialog
-          .showMessageBox({
-            type: 'question',
-            title: 'Allow microphone access?',
-            message: 'Allow Rajcord to use your microphone for voice?',
-            detail:
-              'You select a device and join muted. Camera and screen capture remain disabled.',
-            buttons: ['Cancel', 'Allow microphone'],
-            defaultId: 0,
-            cancelId: 0,
-          })
-          .then((result) => {
-            microphoneAllowed = result.response === 1;
-            callback(microphoneAllowed);
-          })
-          .catch(() => callback(false));
+        const result = await dialog.showMessageBox({
+          type: 'question',
+          title: 'Allow microphone access?',
+          message: 'Allow Rajcord to use your microphone for voice?',
+          detail:
+            'Approval is remembered in this app profile for this server. You select a device and join muted. Reset approval from the Rajcord menu. Camera and screen capture remain disabled.',
+          buttons: ['Cancel', 'Allow microphone'],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        return result.response === 1;
       },
-    );
-    session.defaultSession.setPermissionCheckHandler(
-      (contents, permission, origin, details) =>
-        !!contents &&
-        microphoneAllowed &&
-        trustedAudioCheck(target, origin, details.isMainFrame, permission, details.mediaType),
-    );
+      onError: (message) => {
+        setImmediate(() => dialog.showErrorBox('Microphone permission', message));
+      },
+    });
     const win = new BrowserWindow({
       title: 'Rajcord',
       icon: path.join(__dirname, '../resources/icon.png'),
@@ -144,15 +123,42 @@ app
         additionalArguments: ['--rajcord-version=' + app.getVersion()],
       },
     });
+    installMicrophonePermissions(session.defaultSession, win.webContents, target, microphone);
+    let microphoneResetReady = false;
+    const resetMenus: Electron.Menu[] = [];
+    const setMicrophoneResetReady = (ready: boolean) => {
+      microphoneResetReady = ready;
+      for (const menu of resetMenus) {
+        const item = menu.getMenuItemById('reset-microphone-permission');
+        if (item) item.enabled = ready;
+      }
+    };
+    const createMenu = (template: Electron.MenuItemConstructorOptions[]) => {
+      const menu = Menu.buildFromTemplate(template);
+      resetMenus.push(menu);
+      setMicrophoneResetReady(microphoneResetReady);
+      return menu;
+    };
+    const resetMicrophone = () => {
+      if (!microphoneResetReady) return;
+      microphone.reset();
+      if (!win.isDestroyed()) win.webContents.send('microphone:reset');
+    };
     const notificationAppId = app.isPackaged ? 'com.rajcord.desktop' : process.execPath;
     app.setAppUserModelId(notificationAppId);
-    const trustedSender = (event: Electron.IpcMainInvokeEvent) =>
+    const trustedSender = (event: Pick<Electron.IpcMainEvent, 'sender' | 'senderFrame'>) =>
       event.sender === win.webContents &&
       trustedNoticeFrame(
         target,
         event.senderFrame?.url ?? '',
         event.senderFrame === win.webContents.mainFrame,
       );
+    const resetAvailability = (event: Electron.IpcMainEvent, ready: unknown) => {
+      if (trustedSender(event) && typeof ready === 'boolean') setMicrophoneResetReady(ready);
+    };
+    ipcMain.on('microphone:reset-listener', resetAvailability);
+    win.webContents.on('did-navigate', () => setMicrophoneResetReady(false));
+    win.webContents.on('render-process-gone', () => setMicrophoneResetReady(false));
     ipcMain.handle('notifications:capabilities', (event) => {
       if (!trustedSender(event)) throw new Error('Untrusted notification request.');
       return { version: 2 };
@@ -273,6 +279,7 @@ app
       }
     });
     win.on('closed', () => {
+      ipcMain.removeListener('microphone:reset-listener', resetAvailability);
       ipcMain.removeHandler('notifications:show');
       ipcMain.removeHandler('notifications:enable');
       ipcMain.removeHandler('notifications:capabilities');
@@ -313,11 +320,17 @@ app
       },
     );
     Menu.setApplicationMenu(
-      Menu.buildFromTemplate([
+      createMenu([
         {
           label: 'Rajcord',
           submenu: [
             { label: 'Show Rajcord', click: showWindow },
+            {
+              id: 'reset-microphone-permission',
+              label: 'Reset microphone permission (leaves voice)',
+              enabled: microphoneResetReady,
+              click: resetMicrophone,
+            },
             { label: 'Check for updates…', click: updates.check },
             { label: 'Install downloaded update…', click: updates.install },
             { type: 'separator' },
@@ -354,8 +367,14 @@ app
         );
         tray.setToolTip('Rajcord — close keeps voice running; Quit disconnects');
         tray.setContextMenu(
-          Menu.buildFromTemplate([
+          createMenu([
             { label: 'Show Rajcord', click: showWindow },
+            {
+              id: 'reset-microphone-permission',
+              label: 'Reset microphone permission (leaves voice)',
+              enabled: microphoneResetReady,
+              click: resetMicrophone,
+            },
             { label: 'Check for updates…', click: updates.check },
             { label: 'Quit Rajcord', click: () => app.quit() },
           ]),

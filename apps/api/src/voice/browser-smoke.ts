@@ -48,6 +48,8 @@ try {
   browsers.push(b);
   await setup(a, first.token, origin);
   await setup(b, second.token, origin);
+  for (const browser of [a, b])
+    await browser.wait("document.querySelectorAll('.voice-members li').length===2");
   await a.js(`window.soundEvents=[];window.nativeSoundPlay=HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play=async function(){await window.nativeSoundPlay.call(this);if(this.dataset.appSound)window.soundEvents.push({kind:this.dataset.appSound,at:Date.now()})};document.querySelector('.sound-settings').open=true`);
   await a.click('Enable sounds');
@@ -119,14 +121,44 @@ try {
     "[...document.querySelectorAll('audio[data-voice-audio]')].some(e=>e.volume===0.25)",
   );
 
+  const selectedInput = await a.js(
+    'document.querySelector(\'select[aria-label="Voice microphone"]\').value',
+  );
+  const selectedOutput = await a.js(
+    'document.querySelector(\'select[aria-label="Voice speakers"]\').value',
+  );
+  const beforeHotPlug = await a.js('window.__captureCount');
+  await a.js(
+    "window.__enumerate=navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);navigator.mediaDevices.enumerateDevices=async()=>[...(await window.__enumerate()),{kind:'audioinput',deviceId:'synthetic-usb',label:'Synthetic USB microphone'}];navigator.mediaDevices.dispatchEvent(new Event('devicechange'))",
+  );
+  await a.wait(
+    '!!document.querySelector(\'select[aria-label="Voice microphone"] option[value=synthetic-usb]\')',
+  );
+  assert.equal(
+    await a.js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
+    selectedInput,
+  );
+  assert.equal(await a.js('window.__captureCount'), beforeHotPlug);
+  await a.js(
+    "navigator.mediaDevices.enumerateDevices=window.__enumerate;navigator.mediaDevices.dispatchEvent(new Event('devicechange'))",
+  );
+  await a.wait(
+    '!document.querySelector(\'select[aria-label="Voice microphone"] option[value=synthetic-usb]\')',
+  );
+
   // Simulate a missing exact input. No default capture is allowed.
   const captures = await a.js('window.__captureCount');
   await a.js(
-    "window.__enumerate=navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);navigator.mediaDevices.enumerateDevices=async()=> (await window.__enumerate()).filter(d=>d.kind!=='audioinput');navigator.mediaDevices.dispatchEvent(new Event('devicechange'))",
+    "navigator.mediaDevices.enumerateDevices=async()=> (await window.__enumerate()).filter(d=>d.kind!=='audioinput');navigator.mediaDevices.dispatchEvent(new Event('devicechange'))",
   );
   await a.wait("document.body.innerText.includes('microphone is missing')");
   await delay(300);
   assert.equal(await a.js('window.__captureCount'), captures);
+  assert.equal(await a.js("window.__captures.every(t=>t.readyState==='ended')"), true);
+  assert.equal(
+    await a.js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
+    '',
+  );
   await a.js('navigator.mediaDevices.enumerateDevices=window.__enumerate');
 
   await a.js(
@@ -139,7 +171,43 @@ try {
     ),
     true,
   );
-  await a.js('navigator.mediaDevices.enumerateDevices=window.__enumerate');
+  await a.js(
+    "navigator.mediaDevices.enumerateDevices=window.__enumerate;navigator.mediaDevices.dispatchEvent(new Event('devicechange'))",
+  );
+  await a.wait(
+    "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
+  );
+  assert.equal(
+    await a.js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
+    '',
+  );
+  assert.equal(
+    await a.js('document.querySelector(\'select[aria-label="Voice speakers"]\').value'),
+    '',
+  );
+  for (const [label, id] of [
+    ['Voice microphone', selectedInput],
+    ['Voice speakers', selectedOutput],
+  ]) {
+    await a.js(
+      "(()=>{const s=document.querySelector('select[aria-label=" +
+        JSON.stringify(label) +
+        "]');s.value=" +
+        JSON.stringify(id) +
+        ";s.dispatchEvent(new Event('change',{bubbles:true}))})()",
+    );
+  }
+  await a.wait("document.querySelector('select[aria-label=\"Voice microphone\"]').value!==''");
+  assert.equal(
+    await a.js(
+      "document.querySelector('button[aria-label=\"Unmute microphone\"]').getAttribute('aria-pressed')",
+    ),
+    'true',
+  );
+  assert.equal(
+    await a.js("document.querySelector('button[aria-label=Deafen]').getAttribute('aria-pressed')"),
+    'false',
+  );
 
   const shot = await b.call('Page.captureScreenshot', { format: 'png' });
   await writeFile(
@@ -165,6 +233,9 @@ try {
   assert.equal(server.voice!.leases.size, 0);
   const checks = [
     'two isolated approved sessions',
+    'automatic granted-permission inventory without capture or selection',
+    'hot-plug updates device choices without capture or changing selection',
+    'explicit same-device recovery after simulated unplug/replug preserves mute/deafen',
     'explicit input/output selection',
     'both join muted',
     'bidirectional received audio bytes',

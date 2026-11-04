@@ -14,7 +14,8 @@
     "start": "electron .",
     "smoke": "electron . --smoke",
     "package:win": "pnpm build && electron-builder --config electron-builder.cjs --win nsis --x64 --publish never",
-    "test:links": "node ../../scripts/test-desktop-links.mjs"
+    "test:links": "node ../../scripts/test-desktop-links.mjs",
+    "test:microphone": "node ../../scripts/test-desktop-microphone.mjs"
   },
   "dependencies": {
     "@tricord/shared": "workspace:*",
