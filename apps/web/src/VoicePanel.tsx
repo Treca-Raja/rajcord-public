@@ -27,7 +27,6 @@ export function VoicePanel({
   const controllerRef = useRef<VoiceController | null>(null);
   const [voice, setVoice] = useState<VoiceState | null>(null),
     [channels, setChannels] = useState<VoiceChannel[]>([]),
-    [devices, setDevices] = useState<MediaDeviceInfo[]>([]),
     [error, setError] = useState(''),
     [expanded, setExpanded] = useState(false),
     [busy, setBusy] = useState(false);
@@ -62,6 +61,9 @@ export function VoicePanel({
       controllerRef.current = null;
     };
   }, [player]);
+  useEffect(() => {
+    if (expanded) void controllerRef.current?.refreshDevices();
+  }, [expanded, player]);
   useEffect(() => {
     if (
       !requestedChannel ||
@@ -141,27 +143,47 @@ export function VoicePanel({
           </button>
         ))}
       </div>
-      <button className="voice-settings-toggle" onClick={() => setExpanded(!expanded)}>
+      <button
+        className="voice-settings-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+      >
         {voice?.status === 'idle' ? 'Set up voice' : (voice?.status ?? 'Voice')} · Audio controls
       </button>
       {expanded && voice && (
         <div className="voice-controls">
           <p className="voice-help">Choose your devices. You join muted.</p>
-          <button
-            disabled={busy}
-            onClick={() => void action(async (c) => setDevices(await c.devices()))}
+          <p
+            className="voice-help"
+            role={voice.devicesStatus === 'error' ? 'alert' : 'status'}
+            data-audio-devices-status={voice.devicesStatus}
           >
-            Find audio devices
-          </button>
+            {voice.devicesStatus === 'loading'
+              ? 'Checking audio devices…'
+              : voice.devicesError || 'Audio devices update automatically.'}
+          </p>
+          <div className="voice-device-actions">
+            {voice.devicesStatus === 'permission-needed' && (
+              <button disabled={busy} onClick={() => void action((c) => c.devices())}>
+                Allow microphone access
+              </button>
+            )}
+            <button
+              disabled={busy || voice.devicesStatus === 'loading'}
+              onClick={() => void controllerRef.current?.refreshDevices()}
+            >
+              Refresh audio devices
+            </button>
+          </div>
           <label>
             Microphone
             <select
               aria-label="Voice microphone"
-              value={voice.input}
+              value={voice.inputMissing ? '' : voice.input}
               onChange={(e) => void action((c) => c.selectInput(e.target.value))}
             >
               <option value="">Choose microphone</option>
-              {concreteDevices(devices, 'audioinput').map((d) => (
+              {concreteDevices(voice.devices, 'audioinput').map((d) => (
                 <option key={d.deviceId} value={d.deviceId}>
                   {d.label || 'Microphone'}
                 </option>
@@ -172,11 +194,11 @@ export function VoicePanel({
             Speakers
             <select
               aria-label="Voice speakers"
-              value={voice.output}
+              value={voice.outputMissing ? '' : voice.output}
               onChange={(e) => void action((c) => c.selectOutput(e.target.value))}
             >
               <option value="">Choose speakers</option>
-              {concreteDevices(devices, 'audiooutput').map((d) => (
+              {concreteDevices(voice.devices, 'audiooutput').map((d) => (
                 <option key={d.deviceId} value={d.deviceId}>
                   {d.label || 'Speakers'}
                 </option>
@@ -189,7 +211,9 @@ export function VoicePanel({
               <select
                 aria-label="Join voice channel"
                 value=""
-                disabled={busy || !voice.input || !voice.output}
+                disabled={
+                  busy || !voice.input || !voice.output || voice.inputMissing || voice.outputMissing
+                }
                 onChange={(e) => void action((c) => c.join(e.target.value))}
               >
                 <option value="">Choose a channel</option>
