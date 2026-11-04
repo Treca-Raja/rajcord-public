@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow } from 'electron';
-import { session } from 'electron';
+import { Menu, session } from 'electron';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 // Private test harness: enabled only by --auth-smoke with a separate disposable profile.
@@ -70,6 +70,11 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     true,
   );
   if (payload.stage === 'temporary') {
+    assert.equal(
+      Menu.getApplicationMenu()?.getMenuItemById('reset-microphone-permission')?.enabled,
+      false,
+      'Reset stays disabled until the trusted audio UI subscribes',
+    );
     await click('Create an account');
     await fill({
       username: payload.username,
@@ -190,6 +195,63 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
         (await win.capturePage()).toPNG(),
       );
       win.setSize(originalSize[0]!, originalSize[1]!);
+      for (const label of ['Voice microphone', 'Voice speakers']) {
+        await js(
+          "(()=>{const select=document.querySelector('select[aria-label=" +
+            JSON.stringify(label) +
+            "]');select.value=select.options[1].value;select.dispatchEvent(new Event('change',{bubbles:true}))})()",
+        );
+      }
+      await wait('!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled');
+      await js(
+        "(()=>{const select=document.querySelector('select[aria-label=\"Join voice channel\"]');select.value=select.options[1].value;select.dispatchEvent(new Event('change',{bubbles:true}))})()",
+      );
+      await wait(
+        "document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'",
+      );
+      await js('document.querySelector(\'button[aria-label="Unmute microphone"]\').click()');
+      await wait(
+        "fetch('/test/voice-published').then(response=>response.json()).then(result=>result.published)",
+      );
+      await js(`(()=>{const field=document.querySelector('textarea[name=message]');window.permissionDraftField=field;
+        window.permissionOriginalDraft=field.value;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'Microphone reset draft');
+        field.dispatchEvent(new Event('input',{bubbles:true}));field.focus()})()`);
+      const reset = Menu.getApplicationMenu()?.getMenuItemById('reset-microphone-permission');
+      assert.ok(reset);
+      assert.equal(reset.enabled, true);
+      reset.click();
+      await wait(
+        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='permission-needed'",
+      );
+      await wait("!document.querySelector('[data-voice-status]')");
+      await wait(
+        "window.deviceProbes.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))",
+      );
+      await wait(
+        "fetch('/test/voice-published').then(response=>response.json()).then(result=>!result.published)",
+      );
+      assert.equal(
+        await js(
+          "window.permissionDraftField===document.querySelector('textarea[name=message]')&&window.permissionDraftField.value==='Microphone reset draft'&&document.activeElement===window.permissionDraftField",
+        ),
+        true,
+      );
+      assert.equal(
+        await js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
+        '',
+      );
+      assert.equal(
+        await js('document.querySelector(\'select[aria-label="Voice speakers"]\').value'),
+        '',
+      );
+      await click('Allow microphone access');
+      await wait(
+        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
+      );
+      await js(
+        "(()=>{const field=window.permissionDraftField;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,window.permissionOriginalDraft);field.dispatchEvent(new Event('input',{bubbles:true}))})()",
+      );
+      console.log('TRICORD_SMOKE_MICROPHONE_RESET_PASS');
       console.log('TRICORD_SMOKE_AUDIO_DISCOVERY_PASS');
     }
 

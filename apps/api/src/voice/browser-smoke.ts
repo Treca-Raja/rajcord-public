@@ -48,6 +48,8 @@ try {
   browsers.push(b);
   await setup(a, first.token, origin);
   await setup(b, second.token, origin);
+  for (const browser of [a, b])
+    await browser.wait("document.querySelectorAll('.voice-members li').length===2");
   await a.js(`window.soundEvents=[];window.nativeSoundPlay=HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play=async function(){await window.nativeSoundPlay.call(this);if(this.dataset.appSound)window.soundEvents.push({kind:this.dataset.appSound,at:Date.now()})};document.querySelector('.sound-settings').open=true`);
   await a.click('Enable sounds');

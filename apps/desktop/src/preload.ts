@@ -4,6 +4,7 @@ import type {
   NativeNotificationResult,
   NativeNotificationTarget,
 } from './notification-policy.js';
+let microphoneResetListeners = 0;
 contextBridge.exposeInMainWorld(
   'tricordDesktop',
   Object.freeze({
@@ -11,6 +12,18 @@ contextBridge.exposeInMainWorld(
     version:
       process.argv.find((value) => value.startsWith('--rajcord-version='))?.split('=')[1] ??
       'development',
+    onMicrophonePermissionReset: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('microphone:reset', listener);
+      if (++microphoneResetListeners === 1) ipcRenderer.send('microphone:reset-listener', true);
+      let subscribed = true;
+      return () => {
+        if (!subscribed) return;
+        subscribed = false;
+        ipcRenderer.removeListener('microphone:reset', listener);
+        if (--microphoneResetListeners === 0) ipcRenderer.send('microphone:reset-listener', false);
+      };
+    },
     enableNotifications: () => ipcRenderer.invoke('notifications:enable'),
     notify: (notice: { conversationId: string; mention: boolean }) =>
       ipcRenderer.invoke('notifications:show', notice),

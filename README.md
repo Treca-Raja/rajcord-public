@@ -292,6 +292,8 @@ In the sidebar, open **Audio controls**. Available devices are listed automatica
 
 Opening audio controls and automatic device refresh do not capture microphone audio or join a call. Only **Allow microphone access** briefly opens and immediately stops a microphone to reveal device labels, without transmitting audio. Denied permission and empty or unavailable device lists show setup/retry guidance. Device choices remain in memory and must be selected again after a fresh launch. Calls use exact device IDs, excluding the Windows Default/Communications aliases. A missing microphone stops transmission; missing speakers mute playback. Choose a replacement explicitly. Browser/OS device-disconnection notifications determine when this is detected. This milestone requires output-selection support, verified in Edge and Electron on Windows 11; other browsers are not yet certified.
 
+The Windows app remembers **Allow microphone** for the current app profile and server, so a full restart does not ask again. **Cancel** leaves access unapproved and can be retried. Windows privacy controls still apply. Use **Rajcord → Reset microphone permission (leaves voice)** (also available in the tray menu) to forget approval, stop voice and choose whether to allow access again; unsent chat text is preserved. A different server requires separate approval. Browser clients use their browser’s permission controls. Saved microphone approval does not remember device choices or join/unmute automatically.
+
 Network reconnection preserves in-memory mute/deafen, devices and participant volumes. Voice reservations have a 45-second heartbeat lifetime; still-authenticated clients can obtain a fresh reservation after expiry or an API restart. Manual leave, logout, suspension and full quit stop client recovery. Fresh launches never join automatically. An offline quit can leave a server reservation for up to 45 seconds.
 
 Voice uses the existing session cookie and CSRF boundary. The API issues an opaque reservation credential, not a LiveKit bearer token. Its same-origin signaling gateway reauthorizes each handshake and replaces refreshed LiveKit tokens before forwarding them. Only microphone publication is granted. Removal is enforced at the media server; a one-second sweep also handles expiration and external account changes. This is a single-API-process development design. LiveKit terminates media encryption; it is not end-to-end encryption.
@@ -304,6 +306,8 @@ pnpm --filter @tricord/api test:voice
 ```
 
 This test covers actual received audio, independent sessions, mute/deafen, selected output, volume, disconnect/reconnect, API restart, simulated device loss and revocation. Electron tests also publish a synthetic microphone track and deny camera capture. Physical microphones, unplugging real USB/Bluetooth hardware, listening quality and WAN/TURN behavior still need manual validation.
+
+After `pnpm --filter @tricord/desktop build`, `pnpm --filter @tricord/desktop test:microphone` checks saved consent across separate Electron launches, origin isolation, reset, and camera/subframe/window denial with synthetic devices and a disposable profile. It does not access physical microphones.
 
 ## Ten-client voice reliability test
 

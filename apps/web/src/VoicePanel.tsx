@@ -31,14 +31,28 @@ export function VoicePanel({
     [expanded, setExpanded] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    const controller = new VoiceController((...args) => ref.current(...args));
-    controllerRef.current = controller;
-    controller.onChange = () => {
-      player.updateVoice(controller.state);
-      setVoice({ ...controller.state });
-    };
-    controller.onChange();
     let live = true;
+    const createController = () => {
+      const next = new VoiceController((...args) => ref.current(...args));
+      controllerRef.current = next;
+      next.onChange = () => {
+        player.updateVoice(next.state);
+        setVoice({ ...next.state });
+      };
+      next.onChange();
+      return next;
+    };
+    let controller = createController();
+    const stopPermissionListener = window.tricordDesktop?.onMicrophonePermissionReset?.(() => {
+      if (!live) return;
+      controller.dispose();
+      player.resetVoice();
+      controller = createController();
+      controller.update({
+        devicesStatus: 'permission-needed',
+        devicesError: 'Microphone permission reset. Allow microphone access to set up voice again.',
+      });
+    });
     const reload = async () => {
       try {
         const data = await ref.current<{ channels: VoiceChannel[] }>('/voice/channels');
@@ -56,6 +70,7 @@ export function VoicePanel({
     return () => {
       live = false;
       clearInterval(timer);
+      stopPermissionListener?.();
       controller.dispose();
       player.resetVoice();
       controllerRef.current = null;
