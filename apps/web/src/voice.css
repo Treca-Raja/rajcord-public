@@ -87,3 +87,13 @@
   background: #191d23;
   flex-shrink: 0;
 }
+
+.voice-output-volume input {
+  display: block;
+  width: 100%;
+  accent-color: var(--accent-mint);
+}
+.voice-output-volume output {
+  float: right;
+  font-variant-numeric: tabular-nums;
+}

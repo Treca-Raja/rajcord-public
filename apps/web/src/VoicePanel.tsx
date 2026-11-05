@@ -183,6 +183,19 @@ export function VoicePanel({
               ))}
             </select>
           </label>
+          <label className="voice-output-volume">
+            Voice output <output>{Math.round(voice.outputVolume * 100)}%</output>
+            <input
+              aria-label="Voice output volume"
+              aria-valuetext={Math.round(voice.outputVolume * 100) + '%'}
+              type="range"
+              min="0"
+              max="2"
+              step=".05"
+              value={voice.outputVolume}
+              onChange={(e) => void action((c) => c.setOutputVolume(Number(e.target.value)))}
+            />
+          </label>
           {voice.status === 'idle' ? (
             <label>
               Join channel

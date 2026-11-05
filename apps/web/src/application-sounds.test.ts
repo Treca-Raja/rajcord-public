@@ -13,6 +13,7 @@ function voice(values: Partial<VoiceState> = {}): VoiceState {
     channelId: null,
     input: 'mic',
     output: 'speaker',
+    outputVolume: 1,
     inputMissing: false,
     outputMissing: false,
     muted: true,
