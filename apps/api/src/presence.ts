@@ -61,7 +61,9 @@ export class PresenceService {
         if (this.closed || !socket.connected) return;
         try {
           await this.synchronize();
+          if (this.closed || !socket.connected) return;
           const auth = await identity(this.pool, socket.data.token);
+          if (this.closed || !socket.connected) return;
           if (!auth || auth.user.status !== 'approved') {
             ack({ ok: false, status: 403, error: 'An approved account is required.' });
             return;
@@ -73,8 +75,10 @@ export class PresenceService {
           };
           if (socket.connected) ack({ ok: true, data });
         } catch {
+          if (this.closed) return;
           this.unavailable();
-          ack({ ok: false, status: 503, error: 'Presence temporarily unavailable.' });
+          if (socket.connected)
+            ack({ ok: false, status: 503, error: 'Presence temporarily unavailable.' });
         }
       });
     });
@@ -138,6 +142,7 @@ export class PresenceService {
     const { rows } = await this.pool.query<{ id: string; username: string; display_name: string }>(
       "SELECT u.id,u.username,u.display_name,EXISTS(SELECT 1 FROM platform WHERE owner_id=u.id) is_owner FROM users u WHERE status='approved' ORDER BY u.id",
     );
+    if (this.closed) return;
     const eligible = new Set(rows.map((row) => row.id));
     for (const id of next) if (!eligible.has(id)) next.delete(id);
     const roster = JSON.stringify(rows);
@@ -160,6 +165,7 @@ export class PresenceService {
       const delta = { epoch: this.epoch, revision: ++this.revision, changes, rosterChanged };
       for (const socket of this.io.sockets.sockets.values()) {
         const auth = await identity(this.pool, socket.data.token);
+        if (this.closed) return;
         if (socket.connected && auth?.user.status === 'approved')
           socket.emit('presence:changed', delta);
         else if (!auth) socket.disconnect(true);

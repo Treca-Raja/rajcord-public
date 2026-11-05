@@ -217,3 +217,122 @@ describe('authoritative ephemeral presence', () => {
     expect(viewer.connected).toBe(true);
   });
 });
+
+it('revalidates a recipient again at delivery even if it passed source validation', async () => {
+  const viewer = connect('viewer');
+  await service.reconcile();
+  const before = viewer.events.length;
+  let validations = 0;
+  vi.mocked(identity).mockImplementation(async (_pool, token) => {
+    if (token === 'viewer' && ++validations === 2) sessions.delete('viewer');
+    return sessions.get(String(token)) ?? null;
+  });
+  connect('other');
+  await service.reconcile();
+  expect(viewer.connected).toBe(false);
+  expect(viewer.events).toHaveLength(before);
+});
+
+it('shutdown cannot publish a stale delta after a queued identity lookup completes', async () => {
+  const viewer = connect('viewer');
+  await service.reconcile();
+  const before = viewer.events.length;
+  let resolve!: (value: Identity) => void;
+  const pending = new Promise<Identity>((done) => {
+    resolve = done;
+  });
+  vi.mocked(identity).mockImplementationOnce(() => pending);
+  connect('other');
+  await Promise.resolve();
+  const closing = service.close();
+  resolve(auth('viewer'));
+  await closing;
+  expect(viewer.events).toHaveLength(before);
+});
+
+it('shutdown cannot acknowledge a delayed snapshot as fresh', async () => {
+  const viewer = connect('viewer');
+  await service.reconcile();
+  let resolve!: (value: Identity) => void;
+  const pending = new Promise<Identity>((done) => {
+    resolve = done;
+  });
+  vi.mocked(identity).mockImplementationOnce(() => pending);
+  const ack = vi.fn();
+  viewer.handlers.get('presence:snapshot')!(ack as never);
+  await Promise.resolve();
+  const closing = service.close();
+  resolve(auth('viewer'));
+  await closing;
+  expect(ack).not.toHaveBeenCalled();
+});
+
+it('shutdown during recipient revalidation cannot deliver the already prepared delta', async () => {
+  const viewer = connect('viewer');
+  await service.reconcile();
+  const before = viewer.events.length;
+  let resolve!: (value: Identity) => void;
+  const pending = new Promise<Identity>((done) => {
+    resolve = done;
+  });
+  let began!: () => void;
+  const started = new Promise<void>((done) => {
+    began = done;
+  });
+  let validations = 0;
+  vi.mocked(identity).mockImplementation(async (_pool, token) => {
+    if (token === 'viewer' && ++validations === 2) {
+      began();
+      return pending;
+    }
+    return sessions.get(String(token)) ?? null;
+  });
+  connect('other');
+  await started;
+  const closing = service.close();
+  resolve(auth('viewer'));
+  await closing;
+  expect(viewer.events).toHaveLength(before);
+});
+
+it('a failed lookup after shutdown cannot send an error acknowledgement or uncertainty event', async () => {
+  const viewer = connect('viewer');
+  await service.reconcile();
+  const before = viewer.events.length;
+  let reject!: (error: Error) => void;
+  const pending = new Promise<Identity>((_done, fail) => {
+    reject = fail;
+  });
+  vi.mocked(identity).mockImplementationOnce(() => pending);
+  const ack = vi.fn();
+  viewer.handlers.get('presence:snapshot')!(ack as never);
+  await Promise.resolve();
+  const closing = service.close();
+  reject(new Error('Fixture lookup failed during shutdown'));
+  await closing;
+  expect(ack).not.toHaveBeenCalled();
+  expect(viewer.events).toHaveLength(before);
+});
+
+it('a disconnected requester cannot hide a database outage from remaining connected viewers', async () => {
+  const viewer = connect('viewer'),
+    requester = connect('requester');
+  await service.reconcile();
+  let reject!: (error: Error) => void;
+  const pending = new Promise<Identity>((_done, fail) => {
+    reject = fail;
+  });
+  vi.mocked(identity).mockImplementationOnce(() => pending);
+  const ack = vi.fn();
+  requester.handlers.get('presence:snapshot')!(ack as never);
+  await Promise.resolve();
+  requester.disconnect();
+  reject(new Error('Fixture database unavailable'));
+  await service.reconcile();
+  expect(ack).not.toHaveBeenCalled();
+  expect(
+    viewer.events.some(
+      (event) => event.event === 'presence:unavailable' && event.payload === undefined,
+    ),
+  ).toBe(true);
+});
