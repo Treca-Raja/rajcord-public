@@ -1,3 +1,4 @@
+import { VoiceOutput } from './voice-output';
 import type { Room, LocalAudioTrack, RemoteTrack } from 'livekit-client';
 export type VoiceChannel = {
   id: string;
@@ -11,6 +12,7 @@ export type VoiceState = {
   deafened: boolean;
   input: string;
   output: string;
+  outputVolume: number;
   inputMissing: boolean;
   outputMissing: boolean;
   error: string;
@@ -30,6 +32,7 @@ export class VoiceController {
     deafened: false,
     input: '',
     output: '',
+    outputVolume: 1,
     inputMissing: false,
     outputMissing: false,
     error: '',
@@ -40,9 +43,11 @@ export class VoiceController {
   private microphone?: LocalAudioTrack;
   private publishing = new WeakSet<LocalAudioTrack>();
   private elements = new Map<string, HTMLAudioElement>();
+  private outputAudio = new VoiceOutput();
   private volumes = new Map<string, number>();
   private generation = 0;
   private captureAttempt = 0;
+  private outputAttempt = 0;
   private playback = new WeakMap<HTMLAudioElement, Promise<void>>();
   private wanted = false;
   private retry?: ReturnType<typeof setTimeout>;
@@ -282,7 +287,10 @@ export class VoiceController {
     room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
       const element = this.elements.get(track.sid!);
       if (element) {
+        element.muted = true;
         element.pause();
+        this.outputAudio.release(element);
+        element.srcObject = null;
         element.remove();
         this.elements.delete(track.sid!);
       }
@@ -365,7 +373,9 @@ export class VoiceController {
     this.microphone?.stop();
     this.microphone = undefined;
     for (const element of this.elements.values()) {
+      element.muted = true;
       element.pause();
+      this.outputAudio.release(element);
       element.srcObject = null;
       element.remove();
     }
@@ -383,6 +393,11 @@ export class VoiceController {
     room?.removeAllListeners();
     this.clearMedia();
     this.update({ status: 'idle', channelId: null, participants: [] });
+    try {
+      await this.outputAudio.close();
+    } catch (error) {
+      this.update({ error: 'Cannot close voice audio: ' + (error as Error).message });
+    }
     await room?.disconnect();
     if (lease)
       try {
@@ -410,10 +425,46 @@ export class VoiceController {
   async resumeAudio() {
     for (const element of this.elements.values()) await this.play(element);
   }
+  async setOutputVolume(value: number) {
+    if (!Number.isFinite(value) || value < 0 || value > 2)
+      throw new Error('Voice output volume must be between 0% and 200%.');
+    const attempt = ++this.outputAttempt;
+    this.update({ outputVolume: value });
+    this.outputAudio.setVolume(value);
+    const generation = this.generation;
+    const prepare = [...this.elements.values()].some((element) =>
+      this.outputAudio.needsPreparation(element),
+    );
+    for (const element of this.elements.values())
+      element.volume =
+        (this.volumes.get(element.dataset.voiceAudio ?? '') ?? 1) *
+        this.outputAudio.volumeFor(element);
+    if (
+      !prepare &&
+      !this.outputAudio.needsEnable &&
+      !this.state.error.startsWith('Audio output needs attention:')
+    )
+      return;
+    for (const element of this.elements.values()) {
+      element.muted = true;
+      element.pause();
+    }
+    try {
+      await this.outputAudio.enable();
+      if (generation !== this.generation || attempt !== this.outputAttempt) return;
+      for (const element of this.elements.values()) await this.play(element);
+    } catch (error) {
+      if (generation === this.generation && attempt === this.outputAttempt)
+        this.update({ error: 'Audio output needs attention: ' + (error as Error).message });
+    }
+  }
   volume(id: string, value: number) {
+    if (!Number.isFinite(value) || value < 0 || value > 1)
+      throw new Error('Participant volume must be between 0% and 100%.');
     this.volumes.set(id, value);
     for (const element of this.elements.values())
-      if (element.dataset.voiceAudio === id) element.volume = value;
+      if (element.dataset.voiceAudio === id)
+        element.volume = value * this.outputAudio.volumeFor(element);
     this.updateParticipants();
   }
   private play(element: HTMLAudioElement, id = element.dataset.voiceAudio ?? '') {
@@ -430,13 +481,17 @@ export class VoiceController {
       generation === this.generation &&
       [...this.elements.values()].includes(element);
     if (!current()) return;
-    element.volume = this.volumes.get(id) ?? 1;
     if (this.state.deafened || this.state.outputMissing || !this.state.output) {
       element.muted = true;
       element.pause();
       return;
     }
     try {
+      await this.outputAudio.enable();
+      if (!current()) return;
+      await this.outputAudio.prepare(element, this.state.output);
+      if (!current()) return;
+      element.volume = (this.volumes.get(id) ?? 1) * this.outputAudio.volumeFor(element);
       if (typeof element.setSinkId !== 'function')
         throw new Error(
           'This browser cannot select an output device. Use Edge or the desktop app.',
@@ -450,6 +505,8 @@ export class VoiceController {
       }
       element.muted = false;
       await element.play();
+      if (current() && this.state.error.startsWith('Audio output needs attention:'))
+        this.update({ error: '' });
     } catch (error) {
       element.muted = true;
       element.pause();
