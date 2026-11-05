@@ -1,7 +1,12 @@
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { io as connect, type Socket } from 'socket.io-client';
-import type { ChatAck, PresenceDelta, PresenceSnapshot } from '@tricord/shared';
+import {
+  PRESENCE_TIMING,
+  type ChatAck,
+  type PresenceDelta,
+  type PresenceSnapshot,
+} from '@tricord/shared';
 import { createApp } from './app.js';
 import { testDatabase } from './db/test-database.js';
 import { digest } from './auth/service.js';
@@ -11,15 +16,16 @@ let fixture: Awaited<ReturnType<typeof testDatabase>>;
 let instance: ReturnType<typeof createApp>;
 let address: string;
 const sockets: Socket[] = [];
-beforeAll(async () => {
+beforeEach(async () => {
   fixture = await testDatabase();
   instance = createApp({ databaseUrl: fixture.url });
   address = await instance.app.listen({ host: '127.0.0.1', port: 0 });
 });
-afterAll(async () => {
+afterEach(async () => {
   for (const socket of sockets) socket.disconnect();
   await instance?.app.close();
   await fixture?.cleanup();
+  sockets.length = 0;
 });
 async function session(userId: string) {
   const token = randomBytes(32).toString('hex');
@@ -30,17 +36,33 @@ async function session(userId: string) {
   );
   return { cookie: 'tricord_session=' + token, csrfToken };
 }
-async function socket(auth: Awaited<ReturnType<typeof session>>) {
+async function socket(
+  auth: Awaited<ReturnType<typeof session>>,
+  requestOrigin = origin,
+  csrfToken = auth.csrfToken,
+) {
   const result = connect(address, {
     transports: ['websocket'],
+    autoConnect: false,
     reconnection: false,
-    extraHeaders: { origin, cookie: auth.cookie },
-    auth: { csrfToken: auth.csrfToken },
+    extraHeaders: { origin: requestOrigin, cookie: auth.cookie },
+    auth: { csrfToken },
   });
   sockets.push(result);
   await new Promise<void>((resolve, reject) => {
-    result.once('connect', resolve);
-    result.once('connect_error', reject);
+    const timer = setTimeout(
+      () => reject(new Error('Presence fixture connection deadline exceeded')),
+      PRESENCE_TIMING.snapshotTimeoutMs,
+    );
+    result.once('connect', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    result.once('connect_error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    result.connect();
   });
   return result;
 }
@@ -130,3 +152,154 @@ it('ten real accounts aggregate twenty connections with ordered bounded deltas, 
   expect(approve.statusCode).toBe(200);
   expect((await snapshot(pendingSocket)).onlineIds).toContain(pending.rows[0].id);
 });
+
+async function account(name: string) {
+  const result = await fixture.database.pool.query(
+    "INSERT INTO users(username,display_name,status) VALUES($1,$2,'approved') RETURNING id",
+    [name, 'Presence fixture ' + name],
+  );
+  return result.rows[0].id as string;
+}
+
+it('expiry during reconnect grace removes the last session without waiting out network grace', async () => {
+  const viewerId = await account('viewer'),
+    memberId = await account('member');
+  const viewer = await socket(await session(viewerId));
+  const memberAuth = await session(memberId);
+  const member = await socket(memberAuth);
+  await snapshot(viewer);
+  member.disconnect();
+  expect((await snapshot(viewer)).onlineIds).toContain(memberId);
+  await fixture.database.pool.query(
+    "UPDATE sessions SET expires_at=now()-interval '1 second' WHERE user_id=$1",
+    [memberId],
+  );
+  const began = performance.now();
+  expect((await snapshot(viewer)).onlineIds).not.toContain(memberId);
+  expect(performance.now() - began).toBeLessThan(PRESENCE_TIMING.snapshotTimeoutMs);
+  await expect(socket(memberAuth)).rejects.toThrow('Sign in required');
+});
+
+it('expired or forged connections receive no presence and cannot impersonate another account', async () => {
+  const viewerId = await account('viewer'),
+    memberId = await account('member');
+  const viewerAuth = await session(viewerId),
+    memberAuth = await session(memberId);
+  const viewer = await socket(viewerAuth);
+  const member = await socket(memberAuth);
+  await snapshot(viewer);
+  const deliveries: string[] = [];
+  member.on('presence:changed', () => deliveries.push('delta'));
+  member.on('presence:unavailable', () => deliveries.push('unavailable'));
+  await fixture.database.pool.query(
+    "UPDATE sessions SET expires_at=now()-interval '1 second' WHERE user_id=$1",
+    [memberId],
+  );
+  expect((await snapshot(viewer)).onlineIds).toEqual([viewerId]);
+  await expect
+    .poll(() => member.connected, { timeout: PRESENCE_TIMING.snapshotTimeoutMs })
+    .toBe(false);
+  expect(deliveries).toEqual([]);
+  await expect(socket(viewerAuth, origin, 'forged')).rejects.toThrow('Sign in required');
+  await expect(socket(viewerAuth, 'http://untrusted.invalid')).rejects.toThrow();
+  await expect(socket({ cookie: '', csrfToken: viewerAuth.csrfToken })).rejects.toThrow(
+    'Sign in required',
+  );
+  viewer.emit('presence:set', { userId: memberId, online: true });
+  expect((await snapshot(viewer)).onlineIds).toEqual([viewerId]);
+});
+
+it('final explicit logout immediately removes presence while transport loss has bounded grace', async () => {
+  const viewerId = await account('viewer'),
+    memberId = await account('member');
+  const viewer = await socket(await session(viewerId));
+  const auth = await session(memberId);
+  const member = await socket(auth);
+  await snapshot(viewer);
+  const began = performance.now();
+  const logout = await instance.app.inject({
+    method: 'POST',
+    url: '/api/auth/logout',
+    headers: { origin, cookie: auth.cookie, 'x-csrf-token': auth.csrfToken },
+  });
+  expect(logout.statusCode).toBe(200);
+  expect((await snapshot(viewer)).onlineIds).toEqual([viewerId]);
+  expect(performance.now() - began).toBeLessThan(PRESENCE_TIMING.snapshotTimeoutMs);
+  await expect
+    .poll(() => member.connected, { timeout: PRESENCE_TIMING.snapshotTimeoutMs })
+    .toBe(false);
+});
+
+it('ten accounts survive repeated twenty-connection churn without extra deltas or an unbounded request budget', async () => {
+  const ids = await Promise.all(Array.from({ length: 10 }, (_, n) => account('churn_' + n)));
+  const auths = await Promise.all(ids.flatMap((id) => [session(id), session(id)]));
+  let clients = await Promise.all(auths.map((auth) => socket(auth)));
+  const viewer = clients[0]!;
+  const baseline = await snapshot(viewer);
+  const deltas: PresenceDelta[] = [];
+  viewer.on('presence:changed', (delta) => deltas.push(delta));
+  const timings: number[] = [];
+  for (let round = 0; round < 5; round++) {
+    clients.slice(1).forEach((client) => client.disconnect());
+    clients = [viewer, ...(await Promise.all(auths.slice(1).map((auth) => socket(auth))))];
+    const began = performance.now();
+    const state = await snapshot(viewer);
+    timings.push(performance.now() - began);
+    expect(state).toEqual(baseline);
+    await expect
+      .poll(() => instance.io.sockets.sockets.size, { timeout: PRESENCE_TIMING.snapshotTimeoutMs })
+      .toBe(20);
+  }
+  expect(deltas).toEqual([]);
+  expect(Math.max(...timings)).toBeLessThan(PRESENCE_TIMING.snapshotTimeoutMs);
+  // Six synchronization requests so far; the thirteenth is denied without removing eligibility.
+  for (let index = 0; index < 6; index++) await snapshot(viewer);
+  expect(await viewer.timeout(5000).emitWithAck('presence:snapshot')).toMatchObject({
+    ok: false,
+    status: 429,
+  });
+  expect(viewer.connected).toBe(true);
+}, 60000);
+
+it('a silent transport reaches offline within heartbeat timeout plus bounded grace, without snapshot polling', async () => {
+  const viewerId = await account('heartbeat_viewer'),
+    memberId = await account('heartbeat_member');
+  const viewer = await socket(await session(viewerId)),
+    member = await socket(await session(memberId));
+  await snapshot(viewer);
+  const expected =
+    PRESENCE_TIMING.pingIntervalMs +
+    PRESENCE_TIMING.pingTimeoutMs +
+    PRESENCE_TIMING.reconnectGraceMs;
+  const started = performance.now();
+  const offline = new Promise<number>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Heartbeat offline deadline exceeded'));
+    }, expected + PRESENCE_TIMING.snapshotTimeoutMs);
+    const changed = (delta: PresenceDelta) => {
+      if (delta.changes.some((change) => change.userId === memberId && !change.online)) {
+        cleanup();
+        resolve(performance.now() - started);
+      }
+    };
+    function cleanup() {
+      clearTimeout(timer);
+      viewer.off('presence:changed', changed);
+    }
+    viewer.on('presence:changed', changed);
+  });
+  // This test-owned client stops processing packets, so it cannot answer server pings.
+  member.io.engine.transport.removeAllListeners('packet');
+  const elapsed = await offline;
+  expect(elapsed).toBeGreaterThanOrEqual(expected - PRESENCE_TIMING.snapshotTimeoutMs);
+  expect(elapsed).toBeLessThan(expected + PRESENCE_TIMING.snapshotTimeoutMs);
+  expect((await snapshot(viewer)).onlineIds).toEqual([viewerId]);
+  console.info(
+    'Presence heartbeat: silent peer offline in ' +
+      Math.round(elapsed) +
+      ' ms (configured bound ' +
+      expected +
+      ' ms plus synchronization allowance).',
+  );
+}, 60000);

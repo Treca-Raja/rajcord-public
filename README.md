@@ -217,6 +217,7 @@ pnpm test
 pnpm test:db
 pnpm build
 pnpm --filter @tricord/api test:browser
+pnpm --filter @tricord/api test:presence
 pnpm --filter @tricord/api test:desktop
 pnpm --filter @tricord/api test:voice
 pnpm --filter @tricord/api test:voice:load
@@ -233,6 +234,7 @@ There are **139 passing Vitest tests**: 51 unit/regression tests and 88 database
 - The Electron smoke uses three real launches with an isolated temporary profile. It verifies registration, live approval, account settings, logout, minimization, temporary-session cleanup and remembered-session restoration, plus renderer isolation and absence of localStorage tokens. Sending, receiving from an independent account and restored message history plus voice device selection, microphone publication, camera denial, mute/deafen and leave bring the total to 26 checks, including notification IPC validation, Windows registration and a real native notification show event.
 - Browser/Electron smoke servers bind to **127.0.0.1:3003 / :3002**, respectively. Reports/screenshots go to ignored `artifacts/`. Their temporary profiles are separate from your real browser and desktop profile.
 - `db:verify-persistence` restarts the existing PostgreSQL container, uses its own disposable database to verify accounts, sessions, audit records, invitations, channels, DMs, group history boundaries, idempotent retries and message persistence. Existing Fastify/pg pools must recover. It then drops only its own test database and verifies the development migration journal is unchanged. Run it when interrupting development connections is acceptable.
+- `pnpm test:presence` builds and runs focused presence acceptance on **127.0.0.1:3006**, using disposable PostgreSQL data and two isolated Edge profiles. It checks database uncertainty/recovery, obsolete snapshot acknowledgements, denied rosters, transport/API restart recovery, session expiry and decoded socket-event budgets. It needs local PostgreSQL but does not need LiveKit or capture microphones. Its ignored report is **artifacts/presence-browser.json**. The database suite also covers five rounds of ten-account/twenty-connection churn and a real heartbeat timeout plus reconnect grace.
 - `pnpm test:browser` and `pnpm test:desktop` are convenience commands that build first. Tests fail when required infrastructure is missing; they do not silently skip.
 
 ## Run the built applications locally

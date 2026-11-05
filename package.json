@@ -34,6 +34,7 @@
     "voice:setup": "node scripts/voice-setup.mjs",
     "voice:up": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice up -d",
     "voice:down": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice down",
+    "test:presence": "pnpm build && pnpm --filter @tricord/api test:presence",
     "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice",
     "test:voice:load": "pnpm --filter @tricord/api test:voice:check && pnpm build && pnpm --filter @tricord/api test:voice:load",
     "server:build": "docker build -f infrastructure/server/Dockerfile -t tricord-server:alpha .",
