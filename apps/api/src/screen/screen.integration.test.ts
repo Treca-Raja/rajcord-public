@@ -489,9 +489,16 @@ it.each(['epoch', 'lease', 'session'] as const)(
   },
 );
 
-it.each(['session', 'approval', 'lease', 'expiry'] as const)(
-  'does not reuse an acknowledged socket unselect after real %s loss',
-  async (loss) => {
+it.each([
+  ['session', false],
+  ['approval', false],
+  ['lease', false],
+  ['expiry', false],
+  ['session', true],
+  ['approval', true],
+] as const)(
+  'does not reuse an acknowledged socket unselect after real %s loss (disconnect=%s)',
+  async (loss, disconnect) => {
     const f = await socketSelections(),
       cleanup = f.a.reserveCleanup()!;
     expect(await cleanup.run()).toBeNull();
@@ -504,8 +511,20 @@ it.each(['session', 'approval', 'lease', 'expiry'] as const)(
       else if (loss === 'approval') await auth.changeStatus(owner.token, f.viewer.id, 'suspend');
       else if (loss === 'lease') server.voice!.invalidate(server.voice!.leases.get(f.viewer.id)!);
       else server.voice!.leases.get(f.viewer.id)!.expires = Date.now() - 1;
-      // A concurrent authorized snapshot can already have discarded the old binding.
-      await expect(cleanup.run()).rejects.toThrow(/^(not_authorized|stale):/);
+      const retry = cleanup.run();
+      if (disconnect) {
+        f.v.socket.disconnect();
+        await expect(retry).rejects.toThrow(/^socket has been disconnected$/);
+      }
+      // Revocation can close the socket before its rejection acknowledgement arrives.
+      await expect(retry).rejects.toSatisfy(
+        (cause: unknown) =>
+          cause instanceof Error &&
+          (/^(not_authorized|stale):/.test(cause.message) ||
+            ((loss === 'session' || loss === 'approval') &&
+              cause.message === 'socket has been disconnected' &&
+              !f.v.socket.connected)),
+      );
       expect(f.send.mock.calls[0]![0]).toBe(cleanup.request);
       expect(f.send.mock.calls[1]![0]).toBe(cleanup.request);
     } finally {
