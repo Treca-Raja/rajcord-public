@@ -86,8 +86,8 @@ importers:
         specifier: ^4.8.1
         version: 4.8.4(supports-color@8.1.1)
       ws:
-        specifier: ^8.22.0
-        version: 8.22.0
+        specifier: ^8.22.2
+        version: 8.22.2
     devDependencies:
       '@types/pg':
         specifier: ^8.15.0
@@ -2899,8 +2899,8 @@ packages:
       utf-8-validate:
         optional: true
 
-  ws@8.22.0:
-    resolution: {integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==}
+  ws@8.22.2:
+    resolution: {integrity: sha512-/rEZ2ejown2N5gxVTHUu9bVVC7ttu0/Tgzf5hbTOixR3Fs7mbbXgn2DbdbcKgJOmpQMtrIUWivtYuVMnp/W/yA==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -5555,7 +5555,7 @@ snapshots:
 
   ws@8.21.3: {}
 
-  ws@8.22.0: {}
+  ws@8.22.2: {}
 
   xmlbuilder@15.1.1: {}
 
