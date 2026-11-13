@@ -40,7 +40,7 @@ const giphyFixture = {
   ],
   pagination: { offset: 0, count: 1, total_count: 1 },
 };
-const { app, io } = createApp({
+const { app, io: serverIo } = createApp({
   gifSearch: {
     config: { giphyApiKey: 'fixture-public-giphy', tenorApiKey: 'fixture-private-tenor' },
     fetcher: async (input) => {
@@ -74,7 +74,7 @@ const { app, io } = createApp({
 });
 // Smoke-only gate for account changes that occur before notification subscription.
 let holdSocketConnections = false;
-io.use((_socket, next) =>
+serverIo.use((_socket, next) =>
   next(holdSocketConnections ? new Error('Authentication unavailable.') : undefined),
 );
 const profile = await mkdtemp(path.join(tmpdir(), 'tricord-browser-smoke-'));
@@ -2456,7 +2456,7 @@ try {
   await js("document.querySelector('form').requestSubmit()");
   await wait("!!document.querySelector('[data-account-status=pending]')");
   assert.equal(await js("fetch('/api/members').then(r=>r.status)"), 403);
-  assert.equal(io.sockets.sockets.size, 0);
+  assert.equal(serverIo.sockets.sockets.size, 0);
   const delayedApproval = await app.inject({
     url: '/api/admin/accounts/' + delayed.id,
     method: 'POST',
@@ -2464,7 +2464,7 @@ try {
     payload: { action: 'approve' },
   });
   assert.equal(delayedApproval.statusCode, 200);
-  assert.equal(io.sockets.sockets.size, 0);
+  assert.equal(serverIo.sockets.sockets.size, 0);
   assert.equal(await js("!!document.querySelector('[data-account-status=pending]')"), true);
   holdSocketConnections = false;
   await wait("!!document.querySelector('[data-connection=connected]')");

@@ -84,10 +84,13 @@ function fixture(dependency?: ScreenBindingDependency) {
     heartbeat = deferred<unknown>(),
     replacement = deferred<unknown>();
   const request = vi.fn(async (path: string) => {
-    if (path === '/voice/join')
+    if (path === '/voice/join') {
+      // Device loss after admission keeps this lease fixture free of physical capture.
+      controller.update({ inputMissing: true });
       return request.mock.calls.filter(([p]) => p === path).length === 1
         ? initial.promise
         : replacement.promise;
+    }
     if (path === '/voice/heartbeat') return heartbeat.promise;
     return { ok: true };
   });
@@ -96,7 +99,7 @@ function fixture(dependency?: ScreenBindingDependency) {
     dependency,
   );
   controllers.push(controller);
-  controller.update({ input: 'fixture-mic', output: 'fixture-speaker', inputMissing: true });
+  controller.update({ input: 'fixture-mic', output: 'fixture-speaker' });
   drains.push(() => {
     initial.resolve(lease);
     heartbeat.resolve({ ok: true });

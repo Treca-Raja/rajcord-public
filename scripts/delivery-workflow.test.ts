@@ -83,7 +83,7 @@ describe('verification and main-only delivery boundary', () => {
       'workflow_call',
       'workflow_dispatch',
     ]);
-    expect(verify.on.push).toMatchObject({ 'branches-ignore': ['main'] });
+    expect(verify.on.push).toEqual({ branches: ['develop'] });
     expect(verify.on.pull_request).toMatchObject({ types: expect.arrayContaining(['edited']) });
     expect(delivery.on.workflow_dispatch?.inputs?.publish_only).toMatchObject({
       type: 'boolean',
@@ -107,6 +107,26 @@ describe('verification and main-only delivery boundary', () => {
     expect(verify.permissions).toEqual({ contents: 'read' });
     expect(JSON.stringify(verify)).not.toMatch(/packages.*write|DEPLOY_SSH_KEY|secrets\./);
     expect(verification['continue-on-error']).not.toBe(true);
+  });
+
+  it('keeps Windows PR tests and packaging unconditional', () => {
+    const desktop = workflow('desktop');
+    expect(desktop.on).toHaveProperty('pull_request');
+    expect(desktop.on.pull_request).toBeNull();
+    const build = job(desktop, 'build');
+    for (const command of [
+      'pnpm format:check',
+      'pnpm lint',
+      'pnpm typecheck',
+      'pnpm test',
+      'pnpm build',
+      'pnpm desktop:package',
+    ]) {
+      const step = build.steps?.find((step) => step.run === command);
+      expect(step, command).toBeDefined();
+      expect(step?.if, command).toBeUndefined();
+      expect(step?.['continue-on-error'], command).not.toBe(true);
+    }
   });
 
   it('verifies current main even when production delivery is disabled', () => {
