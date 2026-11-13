@@ -12,6 +12,7 @@ interface Window {
     readonly screens?: import('@tricord/shared').DesktopScreenBridge;
     readonly platform: string;
     readonly version: string;
+    readonly onMicrophonePermissionReset?: (callback: () => void) => () => void;
     readonly enableNotifications: () => Promise<boolean>;
     readonly notify: (notice: { conversationId: string; mention: boolean }) => Promise<boolean>;
     readonly onNotificationOpen: (callback: (conversationId: string) => void) => () => void;

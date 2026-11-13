@@ -239,7 +239,9 @@ it('device enumeration failure is reported without an unhandled rejection or fal
   const { media } = setup();
   media.enumerateDevices.mockRejectedValueOnce(new Error('Device API unavailable'));
   media.dispatchEvent(new Event('devicechange'));
-  await vi.waitFor(() => expect(controller.state.error).toContain('Cannot check audio devices'));
+  await vi.waitFor(() =>
+    expect(controller.state.devicesError).toContain('Cannot check audio devices'),
+  );
   expect(media.getUserMedia).not.toHaveBeenCalled();
 });
 

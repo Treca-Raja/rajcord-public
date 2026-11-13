@@ -8,10 +8,20 @@ import type { ScreenControls } from './screen-call';
 
 export type VoiceControls = Pick<
   VoiceController,
-  'selectInput' | 'selectOutput' | 'join' | 'leave' | 'mute' | 'deafen' | 'resumeAudio' | 'volume'
+  | 'selectInput'
+  | 'selectOutput'
+  | 'join'
+  | 'leave'
+  | 'mute'
+  | 'deafen'
+  | 'resumeAudio'
+  | 'volume'
+  | 'setOutputVolume'
+  | 'refreshDevices'
 > & { devices(): Promise<void> };
 export type VoiceDevice = Readonly<Pick<MediaDeviceInfo, 'kind' | 'deviceId' | 'label'>>;
-type VoiceSnapshot = Readonly<Omit<VoiceState, 'participants'>> & {
+type VoiceSnapshot = Readonly<Omit<VoiceState, 'participants' | 'devices'>> & {
+  devices: readonly VoiceDevice[];
   participants: readonly Readonly<VoiceState['participants'][number]>[];
 };
 type Call = Readonly<{
@@ -41,6 +51,9 @@ export function CallProvider({
   screenApplication?: ScreenApplication;
 }) {
   const [owned, setOwned] = useState<{ session: ApprovedVoiceSession; call: Call } | null>(null);
+  const [permissionReset, setPermissionReset] = useState<{ session: ApprovedVoiceSession } | null>(
+    null,
+  );
   // A dependency change applies to the next verified lifetime, never restarts a current call.
   const nextPreview = useRef(preview);
   nextPreview.current = preview;
@@ -53,6 +66,11 @@ export function CallProvider({
     const application = nextApplication.current;
     const screenAttachment = (nextScreens.current ?? application?.runtime)?.attachCall(session);
     const controller = new VoiceController(session.request, screenAttachment?.bindingDependency);
+    if (permissionReset?.session === session)
+      controller.update({
+        devicesStatus: 'permission-needed',
+        devicesError: 'Microphone permission reset. Allow microphone access to set up voice again.',
+      });
     screenAttachment?.connectVoice(controller);
     const screenCall = screenAttachment && application?.createCall(screenAttachment, controller);
     const screenControls = screenCall?.controls();
@@ -73,8 +91,8 @@ export function CallProvider({
     const localPreview = new CallPreviewLifetime(nextPreview.current);
     const unsubscribeLease = controller.onLeaseInvalidated(() => localPreview.stop());
     let active = true;
+    let deviceSource = controller.state.devices;
     let devices: readonly VoiceDevice[] = Object.freeze([]);
-    let discovery = 0;
     const pending = new Set<() => void>();
     const voiceListeners = new Set<(voice: VoiceSnapshot) => void>();
     const check = () => {
@@ -104,21 +122,9 @@ export function CallProvider({
       });
     };
     const controls: VoiceControls = {
-      devices: () =>
-        invoke(async () => {
-          const revision = ++discovery;
-          const found = await controller.devices();
-          check();
-          const catalog = Object.freeze(
-            [...concreteDevices(found, 'audioinput'), ...concreteDevices(found, 'audiooutput')].map(
-              ({ kind, deviceId, label }) => Object.freeze({ kind, deviceId, label }),
-            ),
-          );
-          check();
-          if (revision !== discovery) return;
-          devices = catalog;
-          publish();
-        }),
+      devices: () => invoke(() => controller.devices()),
+      refreshDevices: () => invoke(() => controller.refreshDevices()),
+      setOutputVolume: (value) => invoke(() => controller.setOutputVolume(value)),
       selectInput: (id) => invoke(() => controller.selectInput(id)),
       selectOutput: (id) => invoke(() => controller.selectOutput(id)),
       join: (id) => invoke(() => controller.join(id)),
@@ -143,6 +149,7 @@ export function CallProvider({
     const snapshot = (): VoiceSnapshot =>
       Object.freeze({
         ...controller.state,
+        devices,
         participants: Object.freeze(
           controller.state.participants.map((participant) => Object.freeze({ ...participant })),
         ),
@@ -162,6 +169,15 @@ export function CallProvider({
     };
     const publish = () => {
       if (active && session.current) {
+        if (deviceSource !== controller.state.devices) {
+          deviceSource = controller.state.devices;
+          devices = Object.freeze(
+            [
+              ...concreteDevices(deviceSource, 'audioinput'),
+              ...concreteDevices(deviceSource, 'audiooutput'),
+            ].map(({ kind, deviceId, label }) => Object.freeze({ kind, deviceId, label })),
+          );
+        }
         localPreview.observeVoice(controller.state);
         screenCall?.observeVoice(controller.state);
         const voice = snapshot();
@@ -177,7 +193,7 @@ export function CallProvider({
           session,
           call: Object.freeze({
             voice,
-            devices,
+            devices: voice.devices,
             controls,
             subscribeVoice,
             ...(screenControls ? { screens: screenControls } : {}),
@@ -190,8 +206,6 @@ export function CallProvider({
       if (!active) return;
       active = false;
       voiceListeners.clear();
-      devices = Object.freeze([]);
-      discovery++;
       cleanScreens([() => screenCall?.dispose(), () => screenAttachment?.release()]);
       unsubscribeLease();
       try {
@@ -207,12 +221,18 @@ export function CallProvider({
       }
     };
     const unsubscribe = session.onEnd(stop);
+    const unsubscribePermission = window.tricordDesktop?.onMicrophonePermissionReset?.(() => {
+      if (!active || !session.current) return;
+      stop();
+      setPermissionReset({ session });
+    });
     publish();
     return () => {
       unsubscribe();
+      unsubscribePermission?.();
       stop();
     };
-  }, [session]);
+  }, [session, permissionReset]);
   return (
     <CallContext.Provider
       value={session?.current && owned?.session === session ? owned.call : null}

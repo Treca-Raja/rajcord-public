@@ -2,6 +2,8 @@
 
 Rajcord uses the existing Electron client and the shared hosted React UI. Windows x64 installers are built with pinned electron-builder 26.18.0; electron-updater 6.8.11 handles signed NSIS updates. Electron remains pinned to 45.1.0. The updater's YAML parser has a scoped override to patched `js-yaml` 4.3.2, also used directly to validate its packaged trust configuration. This work does not deploy the web/API or change production infrastructure.
 
+Microphone approval is stored in the app profile and scoped to the configured server origin. It survives a full quit/restart; cancelling never saves approval. **Rajcord → Reset microphone permission (leaves voice)** and the equivalent tray action remove the saved grant, disconnect voice and keep unsent chat text. Windows privacy controls remain authoritative. Camera capture stays denied; screen sharing uses its separate authorized source picker. Every microphone request/check must come from the trusted main window and frame. This approval is independent of account sign-in, device selection and automatic joins. Reset is enabled only when the hosted UI has registered support for safely leaving voice; it remains disabled with older server UI versions or while signed out. Uninstall/profile preservation also preserves the saved choice until it is reset.
+
 ## Build locally
 
 Use Windows, Node 24 and pnpm 11.25.0 from the repository root:

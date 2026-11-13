@@ -19,6 +19,9 @@ function voice(values: Partial<VoiceState> = {}): VoiceState {
     muted: true,
     deafened: false,
     error: '',
+    devices: [],
+    devicesStatus: 'idle',
+    devicesError: '',
     participants: [],
     ...values,
   };

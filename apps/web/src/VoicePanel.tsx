@@ -50,6 +50,9 @@ export function VoicePanel({
     };
   }, []);
   useEffect(() => {
+    if (expanded) void action((c) => c.refreshDevices());
+  }, [expanded, call?.controls]);
+  useEffect(() => {
     if (
       !requestedChannel ||
       !loaded.current ||
@@ -139,9 +142,28 @@ export function VoicePanel({
       {expanded && voice && (
         <div className="voice-controls">
           <p className="voice-help">Choose your devices. You join muted.</p>
-          <button disabled={busy} onClick={() => void action((c) => c.devices())}>
-            Find audio devices
-          </button>
+          <p
+            className="voice-help"
+            role={voice.devicesStatus === 'error' ? 'alert' : 'status'}
+            data-audio-devices-status={voice.devicesStatus}
+          >
+            {voice.devicesStatus === 'loading'
+              ? 'Checking audio devices…'
+              : voice.devicesError || 'Audio devices update automatically.'}
+          </p>
+          <div className="voice-device-actions">
+            {voice.devicesStatus === 'permission-needed' && (
+              <button disabled={busy} onClick={() => void action((c) => c.devices())}>
+                Allow microphone access
+              </button>
+            )}
+            <button
+              disabled={busy || voice.devicesStatus === 'loading'}
+              onClick={() => void action((c) => c.refreshDevices())}
+            >
+              Refresh audio devices
+            </button>
+          </div>
           <label>
             Microphone
             <select

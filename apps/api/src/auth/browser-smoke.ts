@@ -2176,7 +2176,15 @@ try {
   await click('Preview sound');
   await wait("document.querySelector('.sound-settings').innerText.includes('Choose speakers')");
   await js("document.querySelector('.voice-settings-toggle').click()");
-  await click('Find audio devices');
+  await wait(
+    "['ready','permission-needed'].includes(document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus)",
+  );
+  if (
+    await js(
+      "document.querySelector('[data-audio-devices-status]').dataset.audioDevicesStatus==='permission-needed'",
+    )
+  )
+    await click('Allow microphone access');
   await wait('document.querySelector(\'select[aria-label="Voice speakers"]\').options.length>1');
   await js(
     `(()=>{const s=document.querySelector('select[aria-label="Voice speakers"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()`,

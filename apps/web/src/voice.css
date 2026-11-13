@@ -39,6 +39,11 @@
   padding: 8px;
   border-radius: 5px;
 }
+.voice-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .voice-controls button:disabled {
   opacity: 0.5;
 }

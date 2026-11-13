@@ -17,6 +17,9 @@ export type VoiceState = {
   inputMissing: boolean;
   outputMissing: boolean;
   error: string;
+  devices: MediaDeviceInfo[];
+  devicesStatus: 'idle' | 'loading' | 'ready' | 'permission-needed' | 'error';
+  devicesError: string;
   participants: { id: string; name: string; speaking: boolean; muted: boolean; volume: number }[];
 };
 type Request = <T>(path: string, method?: string, body?: unknown) => Promise<T>;
@@ -40,6 +43,9 @@ export class VoiceController {
     inputMissing: false,
     outputMissing: false,
     error: '',
+    devices: [],
+    devicesStatus: 'idle',
+    devicesError: '',
     participants: [],
   };
   private room?: Room;
@@ -63,6 +69,10 @@ export class VoiceController {
   private notifyingLease = false;
   private leaseAuthorized = false;
   private readonly screens: ScreenBindingOwner;
+  private deviceScan?: Promise<void>;
+  private deviceRevision = 0;
+  private permissionRequested = false;
+  private permissionScan = false;
   onChange: () => void = () => {};
   constructor(
     private request: Request,
@@ -117,12 +127,81 @@ export class VoiceController {
     this.state = { ...this.state, ...values };
     this.onChange();
   }
-  async devices() {
-    if (!navigator.mediaDevices)
-      throw new Error('Audio requires a supported browser on localhost or HTTPS.');
-    const probe = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    probe.getTracks().forEach((track) => track.stop());
-    return navigator.mediaDevices.enumerateDevices();
+  refreshDevices() {
+    return this.scanDevices(false);
+  }
+  devices() {
+    return this.scanDevices(true);
+  }
+  private scanDevices(requestPermission: boolean, changed = false): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    const needsProbe = requestPermission && !this.permissionScan;
+    if (needsProbe) {
+      this.permissionRequested = true;
+      this.permissionScan = true;
+    }
+    if (this.deviceScan) {
+      if (changed || needsProbe) this.deviceRevision++;
+      return this.deviceScan;
+    }
+    this.deviceScan = this.readDevices().finally(() => {
+      this.deviceScan = undefined;
+      this.permissionScan = false;
+    });
+    return this.deviceScan;
+  }
+  private async readDevices() {
+    let revision: number;
+    do {
+      revision = this.deviceRevision;
+      const requestPermission = this.permissionRequested;
+      this.permissionRequested = false;
+      this.update({ devicesStatus: 'loading', devicesError: '' });
+      try {
+        const media = navigator.mediaDevices;
+        if (typeof media?.enumerateDevices !== 'function')
+          throw new Error('Audio requires a supported browser on localhost or HTTPS.');
+        if (requestPermission) {
+          let probe: MediaStream | undefined;
+          try {
+            probe = await media.getUserMedia({ audio: true, video: false });
+          } finally {
+            probe?.getTracks().forEach((track) => track.stop());
+          }
+        }
+        if (this.disposed) return;
+        if (revision !== this.deviceRevision) continue;
+        const devices = await media.enumerateDevices();
+        if (this.disposed) return;
+        if (revision !== this.deviceRevision) continue;
+        this.checkSelectedDevices(devices);
+        const inputs = concreteDevices(devices, 'audioinput');
+        const outputs = concreteDevices(devices, 'audiooutput');
+        const available = [...inputs, ...outputs];
+        const needsPermission = !available.length || available.some((device) => !device.label);
+        this.update({
+          devices: available,
+          devicesStatus: needsPermission ? 'permission-needed' : 'ready',
+          devicesError: needsPermission
+            ? 'Allow microphone access to identify audio devices. If already allowed, connect a device and refresh.'
+            : !inputs.length
+              ? 'No microphones found. Connect a microphone and refresh.'
+              : !outputs.length
+                ? 'No speakers found. Connect speakers and refresh.'
+                : '',
+        });
+      } catch (error) {
+        if (this.disposed) return;
+        if (revision !== this.deviceRevision) continue;
+        const denied = ['NotAllowedError', 'SecurityError'].includes((error as Error).name);
+        this.update({
+          devicesStatus: denied ? 'permission-needed' : 'error',
+          devicesError: denied
+            ? 'Microphone access was denied. Allow access in browser or Windows privacy settings, then try again.'
+            : 'Cannot check audio devices. ' + (error as Error).message + ' Try again.',
+        });
+      }
+    } while (!this.disposed && (revision !== this.deviceRevision || this.permissionRequested));
   }
   async selectInput(id: string) {
     const generation = this.generation;
@@ -231,8 +310,13 @@ export class VoiceController {
   }
   async join(channelId: string) {
     if (this.wanted) throw new Error('Leave the current voice session first.');
-    if (!this.state.input || !this.state.output)
-      throw new Error('Select a microphone and speakers first.');
+    if (
+      !this.state.input ||
+      !this.state.output ||
+      this.state.inputMissing ||
+      this.state.outputMissing
+    )
+      throw new Error('Select an available microphone and speakers first.');
     this.wanted = true;
     const generation = ++this.generation;
     this.update({ status: 'joining', channelId, error: '', muted: true });
@@ -589,17 +673,7 @@ export class VoiceController {
       })),
     });
   }
-  private devicesChanged = async () => {
-    if (this.disposed) return;
-    let devices: MediaDeviceInfo[];
-    try {
-      devices = await navigator.mediaDevices.enumerateDevices();
-    } catch {
-      if (!this.disposed)
-        this.update({ error: 'Cannot check audio devices. Try finding devices again.' });
-      return;
-    }
-    if (this.disposed) return;
+  private checkSelectedDevices(devices: MediaDeviceInfo[]) {
     if (
       this.state.input &&
       !devices.some((d) => d.kind === 'audioinput' && d.deviceId === this.state.input)
@@ -626,11 +700,15 @@ export class VoiceController {
         error: 'Selected speakers are missing. Choose a replacement.',
       });
     }
+  }
+  private devicesChanged = () => {
+    void this.scanDevices(false, true);
   };
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     this.screens.dispose();
+    this.deviceRevision++;
     navigator.mediaDevices?.removeEventListener('devicechange', this.devicesChanged);
     this.onChange = () => {};
     void this.leave();
