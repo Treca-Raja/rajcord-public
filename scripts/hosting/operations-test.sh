@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 [[ -f /.dockerenv && ! -S /var/run/docker.sock && -d /fixture/scripts/hosting ]] || exit 1
 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-image=ghcr.io/fakebane/tricord-public@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+image=ghcr.io/treca-raja/rajcord-public@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 release=/opt/tricord/releases/$sha
 config=/etc/tricord/staging
 mkdir -p "$release/scripts" "$release/infrastructure" "$config/letsencrypt/live/tricord"
@@ -87,6 +87,7 @@ mv "$config/letsencrypt/live/tricord.fixture" "$config/letsencrypt/live/tricord"
 deploy
 grep -q -- 'https://rajcord.test/ready' /tmp/operations
 grep -q -- '-verify_hostname turn.rajcord.test -servername turn.rajcord.test' /tmp/operations
-if bash "$release/scripts/hosting/deploy.sh" staging ghcr.io/fakebane/tricord-public:latest "$sha" >/dev/null 2>&1; then exit 1; fi
+if bash "$release/scripts/hosting/deploy.sh" staging ghcr.io/treca-raja/rajcord-public:latest "$sha" >/dev/null 2>&1; then exit 1; fi
+if bash "$release/scripts/hosting/deploy.sh" staging ghcr.io/fakebane/tricord-public@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$sha" >/dev/null 2>&1; then exit 1; fi
 if bash "$release/scripts/hosting/deploy.sh" production "$image" "$sha" >/dev/null 2>&1; then exit 1; fi
 printf 'PASS: backup/migration/HTTPS failures block release success; immutable image and environment checks fail closed.\n'
