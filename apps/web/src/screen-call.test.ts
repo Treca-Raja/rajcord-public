@@ -33,7 +33,7 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-async function fixture() {
+async function fixture(failDisposal = false) {
   const epoch = crypto.randomUUID(),
     channelId = crypto.randomUUID(),
     shareId = crypto.randomUUID();
@@ -80,6 +80,19 @@ async function fixture() {
     getDisplayMedia: vi.fn(async () => stream as unknown as MediaStream),
   });
   adapters.push(capture);
+  if (failDisposal) {
+    const start = capture.start.bind(capture);
+    vi.spyOn(capture, 'start').mockImplementation(async (options) => {
+      const source = await start(options);
+      return {
+        ...source,
+        dispose: () => {
+          source.dispose();
+          throw new Error('Capture disposal failed.');
+        },
+      };
+    });
+  }
   const voice = { onLeaseInvalidated: () => () => {}, leave: vi.fn() };
   const call = new ScreenCall({
     attachment: { bind: async () => binding },
@@ -146,4 +159,29 @@ it('rejects a bare share acknowledgement and never creates peers before a public
   expect(f.voice.leave).not.toHaveBeenCalled();
   expect(Object.isFrozen(f.call.inspect())).toBe(true);
   expect(Object.isFrozen(f.call.inspect().shares)).toBe(true);
+});
+
+it('retires the published share and keeps voice connected when capture disposal throws', async () => {
+  const f = await fixture(true),
+    work = f.call.publish();
+  f.published.resolve(f.grant);
+  await work;
+  expect(f.call.inspect().phase).toBe('sharing');
+  expect(() => f.call.stopSource()).not.toThrow();
+  expect(f.track.readyState).toBe('ended');
+  expect(f.command).toHaveBeenCalledWith('screen:stop', {
+    epoch: f.binding.binding.epoch,
+    shareId: f.grant.share.id,
+  });
+  expect(f.call.inspect()).toMatchObject({
+    phase: 'ready',
+    ownShareId: null,
+    prepared: false,
+    error: 'Capture disposal failed.',
+  });
+  expect(f.voice.leave).not.toHaveBeenCalled();
+  await expect(f.call.prepare(f.settings)).rejects.toThrow('operation');
+  f.stopped.resolve({ stopped: true });
+  for (let i = 0; i < 12; i++) await Promise.resolve();
+  await f.call.prepare(f.settings);
 });

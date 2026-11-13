@@ -582,7 +582,11 @@ export class ScreenCall {
     this.source = undefined;
     this.ownShare = undefined;
     this.prepared = undefined;
-    source?.stop();
+    try {
+      source?.stop();
+    } catch (cause) {
+      this.error(cause);
+    }
     for (const id of [...this.outgoing.keys()]) this.closeOutgoing(id);
     for (const element of this.previewElements) {
       element.pause();
