@@ -51,6 +51,12 @@ jobs:
       - run: pnpm db:migrate
       - run: pnpm test:db
       - run: pnpm build
+      - name: Verify browser authentication, chat and notifications
+        run: |
+          TRICORD_BROWSER_PATH="$(command -v google-chrome)"
+          export TRICORD_BROWSER_PATH
+          test -x "$TRICORD_BROWSER_PATH"
+          pnpm --filter @tricord/api test:browser
       - name: Build deployable server image
         run: docker build --label org.opencontainers.image.revision="$GITHUB_SHA" -f infrastructure/server/Dockerfile -t tricord-ci .
       - name: Verify image and backup restore
