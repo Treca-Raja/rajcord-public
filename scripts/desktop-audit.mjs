@@ -12,6 +12,17 @@ const dir = path.resolve('artifacts/desktop');
 const archive = path.join(dir, 'win-unpacked/resources/app.asar');
 const files = listPackage(archive).map((file) => file.replaceAll('\\', '/'));
 assert.ok(files.includes('/dist/main.js'));
+for (const file of [
+  '/dist/native-capture.js',
+  '/dist/capture-authority.js',
+  '/dist/capture-authority-http.js',
+  '/dist/screen-ipc.js',
+  '/dist/picker/picker.html',
+  '/dist/picker/picker.css',
+  '/dist/picker/picker.js',
+  '/dist/picker-preload.js',
+])
+  assert.ok(files.includes(file), 'Missing packaged picker asset: ' + file);
 const unexpectedFiles = files.filter((file) =>
   /(?:\.env|\.local|\.test\.js|smoke\.js|\.pem|\.pfx|\.key|\/apps\/api\/)/i.test(file),
 );

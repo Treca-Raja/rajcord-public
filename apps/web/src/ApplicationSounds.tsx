@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCall } from './CallProvider';
 import {
   ApplicationSoundPlayer,
   defaultSoundPreferences,
@@ -21,6 +22,7 @@ export function useApplicationSounds() {
   return value;
 }
 export function ApplicationSounds({ userId, children }: { userId: string; children: ReactNode }) {
+  const call = useCall();
   const key = soundPreferenceKey(userId);
   const [initial] = useState(() => {
     try {
@@ -41,6 +43,23 @@ export function ApplicationSounds({ userId, children }: { userId: string; childr
     player.configure(latest.current);
     return () => player.dispose();
   }, [player]);
+  const subscribeVoice = call?.subscribeVoice;
+  useEffect(() => {
+    if (!subscribeVoice) {
+      player.resetVoice();
+      return;
+    }
+    const unsubscribe = subscribeVoice((voice) =>
+      player.updateVoice({
+        ...voice,
+        participants: voice.participants.map((participant) => ({ ...participant })),
+      }),
+    );
+    return () => {
+      unsubscribe();
+      player.resetVoice();
+    };
+  }, [subscribeVoice, player]);
   function change(next: SoundPreferences) {
     setError('');
     player.configure(next);

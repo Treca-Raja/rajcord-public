@@ -95,10 +95,11 @@ async function call<T = Record<string, unknown>>(
   sessionId?: string,
 ): Promise<T> {
   const id = ++sequence;
+  const timeoutError = new Error('Browser command timed out: ' + method);
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error('Browser command timed out: ' + method));
+      reject(timeoutError);
     }, 10000);
     pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
     ws!.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
@@ -536,7 +537,7 @@ try {
     true,
   );
   await compose('History stays with this channel');
-  await call('Page.reload');
+  await reload();
   await wait(`!!document.querySelector('[data-conversation-id="${createdChannel}"]')`);
   await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
   await wait(
@@ -636,7 +637,7 @@ try {
     deviceScaleFactor: 1,
     mobile: false,
   });
-  await call('Page.reload');
+  await reload();
   await wait(`!!document.querySelector('[data-conversation-id="${createdChannel}"]')`);
   await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
   await wait(
@@ -1174,7 +1175,7 @@ try {
     "document.querySelector('.channel-header strong')?.textContent==='Café 🎮 Club renamed'",
   );
   assert.equal(await js("document.querySelector('textarea[name=message]').value"), unsent);
-  await call('Page.reload');
+  await reload();
   await wait(`!!document.querySelector('[data-conversation-id="${createdChannel}"]')`);
   await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
   await wait("document.querySelector('textarea[name=message]')?.value===''");
@@ -1231,7 +1232,7 @@ try {
      SELECT $1,$2,gen_random_uuid(),$3,last_seq-60+n,last_change-60+n,'Older fixture '||n,now()-interval '2 minutes' FROM updated,generate_series(1,60) n`,
     [createdChannel, owner.id, 'a'.repeat(64)],
   );
-  await call('Page.reload');
+  await reload();
   await wait(`!!document.querySelector('[data-conversation-id="${createdChannel}"]')`);
   await js(`document.querySelector('[data-conversation-id="${createdChannel}"]').click()`);
   await wait("document.querySelector('.message-scroll')?.textContent.includes('Older fixture 60')");
@@ -1837,13 +1838,15 @@ try {
         }),
     );
   }
-  await Promise.all([
-    js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'),
-    tabJs(
-      attached.sessionId,
-      'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
-    ),
-  ]);
+  // Background documents need not receive animation frames. Activate each owned
+  // tab before draining its frame callbacks, then restore the primary tab.
+  await call('Page.bringToFront', {}, attached.sessionId);
+  await tabJs(
+    attached.sessionId,
+    'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+  );
+  await call('Page.bringToFront');
+  await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   await waitCondition(
     () =>
       js('navigator.locks.query().then(state=>state.pending.length===0 && state.held.length===2)'),

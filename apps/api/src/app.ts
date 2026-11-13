@@ -1,4 +1,8 @@
 import { VoiceService } from './voice/service.js';
+import { ScreenService } from './screen/service.js';
+import { registerScreen } from './screen/transport.js';
+import { CaptureAuthorizationService } from './screen/capture-authorization.js';
+import { registerCaptureAuthorization } from './screen/capture-routes.js';
 import { registerVoice } from './voice/routes.js';
 import { registerGateway } from './voice/gateway.js';
 import type { VoiceConfig } from './voice/config.js';
@@ -75,6 +79,17 @@ export function createApp({
   });
   const database = databaseUrl ? createDatabase(databaseUrl) : null;
   const voice = database && voiceConfig ? new VoiceService(database.pool, voiceConfig) : undefined;
+  const screen = voice ? new ScreenService(voice) : undefined;
+  const capture =
+    voice && screen
+      ? new CaptureAuthorizationService(
+          voice,
+          Date.now,
+          undefined,
+          screen.captureBinding.bind(screen),
+          screen.capturePublication.bind(screen),
+        )
+      : undefined;
   app.setErrorHandler((error, req, reply) => {
     const status =
       error instanceof HttpError
@@ -190,11 +205,15 @@ export function createApp({
     }
   }, 15000);
   expiry.unref();
+  const closeScreenTransport = screen ? registerScreen(io, screen) : undefined;
   app.register(async (routes) => {
     if (database) {
       registerAuth(routes, database.pool, io, secureCookies, rateLimits);
       registerChat(routes, new ChatService(database.pool), io, rateLimits, gifSearch);
       routes.register(async (child) => registerVoice(child, voice, rateLimits));
+      routes.register(async (child) =>
+        registerCaptureAuthorization(child, voice, capture, rateLimits),
+      );
     } else
       routes.all('/api/*', async () => {
         throw new HttpError(503, 'Database not configured.');
@@ -203,15 +222,14 @@ export function createApp({
   let checkingVoice = false;
   const checkVoice = async () => {
     if (!voice || checkingVoice) return;
+    screen?.sweep();
+    capture?.sweep();
     checkingVoice = true;
     try {
       await voice.reconcile();
     } catch {
       app.log.warn('Voice authorization check unavailable; retrying removal.');
-      for (const lease of voice.leases.values()) {
-        lease.revoked = true;
-        lease.close?.();
-      }
+      voice.invalidateAll();
     } finally {
       checkingVoice = false;
     }
@@ -247,6 +265,9 @@ export function createApp({
   app.addHook('preClose', async () => {
     clearInterval(expiry);
     clearInterval(voiceTimer);
+    closeScreenTransport?.();
+    screen?.dispose();
+    capture?.dispose();
     await presence?.close();
     await voice?.close();
     io.disconnectSockets(true);
@@ -255,5 +276,5 @@ export function createApp({
   app.addHook('onClose', async () => {
     await database?.pool.end();
   });
-  return { app, io, voice };
+  return { app, io, voice, screen, capture };
 }

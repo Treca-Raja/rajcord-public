@@ -6,6 +6,7 @@ import { testDatabase } from '../db/test-database.js';
 import { AuthService, digest, identity } from './service.js';
 import { checkPassword } from './password.js';
 import type { AuthState } from '@tricord/shared';
+import type { InjectOptions } from 'fastify';
 const origin = 'http://127.0.0.1:5173';
 const secret = 'Test-only-' + randomUUID();
 let fixture: Awaited<ReturnType<typeof testDatabase>>;
@@ -14,7 +15,12 @@ type Login = AuthState & { cookie: string };
 let owner: Login;
 const sockets: Socket[] = [];
 const name = () => 'test_' + randomUUID().replaceAll('-', '').slice(0, 22);
-const send = (url: string, method: 'POST' | 'PATCH' | 'DELETE', payload: unknown, auth?: Login) =>
+const send = (
+  url: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  payload: InjectOptions['payload'],
+  auth?: Login,
+) =>
   instance.app.inject({
     url,
     method,
@@ -376,12 +382,20 @@ describe('authentication on real PostgreSQL', () => {
     ).toBe(200);
     expect((await send('/api/owner/bootstrap', 'POST', {})).statusCode).toBe(404);
   });
-  it('logs out, clears the cookie and makes replayed tokens unusable', async () => {
-    const auth = await account();
+  it('revokes logout tokens without a response that could clear a replacement cookie', async () => {
+    const auth = await account(true);
+    expect((await get('/api/members', auth)).statusCode).toBe(200);
+    const live = socket(auth);
+    await connected(live);
+    const disconnected = new Promise<void>((resolve) => live.once('disconnect', () => resolve()));
     const res = await send('/api/auth/logout', 'POST', undefined, auth);
     expect(res.statusCode).toBe(200);
-    expect(res.headers['set-cookie']).toContain('Max-Age=0');
+    await disconnected;
+    expect(res.headers['set-cookie']).toBeUndefined();
     expect((await get('/api/auth/me', auth)).statusCode).toBe(401);
+    expect((await get('/api/members', auth)).statusCode).toBe(401);
+    expect((await send('/api/auth/logout', 'POST', undefined, auth)).statusCode).toBe(401);
+    await denied(socket(auth));
   });
   it('rejects expired sessions on protected routes and socket handshakes', async () => {
     const auth = await account(true);
@@ -400,9 +414,9 @@ describe('authentication on real PostgreSQL', () => {
       200,
     );
     expect((await get('/api/auth/me', b)).statusCode).toBe(200);
-    expect((await send('/api/account/sessions/' + id, 'DELETE', undefined, b)).statusCode).toBe(
-      200,
-    );
+    const revoked = await send('/api/account/sessions/' + id, 'DELETE', undefined, b);
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.headers['set-cookie']).toBeUndefined();
     expect((await get('/api/auth/me', b)).statusCode).toBe(401);
   });
   it('changes only own display name and rejects privilege changes', async () => {
@@ -426,16 +440,14 @@ describe('authentication on real PostgreSQL', () => {
         )
       ).statusCode,
     ).toBe(400);
-    expect(
-      (
-        await send(
-          '/api/account/password',
-          'POST',
-          { currentPassword: secret, newPassword: secret + 'new' },
-          auth,
-        )
-      ).statusCode,
-    ).toBe(200);
+    const changed = await send(
+      '/api/account/password',
+      'POST',
+      { currentPassword: secret, newPassword: secret + 'new' },
+      auth,
+    );
+    expect(changed.statusCode).toBe(200);
+    expect(changed.headers['set-cookie']).toBeUndefined();
     expect((await get('/api/auth/me', auth)).statusCode).toBe(401);
     expect((await get('/api/auth/me', second)).statusCode).toBe(401);
     expect(
@@ -504,6 +516,42 @@ describe('authentication on real PostgreSQL', () => {
     address = await instance.app.listen({ host: '127.0.0.1', port: 0 });
     expect((await get('/api/auth/me', auth)).statusCode).toBe(200);
     expect((await identity(fixture.database.pool, raw))?.user.id).toBe(auth.user.id);
+  });
+  it('keeps authenticated bootstrap reads available with independent bounded quotas under shared API load', async () => {
+    const limited = createApp({ databaseUrl: fixture.url });
+    const headers = { cookie: owner.cookie };
+    try {
+      for (let index = 0; index < 120; index++)
+        expect(
+          (await limited.app.inject({ url: '/api/account/sessions', headers })).statusCode,
+        ).toBe(200);
+      expect((await limited.app.inject({ url: '/api/account/sessions', headers })).statusCode).toBe(
+        429,
+      );
+      const conversations = (await get('/api/conversations', owner)).json().conversations;
+      for (const url of [
+        '/api/auth/me',
+        '/api/members',
+        '/api/channel-categories',
+        '/api/conversations',
+        '/api/invitations',
+        '/api/conversations/' + conversations[0].id + '/messages',
+      ]) {
+        for (let index = 0; index < 120; index++)
+          expect((await limited.app.inject({ url, headers })).statusCode, url).toBe(200);
+        expect((await limited.app.inject({ url, headers })).statusCode, url).toBe(429);
+        expect(
+          (await limited.app.inject({ url, remoteAddress: '192.0.2.123' })).statusCode,
+          url,
+        ).toBe(401);
+      }
+      expect(
+        (await limited.app.inject({ url: '/api/auth/me', remoteAddress: '192.0.2.123' }))
+          .statusCode,
+      ).toBe(401);
+    } finally {
+      await limited.app.close();
+    }
   });
   it('rate-limits registration and login requests', async () => {
     const limited = createApp({ databaseUrl: fixture.url });

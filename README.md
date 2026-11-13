@@ -20,6 +20,8 @@ Milestone 2C adds local community voice channels to the authenticated React/Elec
 
 Start with [AGENTS.md](AGENTS.md) for project rules, [MEMORY.md](MEMORY.md) for dated context and [SKILLS.md](SKILLS.md) for reusable planning, documentation, verification, database, voice and hosting workflows. Repository skills can be used with Copilot/VS Code or Codex; check discovery in the selected tool.
 
+Screen sharing now has a main-window P2P flow with separate resolution, frame-rate and video-bitrate choices. See [using screen sharing](#screen-sharing) and the [current contributor/GPT handoff](docs/screen-sharing-handoff.md#current-continuation---2026-11-13) for implementation and acceptance boundaries. This source change does not update production or installed clients.
+
 Changes follow `feature/* -> develop -> main`: create feature branches from `develop`, target `develop` with feature PRs, and release through a `develop`-to-`main` PR. See [CONTRIBUTING.md](CONTRIBUTING.md). The deployment-option skill describes future component switches; those switches are not implemented yet.
 
 ## Windows prerequisites
@@ -216,6 +218,7 @@ pnpm typecheck
 pnpm test
 pnpm test:db
 pnpm build
+pnpm exec vitest run --config vitest.browser.config.ts
 pnpm --filter @tricord/api test:browser
 pnpm --filter @tricord/api test:desktop
 pnpm --filter @tricord/api test:voice
@@ -226,14 +229,15 @@ pnpm peers check
 pnpm audit --prod
 ```
 
-There are **139 passing Vitest tests**: 51 unit/regression tests and 88 database integration tests, including unread persistence, mention boundaries, membership privacy, read-cursor validation and notification delivery authorization. The browser and Electron commands are additional integration scenarios, separate from that count.
+Portable, database, browser and Electron suites report their own current counts. See [verification evidence](docs/verification.md) for dated results and their acceptance limits.
 
 - `test:db` checks the existing development schema with unique disposable rows. Authentication and messaging tests create uniquely named temporary databases, migrate it, then drop **only the database created by that test run**. Your development database, owner, migration history and volume are preserved. The local development database role must have CREATEDB permission for these tests.
 - The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 19 messaging/unread/notification checks (30 total); OS notifications are mocked for deterministic permission, preview and click tests. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.
 - The Electron smoke uses three real launches with an isolated temporary profile. It verifies registration, live approval, account settings, logout, minimization, temporary-session cleanup and remembered-session restoration, plus renderer isolation and absence of localStorage tokens. Sending, receiving from an independent account and restored message history plus voice device selection, microphone publication, camera denial, mute/deafen and leave bring the total to 26 checks, including notification IPC validation, Windows registration and a real native notification show event.
 - Browser/Electron smoke servers bind to **127.0.0.1:3003 / :3002**, respectively. Reports/screenshots go to ignored `artifacts/`. Their temporary profiles are separate from your real browser and desktop profile.
 - `db:verify-persistence` restarts the existing PostgreSQL container, uses its own disposable database to verify accounts, sessions, audit records, invitations, channels, DMs, group history boundaries, idempotent retries and message persistence. Existing Fastify/pg pools must recover. It then drops only its own test database and verifies the development migration journal is unchanged. Run it when interrupting development connections is acceptable.
-- `pnpm test:browser` and `pnpm test:desktop` are convenience commands that build first. Tests fail when required infrastructure is missing; they do not silently skip.
+- `pnpm test:browser` and `pnpm test:desktop` are convenience commands that build first. The browser command also runs `vitest.browser.config.ts`: the isolated React call-owner fixture uses synthetic HTTP/media, while the native-cookie fixture uses a disposable PostgreSQL-backed API on **127.0.0.1:3007** and actual Edge HttpOnly cookies. It holds real logout/self-revocation/password responses after revocation and verifies that later logins survive their delivery. No physical devices are opened. These browser fixtures are separate from portable unit/database tests and from media acceptance. Select `apps/web/src/call-provider.integration.test.ts` with this config to run only the data-free mounted fixture. Tests fail when required infrastructure is missing; they do not silently skip.
+- The screen-peer browser fixture in that config also needs local PostgreSQL/LiveKit. It uses **127.0.0.1:3008 / :3009**, disposable accounts/database/voice leases and two owned Edge profiles to exercise actual authenticated screen signaling and native peers with generated canvas video/PCM audio. Incoming Opus is checked by an independent decoder without speaker output; native playback and physical source sound remain unqualified. Capture/enumeration and audio-output context creation are guarded against use. Its video-quality case also verifies native bitrate/frame/scale parameter round-trips without changing shared capture or source audio; readback confirms ceilings, not achieved throughput/FPS. Run only this fixture with `pnpm exec vitest run --config vitest.browser.config.ts apps/web/src/screen-peer.browser.integration.test.ts`. Its expiry case waits for the actual server-issued lease/link deadline, with a 75-second test timeout. See [transport evidence](docs/verification.md#screen-sharing-s3-real-browser-api-fixture---2026-11-01) and [quality evidence](docs/verification.md#screen-sharing-s3-video-quality-ceilings---2026-11-01); see the [current app composition and acceptance limits](docs/screen-sharing-handoff.md).
 
 ## Run the built applications locally
 
@@ -265,6 +269,8 @@ Additive `0002_overrated_puck.sql` creates conversations, membership periods, in
 
 Passwords use Argon2id. Random session tokens are stored only as hashes in PostgreSQL and HttpOnly SameSite=Strict cookies on clients. CSRF tokens stay in renderer memory. Mutations require an exact trusted Origin; authenticated mutations also require session-bound CSRF. Sessions have absolute 12-hour or 30-day expiry. Logout, password changes, device revocation, suspension and removal invalidate server sessions. Status and owner permissions are checked in the backend, including each protected socket event.
 
+Logout, current-device revocation and password-change responses revoke server sessions without deleting the shared browser cookie. This prevents an old delayed response from erasing a newer login. A browser may retain the revoked HttpOnly cookie until replacement or normal expiry; protected HTTP/socket requests reject it, and the next login replaces it. Cookie presence does not establish authentication. Electron retains its existing temporary-cookie removal at startup/full quit; a retained revoked remembered cookie cannot restore authentication.
+
 Removed accounts become tombstones, preserving audit and identity history. They cannot sign in. Administration grants no application access to private conversations and no permission to edit/delete another author’s messages. Messages are not end-to-end encrypted: the database operator can read stored content. Security configuration remains local operator configuration; there is no public settings editor or endpoint granting members control over it.
 
 Crash/offline quits cannot guarantee immediate server revocation. Electron discards temporary local cookies at startup, and remaining server sessions expire within 12 hours or can be revoked from another device. Browser session restoration may preserve session cookies according to browser settings. No password recovery, MFA, email verification, TLS deployment, signed installer or multi-process socket adapter is implemented. HTTP/socket event limits are in-process; the message-send quota is persisted in PostgreSQL. This implementation targets a single API process and up to ten friends. Login errors are generic; registration necessarily reveals whether a username can be used.
@@ -294,6 +300,8 @@ Device discovery briefly opens and immediately stops a microphone to reveal devi
 
 Network reconnection preserves in-memory mute/deafen, devices and participant volumes. Voice reservations have a 45-second heartbeat lifetime; still-authenticated clients can obtain a fresh reservation after expiry or an API restart. Manual leave, logout, suspension and full quit stop client recovery. Fresh launches never join automatically. An offline quit can leave a server reservation for up to 45 seconds.
 
+One call owner follows the verified approved session above the sidebar. View collapse/remount keeps that call and its explicitly discovered audio-device choices, without another microphone probe. Same-session refresh and manual leave retain those choices. Logout intent stops the call locally before the logout response arrives. Verified session replacement or loss of approval disposes the old controller and clears its device catalog without using a replacement session's credentials for late cleanup. A new owner needs explicit device discovery again; device labels remain local and are not persisted or sent to the API.
+
 Voice uses the existing session cookie and CSRF boundary. The API issues an opaque reservation credential, not a LiveKit bearer token. Its same-origin signaling gateway reauthorizes each handshake and replaces refreshed LiveKit tokens before forwarding them. Only microphone publication is granted. Removal is enforced at the media server; a one-second sweep also handles expiration and external account changes. This is a single-API-process development design. LiveKit terminates media encryption; it is not end-to-end encryption.
 
 Run the real two-browser synthetic-audio test after building:
@@ -304,6 +312,37 @@ pnpm --filter @tricord/api test:voice
 ```
 
 This test covers actual received audio, independent sessions, mute/deafen, selected output, volume, disconnect/reconnect, API restart, simulated device loss and revocation. Electron tests also publish a synthetic microphone track and deny camera capture. Physical microphones, unplugging real USB/Bluetooth hardware, listening quality and WAN/TURN behavior still need manual validation.
+
+### Screen sharing
+
+Join voice with an explicitly selected microphone and speakers, then open **Screen sharing**. Choose resolution (480p/720p/1080p), frame rate (15/30/60 fps) and a separate video cap per viewer. Use **Prepare source**, then **Choose source** on a fresh click. Review the silent local preview and press **Start sharing**. Closing the panel keeps an outgoing share running; **Stop** remains in the sidebar and desktop menu/tray.
+
+Choose a participant's screen under **Available screens** to watch. Watching has its own resolution, frame-rate and video-cap controls; changing them affects that connection. Screen mute/volume are separate from the microphone. Deafen silences incoming voice and screen sound. Playback uses the selected Voice speakers and pauses if that device disappears, without choosing a default replacement. Use **Enable screen playback** if the browser requires another gesture.
+
+Video-only is the default. Edge tab sound requires choosing a browser tab and enabling its audio in the browser picker. Windows desktop system sound is an explicit whole-system choice: Rajcord and other applications may be audible, so a separate playback route may be needed to prevent digital feedback. Missing requested sound ends the attempt; it never silently falls back to video-only. Older desktop clients without the capture bridge must be updated.
+
+Screens prefer direct encrypted WebRTC with Cloudflare STUN. An operator can opt into existing LiveKit TURN fallback with `SCREEN_TURN_HOST=turn.rajcord.com`; the API issues separate short-lived relay credentials in memory. No extra VPS ports are needed. The setting remains off until configured, and real restrictive-network/forced-relay acceptance is still required. Hiding/minimizing pauses incoming screen delivery while outgoing sharing continues; returning authorizes a fresh selection with the prior watching limits. Logout, voice-lease replacement, source end or authorization loss stops the affected screen lifetime without automatically recapturing.
+
+These controls are limits, not guarantees of delivered resolution/FPS/bitrate. Physical source/audio/routing/feedback, sustained rendered 1080p60 and cross-network operation still need manual qualification. The main-window design does not guarantee independent Stop if its renderer is frozen. See [current evidence](docs/verification.md#screen-sharing-completion---2026-11-13).
+
+### Screen-sharing feasibility harness (development only)
+
+`pnpm test:desktop:picker` separately builds and checks the isolated Electron source picker with synthetic source lists and a disposable profile. It needs no database/LiveKit and never enumerates or captures the physical desktop or audio devices. It exercises picker consent, IPC isolation, cancellation and lifecycle cleanup; it is not a media benchmark. The app uses a separately authorized capture boundary; the picker fixture does not qualify physical capture. See the [current handoff](docs/screen-sharing-handoff.md).
+
+`pnpm test:desktop:capture` checks the native display-request boundary and picker together, capturing video only from a test-owned synthetic WebContents. It verifies disabled/missing-authorization gates, foreign/subframe rejection, one-use intents, revocation and cleanup. It uses no desktop enumeration, microphone, system loopback, speakers, accounts or database services and measures no media performance. The app wires this boundary through exact-binding preparation, a native gesture and publication handoff. Disposable API integration tests run under `pnpm test:db`; the separate authority fixture checks Electron's session/network path. Neither qualifies physical media.
+
+`pnpm test:desktop:authority` builds and connects the actual Electron session provider, HttpOnly cookie jar, disposable authenticated API and native picker/capture handler. It needs local PostgreSQL/LiveKit test services; the fixture API binds only to `127.0.0.1:3006`. Generated accounts, database, room prefix and profiles are disposable. Video comes only from owned WebContents; no physical enumeration, source audio or screen peers are used. The fixture publishes metadata and proves transfer into a distinct publication authority record beyond the old preview deadline. Response readers are observed for cleanup, with one controlled delay after native body cancellation to test admission retention. Physical picker/audio and performance qualification remain open.
+
+Screen sharing is still under development. `pnpm test:screen` builds and runs isolated Edge and pinned Electron probes with deterministic 1920 × 1080 moving content and synthetic source audio. It needs no database or LiveKit. Profiles and windows are disposable; the HTTP fixture binds to loopback. No physical microphone/camera, private desktop, system-audio loopback or real account is captured.
+
+```powershell
+pnpm test:screen --runtime=edge --codec=VP8 --content=motion --phase-ms=10000
+pnpm test:screen --runtime=electron --codec=H264 --content=stress --phase-ms=10000
+```
+
+Runtime defaults to `all` (sequential probes), codec to `VP8`, content to `motion` and each bitrate measurement to 10 seconds. `motion` moves a tiled panel over a reference grid; `stress` changes the whole grid each frame. Both include a frame/time marker. The runner compares 2 and 8 Mb/s video caps with a 60-fps ceiling and resolution-preserving adaptation. Requested settings do not prove delivered resolution/FPS. Timestamped reports in ignored `artifacts/screen/` contain sanitized RTP/frame/audio-energy measurements, direct candidate types, SDP sizes, failures and bitrate effects; raw SDP, IP addresses and source titles are excluded.
+
+Electron uses hidden offscreen test windows and an explicit display handler restricted to its own synthetic WebContents video/audio. These are automated fixture probes with autoplay bypass, **not** real-picker, Windows display/system-audio, Edge tab-audio, exact speaker routing, human listening/sync, fan-out/active-voice or WAN qualification. Required hardware/performance budgets and those tests remain gates in the [screen-sharing implementation design](docs/screen-sharing-design.md). A successful harness means its transport/evidence assertions passed; inspect actual delivery before claiming 1080p60 support. `TRICORD_BROWSER_PATH` selects the test browser as in the voice harness; normal tests use installed Edge.
 
 ## Ten-client voice reliability test
 

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 export type Browser = Awaited<ReturnType<typeof launch>>;
-export async function launch() {
+export async function launch(options: { fakeMicrophone?: boolean } = {}) {
   const profile = await mkdtemp(path.join(tmpdir(), 'tricord-voice-browser-'));
   const wav = Buffer.alloc(44 + 48000 * 2 * 4);
   wav.write('RIFF');
@@ -38,9 +38,13 @@ export async function launch() {
       '--remote-debugging-address=127.0.0.1',
       '--remote-debugging-port=0',
       '--user-data-dir=' + profile,
-      '--use-fake-ui-for-media-stream',
-      '--use-fake-device-for-media-stream',
-      '--use-file-for-fake-audio-capture=' + audio,
+      ...(options.fakeMicrophone === false
+        ? []
+        : [
+            '--use-fake-ui-for-media-stream',
+            '--use-fake-device-for-media-stream',
+            '--use-file-for-fake-audio-capture=' + audio,
+          ]),
       '--autoplay-policy=no-user-gesture-required',
       'about:blank',
     ],
@@ -145,7 +149,12 @@ export async function launch() {
         await delay(100);
       }
       throw new Error(
-        'Voice browser timeout: ' + expression + '; UI: ' + (await js('document.body.innerText')),
+        'Voice browser timeout: ' +
+          expression +
+          '; HTTP errors: ' +
+          JSON.stringify(httpErrors) +
+          '; UI: ' +
+          (await js('document.body.innerText')),
       );
     };
     const click = async (label: string) =>

@@ -1,3 +1,8 @@
+export * from './screen.js';
+export * from './screen-signaling.js';
+export * from './desktop-capture.js';
+export * from './capture-authorization.js';
+import type { ScreenServerEvents, ScreenClientEvents } from './screen.js';
 export type AccountStatus = 'pending' | 'approved' | 'rejected' | 'suspended' | 'removed';
 export interface AuthUser {
   id: string;
@@ -40,7 +45,7 @@ export const PRESENCE_TIMING = {
   authorizationCheckMs: 15000,
   snapshotTimeoutMs: 5000,
 } as const;
-export interface ServerToClientEvents {
+export interface ServerToClientEvents extends ScreenServerEvents {
   'presence:changed': (payload: PresenceDelta) => void;
   'presence:unavailable': () => void;
   'connection:welcome': (payload: ConnectionWelcome) => void;
@@ -53,7 +58,7 @@ export interface ServerToClientEvents {
   'notification:preferences-changed': () => void;
   'chat:unavailable': () => void;
 }
-export interface ClientToServerEvents {
+export interface ClientToServerEvents extends ScreenClientEvents {
   'presence:snapshot': (ack: (result: ChatAck<PresenceSnapshot>) => void) => void;
   'conversation:join': (
     data: { conversationId: string },

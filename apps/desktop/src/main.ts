@@ -10,7 +10,19 @@ import {
 import { createWindowOpenHandler } from './external-links.js';
 import { serverUrl } from './server-url.js';
 import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
-import { app, BrowserWindow, session, dialog, ipcMain, Notification, shell } from 'electron';
+import { installNativeCapture, type NativeCapturePermissions } from './native-capture.js';
+import { createSessionCaptureAuthority } from './capture-authority-http.js';
+import { installScreenIpc } from './screen-ipc.js';
+import {
+  app,
+  BrowserWindow,
+  session,
+  dialog,
+  ipcMain,
+  Notification,
+  shell,
+  desktopCapturer,
+} from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { configureUpdates } from './updates.js';
@@ -81,50 +93,56 @@ app
   .then(async () => {
     await clearTemporarySession();
     let microphoneAllowed = authSmoke && process.env.TRICORD_VOICE_SMOKE === '1';
-    session.defaultSession.setPermissionRequestHandler(
-      (contents, permission, callback, details) => {
-        if (
-          !contents ||
-          !trustedAudioRequest(
-            target,
-            details.requestingUrl,
-            details.isMainFrame,
-            permission,
-            'mediaTypes' in details ? details.mediaTypes : undefined,
-          )
-        ) {
-          callback(false);
-          return;
-        }
-        if (microphoneAllowed || (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1')) {
-          microphoneAllowed = true;
-          callback(true);
-          return;
-        }
-        void dialog
-          .showMessageBox({
-            type: 'question',
-            title: 'Allow microphone access?',
-            message: 'Allow Rajcord to use your microphone for voice?',
-            detail:
-              'You select a device and join muted. Camera and screen capture remain disabled.',
-            buttons: ['Cancel', 'Allow microphone'],
-            defaultId: 0,
-            cancelId: 0,
-          })
-          .then((result) => {
-            microphoneAllowed = result.response === 1;
-            callback(microphoneAllowed);
-          })
-          .catch(() => callback(false));
-      },
-    );
-    session.defaultSession.setPermissionCheckHandler(
-      (contents, permission, origin, details) =>
-        !!contents &&
-        microphoneAllowed &&
-        trustedAudioCheck(target, origin, details.isMainFrame, permission, details.mediaType),
-    );
+    const microphoneRequest: NativeCapturePermissions['request'] = (
+      contents,
+      permission,
+      callback,
+      details,
+    ) => {
+      if (
+        !contents ||
+        !trustedAudioRequest(
+          target,
+          details.requestingUrl,
+          details.isMainFrame,
+          permission,
+          'mediaTypes' in details ? details.mediaTypes : undefined,
+        )
+      ) {
+        callback(false);
+        return;
+      }
+      if (microphoneAllowed || (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1')) {
+        microphoneAllowed = true;
+        callback(true);
+        return;
+      }
+      void dialog
+        .showMessageBox({
+          type: 'question',
+          title: 'Allow microphone access?',
+          message: 'Allow Rajcord to use your microphone for voice?',
+          detail:
+            'You select a device and join muted. Camera access is disabled. Screen sharing uses its own source picker.',
+          buttons: ['Cancel', 'Allow microphone'],
+          defaultId: 0,
+          cancelId: 0,
+        })
+        .then((result) => {
+          microphoneAllowed = result.response === 1;
+          callback(microphoneAllowed);
+        })
+        .catch(() => callback(false));
+    };
+    const microphoneCheck: NativeCapturePermissions['check'] = (
+      contents,
+      permission,
+      origin,
+      details,
+    ) =>
+      !!contents &&
+      microphoneAllowed &&
+      trustedAudioCheck(target, origin, details.isMainFrame, permission, details.mediaType);
     const win = new BrowserWindow({
       title: 'Rajcord',
       icon: path.join(__dirname, '../resources/icon.png'),
@@ -144,6 +162,35 @@ app
         additionalArguments: ['--rajcord-version=' + app.getVersion()],
       },
     });
+    const captureAuthority = createSessionCaptureAuthority({
+      owner: win,
+      session: session.defaultSession,
+      origin: target,
+      context: () => captureBoundary?.context() ?? null,
+      shutdown: app,
+      onError: (code) => console.warn('Capture authority unavailable:', code),
+    });
+    const captureBoundary: ReturnType<typeof installNativeCapture> = installNativeCapture({
+      owner: win,
+      session: session.defaultSession,
+      targetOrigin: target,
+      permissions: { request: microphoneRequest, check: microphoneCheck },
+      shutdown: app,
+      authority: captureAuthority,
+      enabled: true,
+      qualification: 'native-provider',
+      systemAudio: process.platform === 'win32' ? 'consented-windows-loopback' : 'unqualified',
+      enumerate: async (signal) => {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 0, height: 0 },
+          fetchWindowIcons: false,
+        });
+        if (signal.aborted) throw new Error('Screen enumeration cancelled.');
+        return sources.map((source) => ({ id: source.id, name: source.name, video: source }));
+      },
+      onError: (code) => console.warn('Display capture boundary unavailable:', code),
+    });
     const notificationAppId = app.isPackaged ? 'com.rajcord.desktop' : process.execPath;
     app.setAppUserModelId(notificationAppId);
     const trustedSender = (event: Electron.IpcMainInvokeEvent) =>
@@ -153,6 +200,13 @@ app
         event.senderFrame?.url ?? '',
         event.senderFrame === win.webContents.mainFrame,
       );
+    const screens = installScreenIpc({
+      owner: win,
+      ipc: ipcMain,
+      authority: captureAuthority,
+      trusted: trustedSender,
+      systemSound: process.platform === 'win32',
+    });
     ipcMain.handle('notifications:capabilities', (event) => {
       if (!trustedSender(event)) throw new Error('Untrusted notification request.');
       return { version: 2 };
@@ -318,6 +372,7 @@ app
           label: 'Rajcord',
           submenu: [
             { label: 'Show Rajcord', click: showWindow },
+            { label: 'Stop screen sharing', click: screens.stop },
             { label: 'Check for updates…', click: updates.check },
             { label: 'Install downloaded update…', click: updates.install },
             { type: 'separator' },
@@ -356,6 +411,7 @@ app
         tray.setContextMenu(
           Menu.buildFromTemplate([
             { label: 'Show Rajcord', click: showWindow },
+            { label: 'Stop screen sharing', click: screens.stop },
             { label: 'Check for updates…', click: updates.check },
             { label: 'Quit Rajcord', click: () => app.quit() },
           ]),

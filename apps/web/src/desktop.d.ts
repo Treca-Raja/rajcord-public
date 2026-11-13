@@ -9,6 +9,7 @@ type DesktopNotificationResult =
   | { status: 'unavailable' | 'invalid' };
 interface Window {
   readonly tricordDesktop?: {
+    readonly screens?: import('@tricord/shared').DesktopScreenBridge;
     readonly platform: string;
     readonly version: string;
     readonly enableNotifications: () => Promise<boolean>;

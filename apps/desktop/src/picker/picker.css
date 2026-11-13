@@ -1,0 +1,142 @@
+:root {
+  color-scheme: dark;
+  font:
+    15px/1.5 system-ui,
+    sans-serif;
+  color: #e8ece6;
+  background: #171a20;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 880px;
+  margin: auto;
+  padding: 28px 32px;
+}
+.eyebrow {
+  color: #c4e99c;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  margin: 0 0 10px;
+}
+h1 {
+  font-size: 26px;
+  line-height: 1.2;
+  margin: 0 0 12px;
+}
+h2,
+legend {
+  font-size: 14px;
+  font-weight: 650;
+}
+.intro,
+.notice,
+#sound-help {
+  color: #aeb6c1;
+  font-size: 13px;
+}
+#status {
+  min-height: 1.5em;
+  color: #c4e99c;
+  font-size: 13px;
+}
+#sources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+  max-height: 205px;
+  overflow: auto;
+}
+button {
+  font: inherit;
+  color: inherit;
+  border: 1px solid #46515d;
+  border-radius: 7px;
+  background: #252c34;
+  padding: 9px 16px;
+  cursor: pointer;
+}
+.source {
+  width: 100%;
+  height: 85px;
+  text-align: left;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.source-kind {
+  color: #aeb6c1;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.source-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.source[aria-pressed='true'] {
+  background: #263329;
+  border-color: #c4e99c;
+  box-shadow: inset 0 0 0 1px #c4e99c;
+}
+button:hover:not(:disabled) {
+  border-color: #c4e99c;
+}
+:focus-visible {
+  outline: 3px solid #c4e99c;
+  outline-offset: 3px;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+fieldset {
+  border: 1px solid #343d47;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 18px;
+}
+fieldset label {
+  display: block;
+  margin: 7px 0;
+}
+input {
+  accent-color: #c4e99c;
+  margin-right: 8px;
+}
+#sound-help {
+  margin-bottom: 0;
+}
+.notice {
+  margin-top: 18px;
+}
+footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 22px;
+}
+.primary {
+  background: #c4e99c;
+  color: #263321;
+  border-color: #c4e99c;
+  font-weight: 650;
+}
+@media (max-width: 580px) {
+  main {
+    padding: 22px;
+  }
+  #sources {
+    grid-template-columns: 1fr;
+  }
+}

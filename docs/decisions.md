@@ -183,3 +183,13 @@ A controller owns at most one active or connecting Room. A lease renewal can rep
 Output routing is serialized per audio element. Late routing completions cannot play elements from an earlier room or a prior join generation. Device enumeration failures are reported without selecting fallback devices.
 
 The shared Edge harness supplies synthetic WAV audio, isolated profiles, CDP instrumentation and bounded startup waits. Capacity testing uses production rate limits, ten sessions, nine incoming streams per session, steady audio counters, deliberate signaling interruption and an actual API restart. Only the test's room prefix, database and temporary profiles are cleaned up.
+
+## Main-window P2P screen sharing (2026-11-13)
+
+Screens use dedicated authenticated signaling and direct WebRTC peers, separate from microphone-only LiveKit voice. Public Cloudflare STUN helps discover direct routes. Optional `SCREEN_TURN_HOST=turn.rajcord.com` reuses the existing LiveKit TURN listeners with binding-authorized, short-lived allocation credentials; direct routes remain preferred. TURN stays off until configured and forced-relay media acceptance passes, including both peers needing the same relay. No new service or public port is required. Resolution, frame rate and video bitrate are independent publisher/viewer ceilings; 4K remains deferred.
+
+The user chose sharing in the main window after the Stop tradeoff was explained. Main independently authorizes native capture and can invalidate authority/notify Stop, but accepted tracks and peers remain call-renderer-owned. Independent cessation during a frozen renderer is not guaranteed. Do not destroy the voice window as a screen-only fallback.
+
+Video-only is the default. Selected-tab sound and Windows whole-system loopback require explicit consent and exact returned audio. Consent does not establish physical source provenance, playback routing, feedback isolation or performance qualification. See the [current handoff](screen-sharing-handoff.md) and [verification](verification.md#screen-sharing-completion---2026-11-13).
+
+Session verification and initial member/channel/conversation/invitation/history reads each have independent 120/minute/IP HTTP quotas. A ten-client startup/recovery regression exhausted the previous shared API budget. This keeps the existing per-route ceiling while isolating normal call startup from unrelated requests; mutation, registration/login, trusted-proxy and authentication checks remain in force.

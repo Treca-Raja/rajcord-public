@@ -1,4 +1,5 @@
 import type { Room, LocalAudioTrack, RemoteTrack } from 'livekit-client';
+import { ScreenBindingOwner, type ScreenBindingDependency } from './screen-binding';
 export type VoiceChannel = {
   id: string;
   name: string;
@@ -18,7 +19,10 @@ export type VoiceState = {
 };
 type Request = <T>(path: string, method?: string, body?: unknown) => Promise<T>;
 type Lease = { id: string; channelId: string; credential: string; useServerIceServers?: boolean };
-export const concreteDevices = (devices: MediaDeviceInfo[], kind: MediaDeviceKind) =>
+export const concreteDevices = <T extends Pick<MediaDeviceInfo, 'kind' | 'deviceId'>>(
+  devices: readonly T[],
+  kind: MediaDeviceKind,
+) =>
   devices.filter(
     (d) => d.kind === kind && d.deviceId && !['default', 'communications'].includes(d.deviceId),
   );
@@ -50,9 +54,59 @@ export class VoiceController {
   private retryCount = 0;
   private beating = false;
   private disposed = false;
+  private leaseInvalidations = new Set<() => void>();
+  private notifyingLease = false;
+  private leaseAuthorized = false;
+  private readonly screens: ScreenBindingOwner;
   onChange: () => void = () => {};
-  constructor(private request: Request) {
+  constructor(
+    private request: Request,
+    screens?: ScreenBindingDependency,
+  ) {
+    this.screens = new ScreenBindingOwner(screens);
     navigator.mediaDevices?.addEventListener('devicechange', this.devicesChanged);
+  }
+  // Revocation only: no lease IDs, credentials, deadlines or authorization grants escape.
+  onLeaseInvalidated(listener: () => void) {
+    if (this.disposed) throw new Error('Voice controller was disposed.');
+    this.leaseInvalidations.add(listener);
+    return () => {
+      this.leaseInvalidations.delete(listener);
+    };
+  }
+  private invalidateLease() {
+    this.leaseAuthorized = false;
+    this.screens.invalidate();
+    if (this.notifyingLease) return;
+    this.notifyingLease = true;
+    try {
+      for (const listener of [...this.leaseInvalidations]) {
+        try {
+          listener();
+        } catch (error) {
+          // Subscriber failures cannot interrupt local voice cleanup or other revocations.
+          queueMicrotask(() => {
+            throw error;
+          });
+        }
+      }
+    } finally {
+      this.notifyingLease = false;
+    }
+  }
+  bindScreens(options: { signal?: AbortSignal } = {}) {
+    const lease = this.lease,
+      generation = this.generation;
+    const current = () =>
+      !this.disposed &&
+      this.wanted &&
+      this.leaseAuthorized &&
+      this.lease === lease &&
+      this.generation === generation &&
+      (this.state.status === 'connected' || this.state.status === 'reconnecting');
+    if (!lease || !current())
+      return Promise.reject(new Error('Join voice before binding screens.'));
+    return this.screens.bind(lease, current, options.signal);
   }
   update(values: Partial<VoiceState>) {
     this.state = { ...this.state, ...values };
@@ -185,6 +239,7 @@ export class VoiceController {
         return;
       }
       this.lease = lease;
+      this.leaseAuthorized = true;
       this.heartbeat = setInterval(() => void this.pulse(), 10000);
       await this.connect(generation);
     } catch (error) {
@@ -201,8 +256,11 @@ export class VoiceController {
       previous = this.lease;
     try {
       await this.request('/voice/heartbeat', 'POST', { leaseId: previous.id });
+      if (this.wanted && generation === this.generation && this.lease === previous)
+        this.leaseAuthorized = true;
     } catch (error) {
-      if (!this.wanted || generation !== this.generation) return;
+      if (!this.wanted || generation !== this.generation || this.lease !== previous) return;
+      this.invalidateLease();
       const status = (error as { status?: number }).status;
       if (status === 410) {
         try {
@@ -215,6 +273,7 @@ export class VoiceController {
             return;
           }
           this.lease = next;
+          this.leaseAuthorized = true;
           const room = this.room;
           this.room = undefined;
           room?.removeAllListeners();
@@ -374,6 +433,7 @@ export class VoiceController {
   async leave() {
     this.wanted = false;
     this.generation++;
+    this.invalidateLease();
     clearTimeout(this.retry);
     clearInterval(this.heartbeat);
     const room = this.room,
@@ -511,9 +571,12 @@ export class VoiceController {
     }
   };
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
+    this.screens.dispose();
     navigator.mediaDevices?.removeEventListener('devicechange', this.devicesChanged);
     this.onChange = () => {};
     void this.leave();
+    this.leaseInvalidations.clear();
   }
 }

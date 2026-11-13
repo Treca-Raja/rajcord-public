@@ -7,6 +7,22 @@ import type {
 contextBridge.exposeInMainWorld(
   'tricordDesktop',
   Object.freeze({
+    screens: Object.freeze({
+      capabilities: () => ipcRenderer.invoke('screen:capabilities'),
+      prepare: (request: unknown) => ipcRenderer.invoke('screen:prepare', request),
+      handoff: (request: unknown) => ipcRenderer.invoke('screen:handoff', request),
+      cancel: (request: unknown) => ipcRenderer.invoke('screen:cancel', request),
+      onStop: (listener: (tag: string) => void) => {
+        const callback = (_event: unknown, tag: string) => listener(tag);
+        ipcRenderer.on('screen:stop', callback);
+        return () => ipcRenderer.removeListener('screen:stop', callback);
+      },
+      onVisibility: (listener: (visible: boolean) => void) => {
+        const callback = (_event: unknown, visible: boolean) => listener(visible);
+        ipcRenderer.on('screen:visibility', callback);
+        return () => ipcRenderer.removeListener('screen:visibility', callback);
+      },
+    }),
     platform: process.platform,
     version:
       process.argv.find((value) => value.startsWith('--rajcord-version='))?.split('=')[1] ??

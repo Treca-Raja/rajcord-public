@@ -1,0 +1,265 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1440"
+  height="1120"
+  viewBox="0 0 1440 1120"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">Rajcord screen sharing design concept</title>
+  <desc id="desc">
+    A dark Rajcord interface with a selected screen, independent quality and bitrate controls, a
+    persistent outgoing sharing bar, local source preview and stop action. Below are source consent
+    and bitrate detail concepts. All names and measurements are illustrative.
+  </desc>
+  <defs>
+    <linearGradient id="scene" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#243b49" />
+      <stop offset="1" stop-color="#14201f" />
+    </linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#73977d" />
+      <stop offset="1" stop-color="#3c5f59" />
+    </linearGradient>
+    <style>
+      text {
+        font-family: 'Segoe UI', Arial, sans-serif;
+        fill: #e7e9ef;
+      }
+      .muted {
+        fill: #a4b2c3;
+      }
+      .green {
+        fill: #c4e99c;
+      }
+      .small {
+        font-size: 12px;
+      }
+      .body {
+        font-size: 14px;
+      }
+      .label {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1.4px;
+      }
+      .strong {
+        font-weight: 600;
+      }
+      .line {
+        stroke: #343d47;
+        stroke-width: 1;
+      }
+    </style>
+  </defs>
+  <rect width="1440" height="1120" fill="#101217" />
+  <text x="32" y="36" class="label green">RAJCORD / SCREEN SHARING</text>
+  <text x="32" y="73" font-size="28" font-weight="600">
+    Share your screen. Keep the conversation.
+  </text>
+  <text x="1408" y="35" text-anchor="end" class="small muted">DESIGN CONCEPT · 29 OCT 2026</text>
+  <text x="1408" y="64" text-anchor="end" class="small muted">
+    Illustrative people, content and metrics — not benchmark evidence
+  </text>
+
+  <rect x="32" y="104" width="1376" height="610" rx="12" fill="#17191f" stroke="#343d47" />
+  <path d="M44 104 H260 V714 H44 Q32 714 32 702 V116 Q32 104 44 104" fill="#1b1e25" />
+  <line x1="260" y1="104" x2="260" y2="714" class="line" />
+  <text x="54" y="141" font-size="20" class="strong">Rajcord</text>
+  <text x="54" y="165" class="small muted">Your people. Your place.</text>
+  <line x1="48" y1="185" x2="244" y2="185" class="line" />
+  <text x="54" y="211" class="label muted">TEXT CHANNELS</text>
+  <text x="58" y="241" class="body muted"># general</text>
+  <text x="58" y="271" class="body muted"># game-night</text>
+  <text x="54" y="311" class="label muted">VOICE CHANNELS</text>
+  <rect x="46" y="325" width="200" height="37" rx="6" fill="#303c30" />
+  <circle cx="64" cy="344" r="4" fill="#c4e99c" />
+  <text x="78" y="349" class="body green strong">The lounge</text>
+  <text x="228" y="349" text-anchor="end" class="small green">4 / 10</text>
+  <text x="54" y="392" class="label muted">SCREENS · 3</text>
+  <rect x="46" y="405" width="200" height="57" rx="6" fill="#242e29" stroke="#6b8259" />
+  <text x="60" y="427" class="body strong">Morgan</text>
+  <text x="60" y="448" class="small green">Watching · Sound on</text>
+  <text x="60" y="490" class="body">Alex</text>
+  <text x="60" y="511" class="small muted">Sound available</text>
+  <rect x="177" y="475" width="57" height="28" rx="5" fill="#303a35" />
+  <text x="205" y="494" text-anchor="middle" class="small green">Watch</text>
+  <text x="60" y="549" class="body">You</text>
+  <text x="60" y="570" class="small green">Sharing · 2 viewers</text>
+  <line x1="48" y1="591" x2="244" y2="591" class="line" />
+  <text x="54" y="620" class="small green">Voice connected</text>
+  <rect x="48" y="638" width="58" height="32" rx="5" fill="#303a35" />
+  <text x="77" y="659" text-anchor="middle" class="small">Mic</text>
+  <rect x="114" y="638" width="62" height="32" rx="5" fill="#303a35" />
+  <text x="145" y="659" text-anchor="middle" class="small">Deafen</text>
+  <rect x="184" y="638" width="58" height="32" rx="5" fill="#523137" />
+  <text x="213" y="659" text-anchor="middle" class="small">Leave</text>
+  <text x="54" y="696" class="small muted">Audio devices &amp; settings</text>
+
+  <text x="284" y="142" font-size="17" class="strong">Watching Morgan</text>
+  <rect x="464" y="121" width="65" height="27" rx="13" fill="#293a2b" />
+  <text x="496" y="140" text-anchor="middle" class="small green">Direct</text>
+  <text x="550" y="141" class="small muted">Receiving 1920 × 1080 · 60 fps</text>
+  <text x="1150" y="141" text-anchor="end" class="body muted">Close ×</text>
+  <line x1="260" y1="165" x2="1180" y2="165" class="line" />
+  <rect x="284" y="185" width="872" height="331" rx="8" fill="url(#scene)" />
+  <circle cx="1000" cy="270" r="41" fill="#d2e4ae" opacity=".85" />
+  <path
+    d="M284 441 L413 329 L527 416 L664 281 L811 404 L907 342 L1156 478 V516 H284Z"
+    fill="#395451"
+  />
+  <path d="M284 489 L464 392 L631 481 L789 375 L985 461 L1156 410 V516 H284Z" fill="url(#hill)" />
+  <path d="M284 516 L514 463 L726 501 L908 455 L1156 501 V516Z" fill="#25453f" />
+  <rect x="306" y="204" width="188" height="27" rx="5" fill="#101217" opacity=".8" />
+  <text x="318" y="222" class="small">Illustrative shared content</text>
+  <text x="306" y="491" class="small">Picture and source sound travel together</text>
+
+  <text x="284" y="545" class="label muted">QUALITY</text>
+  <rect x="284" y="555" width="190" height="37" rx="6" fill="#252c34" stroke="#495462" />
+  <text x="298" y="579" class="body">Smooth · 1080p / 60</text>
+  <text x="454" y="578" class="small muted">⌄</text>
+  <text x="491" y="545" class="label muted">VIDEO CAP</text>
+  <rect x="491" y="555" width="122" height="37" rx="6" fill="#252c34" stroke="#495462" />
+  <text x="505" y="579" class="body">8 Mb/s</text>
+  <text x="593" y="578" class="small muted">⌄</text>
+  <text x="637" y="545" class="label muted">STREAM SOUND</text>
+  <text x="637" y="579" class="body">Mute</text>
+  <line
+    x1="686"
+    y1="574"
+    x2="833"
+    y2="574"
+    stroke="#46524e"
+    stroke-width="4"
+    stroke-linecap="round"
+  />
+  <line
+    x1="686"
+    y1="574"
+    x2="794"
+    y2="574"
+    stroke="#c4e99c"
+    stroke-width="4"
+    stroke-linecap="round"
+  />
+  <circle cx="794" cy="574" r="6" fill="#c4e99c" />
+  <text x="858" y="579" class="small muted">Headset</text>
+  <text x="1024" y="579" class="body green">Fullscreen</text>
+  <text x="284" y="619" class="small muted">
+    Requested 1080p / 60 · Video cap 8 Mb/s · Actual 6.4 Mb/s
+  </text>
+  <text x="1156" y="619" text-anchor="end" class="small green">Connection details</text>
+
+  <line x1="1180" y1="104" x2="1180" y2="638" class="line" />
+  <text x="1200" y="140" class="label muted">YOUR LOCAL PREVIEW</text>
+  <rect x="1200" y="164" width="188" height="108" rx="6" fill="#25312d" />
+  <rect x="1217" y="179" width="154" height="78" rx="3" fill="#17221f" stroke="#5c7467" />
+  <rect x="1228" y="190" width="56" height="7" rx="2" fill="#8ba384" />
+  <rect x="1228" y="207" width="122" height="4" rx="2" fill="#486453" />
+  <rect x="1228" y="219" width="102" height="4" rx="2" fill="#486453" />
+  <rect x="1228" y="231" width="115" height="4" rx="2" fill="#486453" />
+  <text x="1200" y="296" class="body">Display 1</text>
+  <text x="1200" y="317" class="small muted">Only you see this source name</text>
+  <text x="1200" y="348" class="small green">Preview muted</text>
+  <line x1="1200" y1="369" x2="1388" y2="369" class="line" />
+  <text x="1200" y="398" class="label muted">IN THIS CALL</text>
+  <text x="1200" y="429" class="body green">● Morgan</text>
+  <text x="1200" y="460" class="body">● Alex</text>
+  <text x="1200" y="491" class="body">● Riley</text>
+  <text x="1200" y="522" class="body">● You</text>
+  <text x="1200" y="573" class="small muted">Watching does not change</text>
+  <text x="1200" y="592" class="small muted">your outgoing share.</text>
+
+  <path d="M260 638 H1408 V702 Q1408 714 1396 714 H260Z" fill="#263329" />
+  <circle cx="284" cy="663" r="4" fill="#c4e99c" />
+  <text x="297" y="668" class="body green strong">You are sharing</text>
+  <text x="429" y="668" class="body">Display 1 · System sound · 2 viewers</text>
+  <text x="284" y="694" class="small muted">
+    1080p / 60 · 8 Mb/s per viewer · Up to 16 Mb/s video upload + overhead
+  </text>
+  <rect x="1058" y="657" width="126" height="37" rx="6" fill="#364a37" stroke="#52684a" />
+  <text x="1121" y="681" text-anchor="middle" class="body green">Share settings</text>
+  <rect x="1200" y="657" width="188" height="37" rx="6" fill="#c4e99c" />
+  <text
+    x="1294"
+    y="681"
+    text-anchor="middle"
+    font-size="14"
+    font-weight="700"
+    style="fill: #263321"
+  >
+    Stop sharing
+  </text>
+
+  <text x="32" y="749" class="label green">01 / CHOOSE, PREVIEW, CONFIRM</text>
+  <rect x="32" y="765" width="672" height="310" rx="10" fill="#1b1e25" stroke="#343d47" />
+  <text x="54" y="801" font-size="19" class="strong">Share a screen</text>
+  <text x="54" y="826" class="body muted">
+    Only the source you choose. Source names stay on this device.
+  </text>
+  <rect
+    x="54"
+    y="847"
+    width="192"
+    height="112"
+    rx="6"
+    fill="#263329"
+    stroke="#a2c57e"
+    stroke-width="2"
+  />
+  <rect x="73" y="862" width="154" height="66" rx="3" fill="#17221f" stroke="#5c7467" />
+  <text x="150" y="903" text-anchor="middle" class="body green">Local preview</text>
+  <text x="67" y="947" class="small">Display 1 · Selected</text>
+  <text x="267" y="865" class="body strong">Sound choice</text>
+  <rect x="268" y="880" width="15" height="15" rx="3" fill="#c4e99c" />
+  <path d="M271 887 L275 891 L281 883" fill="none" stroke="#263321" stroke-width="2" />
+  <text x="293" y="893" class="body">Include system sound</text>
+  <text x="267" y="920" class="small muted">Other applications may be audible.</text>
+  <text x="267" y="941" class="small muted">Check call-audio routing before you start.</text>
+  <text x="54" y="985" class="small muted">
+    Direct sharing exposes your network address to connected peers.
+  </text>
+  <text x="54" y="1004" class="small muted">This preview is local. Nothing is being sent yet.</text>
+  <text x="363" y="1048" class="body muted">Choose again</text>
+  <text x="479" y="1048" class="body muted">Cancel</text>
+  <rect x="546" y="1025" width="136" height="35" rx="6" fill="#c4e99c" />
+  <text
+    x="614"
+    y="1048"
+    text-anchor="middle"
+    font-size="14"
+    font-weight="600"
+    style="fill: #263321"
+  >
+    Start sharing
+  </text>
+
+  <text x="736" y="749" class="label green">02 / QUALITY AND BITRATE ARE SEPARATE</text>
+  <rect x="736" y="765" width="672" height="310" rx="10" fill="#1b1e25" stroke="#343d47" />
+  <text x="758" y="801" font-size="19" class="strong">Control what you send</text>
+  <text x="758" y="828" class="body muted">Start with 1080p / 60. Qualify 4K / 60 later.</text>
+  <text x="758" y="862" class="label muted">MAXIMUM QUALITY</text>
+  <rect x="758" y="875" width="292" height="38" rx="6" fill="#252c34" stroke="#495462" />
+  <text x="773" y="900" class="body">Smooth · 1080p / 60</text>
+  <text x="1027" y="899" class="small muted">⌄</text>
+  <text x="1070" y="862" class="label muted">VIDEO CAP PER VIEWER</text>
+  <rect x="1070" y="875" width="316" height="38" rx="6" fill="#252c34" stroke="#495462" />
+  <text x="1085" y="900" class="body">8 Mb/s</text>
+  <text x="1363" y="899" class="small muted">⌄</text>
+  <text x="758" y="941" class="small green">Auto · 2 · 4 · 6 · 8 · 12 · 20 Mb/s</text>
+  <text x="758" y="963" class="small muted">
+    Proposed experiment range. Final caps depend on measured results.
+  </text>
+  <line x1="758" y1="982" x2="1386" y2="982" class="line" />
+  <text x="758" y="1007" class="body">9 viewers × 8 Mb/s = up to 72 Mb/s video upload</text>
+  <text x="758" y="1029" class="small muted">
+    Plus audio and transport overhead. Viewers can choose lower caps independently.
+  </text>
+  <text x="758" y="1054" class="small green">
+    Hidden: incoming screen pauses. Your outgoing share keeps running.
+  </text>
+  <text x="32" y="1101" class="small muted">
+    Source picker is platform-specific. Sound is opt-in. Live quality labels use measured frames; a
+    selected profile is only a ceiling.
+  </text>
+</svg>

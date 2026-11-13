@@ -53,7 +53,9 @@ export function registerAuth(
       remember: auth.remember,
     };
   });
-  app.get('/api/auth/me', async (req) => {
+  // Ten clients can exhaust the shared API burst while loading chat. Session
+  // verification must keep its own bounded budget so call authorization survives.
+  app.get('/api/auth/me', { config: authLimit(120) }, async (req) => {
     const auth = await current(req);
     return {
       user: auth.user,
@@ -62,11 +64,11 @@ export function registerAuth(
       remember: auth.remember,
     };
   });
-  app.post('/api/auth/logout', async (req, reply) => {
+  // Revocation responses must not delete the shared cookie: late headers could erase a later login.
+  app.post('/api/auth/logout', async (req) => {
     const auth = await current(req);
     await pool.query('UPDATE sessions SET revoked_at=now() WHERE id=$1', [auth.sessionId]);
     io.in('session:' + auth.sessionId).disconnectSockets(true);
-    reply.clearCookie(SESSION_COOKIE, cookieOptions);
     return { ok: true };
   });
   app.get('/api/account/sessions', async (req) => {
@@ -77,7 +79,7 @@ export function registerAuth(
     );
     return { sessions: rows.map((row) => ({ ...row, current: row.id === auth.sessionId })) };
   });
-  app.delete<{ Params: { id: string } }>('/api/account/sessions/:id', async (req, reply) => {
+  app.delete<{ Params: { id: string } }>('/api/account/sessions/:id', async (req) => {
     const auth = await current(req),
       id = uuid(req.params.id);
     const changed = await pool.query(
@@ -85,7 +87,6 @@ export function registerAuth(
       [id, auth.user.id],
     );
     if (changed.rowCount) io.in('session:' + id).disconnectSockets(true);
-    if (id === auth.sessionId) reply.clearCookie(SESSION_COOKIE, cookieOptions);
     return { ok: true };
   });
   app.patch('/api/account', async (req) => {
@@ -98,7 +99,7 @@ export function registerAuth(
     notify(auth.user.id);
     return { ok: true };
   });
-  app.post('/api/account/password', { config: authLimit(5) }, async (req, reply) => {
+  app.post('/api/account/password', { config: authLimit(5) }, async (req) => {
     const auth = await current(req),
       body = input(req.body, ['currentPassword', 'newPassword']);
     const old = password(body.currentPassword),
@@ -119,10 +120,9 @@ export function registerAuth(
       await db.query('UPDATE sessions SET revoked_at=now() WHERE user_id=$1', [auth.user.id]);
     });
     disconnect(auth.user.id);
-    reply.clearCookie(SESSION_COOKIE, cookieOptions);
     return { ok: true };
   });
-  app.get('/api/members', async (req) => {
+  app.get('/api/members', { config: authLimit(120) }, async (req) => {
     approved(await current(req));
     const { rows } = await pool.query(
       "SELECT u.*,EXISTS(SELECT 1 FROM platform WHERE owner_id=u.id) is_owner FROM users u WHERE status='approved' ORDER BY username",

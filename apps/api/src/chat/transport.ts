@@ -105,6 +105,12 @@ export function registerChat(
     preHandler: guard,
     config: { rateLimit: limits ? { max: 60, timeWindow: 60000 } : (false as const) },
   };
+  // Bootstrap/history reads must not compete with every other API request from
+  // ten clients behind one address. Each keeps a bounded, authenticated quota.
+  const initialRead = {
+    preHandler: guard,
+    config: { rateLimit: limits ? { max: 120, timeWindow: 60000 } : (false as const) },
+  };
   registerNotificationPreferences(app, service, io, { token, guard, mutation });
   registerGifSearch(app, { ...gifOptions, guard, limits });
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>(
@@ -165,7 +171,7 @@ export function registerChat(
   }
   app.get<{ Querystring: Record<string, unknown> }>(
     '/api/channel-categories',
-    { preHandler: guard },
+    initialRead,
     async (req) => service.categories(token(req), req.query),
   );
   app.post('/api/channel-categories', mutation, async (req, reply) => {
@@ -183,7 +189,7 @@ export function registerChat(
     await publish();
     return { removed: true };
   });
-  app.get('/api/conversations', { preHandler: guard }, async (req) => ({
+  app.get('/api/conversations', initialRead, async (req) => ({
     conversations: await service.list(token(req)),
   }));
   app.post('/api/conversations', mutation, async (req, reply) => {
@@ -206,7 +212,7 @@ export function registerChat(
     await publishRead(token(req), uuid(req.params.id));
     return result;
   });
-  app.get('/api/invitations', { preHandler: guard }, async (req) => ({
+  app.get('/api/invitations', initialRead, async (req) => ({
     invitations: await service.invites(token(req)),
   }));
   app.post<{ Params: { id: string } }>(
@@ -235,7 +241,7 @@ export function registerChat(
   );
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>(
     '/api/conversations/:id/messages',
-    { preHandler: guard },
+    initialRead,
     async (req) => service.read(token(req), uuid(req.params.id), req.query),
   );
   app.get<{ Params: { id: string; messageId: string } }>(

@@ -64,9 +64,11 @@ import { EmojiText } from './EmojiText';
 import { AppearanceBrand, AppearanceToggle } from './Appearance';
 import './auth.css';
 import './chat.css';
-export function App() {
+import type { ScreenApplication } from './screen-application';
+import { ScreenPanel } from './ScreenPanel';
+export function App({ screenApplication }: { screenApplication?: ScreenApplication } = {}) {
   return (
-    <AuthRoot>
+    <AuthRoot screenApplication={screenApplication}>
       <AccountCommunity />
     </AuthRoot>
   );
@@ -594,6 +596,7 @@ function Community() {
             </button>
           )}
         </header>
+        <ScreenPanel />
         {error && (
           <div className="notice" role="alert">
             {error}
