@@ -1,4 +1,5 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import type { ScreenSelectRequest } from '@tricord/shared';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -40,6 +41,22 @@ it.each(['none', 'tab', 'three'] as const)(
       staticRoot: fileURLToPath(new URL('../dist', import.meta.url)),
     });
     const browsers: Browser[] = [];
+    const renewals = new Map<string, number>();
+    server.io.on('connection', (socket) => {
+      socket.onAny((event) => {
+        if (event === 'screen:renew') renewals.set(socket.id, (renewals.get(socket.id) ?? 0) + 1);
+      });
+    });
+    let cleanupGate: Promise<void> | undefined, releaseCleanup: (() => void) | undefined;
+    let cleanupSeen = false;
+    const select = server.screen!.select.bind(server.screen!);
+    vi.spyOn(server.screen!, 'select').mockImplementation(async (...args) => {
+      if ((args[1] as ScreenSelectRequest).shareId === null && cleanupGate) {
+        cleanupSeen = true;
+        await cleanupGate;
+      }
+      return select(...args);
+    });
     try {
       const auth = new AuthService(database.database.pool),
         password = randomUUID() + '-ScreenUI';
@@ -173,25 +190,39 @@ it.each(['none', 'tab', 'three'] as const)(
         await a.wait("document.querySelector('.screen-status').textContent.includes('3 viewers')");
       }
       const shareId = server.voice!.leases.get(publisher.auth.user.id)!.id;
+      const beforeRenewals = new Map(renewals);
       // Cross the original 45-second bind/source/link deadline without recapture.
       await new Promise<void>((resolve) => setTimeout(resolve, 47000));
+      expect(renewals.size).toBe(browsers.length);
+      for (const [id, count] of renewals) {
+        const elapsed = count - (beforeRenewals.get(id) ?? 0);
+        expect(elapsed).toBeGreaterThanOrEqual(4);
+        expect(elapsed).toBeLessThanOrEqual(6);
+      }
       expect(await a.js("document.querySelector('#screen-panel').dataset.phase")).toBe('sharing');
       expect(await a.js('window.__screenTest.calls')).toBe(1);
       expect(server.voice!.leases.get(publisher.auth.user.id)!.id).toBe(shareId);
       expect(
         await b.js("document.querySelector('[data-screen-playback]').videoWidth"),
       ).toBeGreaterThan(0);
+      cleanupGate = new Promise<void>((resolve) => {
+        releaseCleanup = resolve;
+      });
       await b.js(
-        "Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'))",
+        "Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));document.dispatchEvent(new Event('visibilitychange'))",
       );
       await b.wait("!document.querySelector('[data-screen-playback]')");
-      await a.wait(
-        `document.querySelector('.screen-status').textContent.includes('${sound === 'three' ? 2 : 0} viewers')`,
-      );
+      await vi.waitFor(() => expect(cleanupSeen).toBe(true));
       expect(await a.js('window.__screenTest.tracks[0].readyState')).toBe('live');
       await b.js(
-        "Object.defineProperty(document,'hidden',{configurable:true,value:false});document.dispatchEvent(new Event('visibilitychange'))",
+        "Object.defineProperty(document,'hidden',{configurable:true,value:false});document.dispatchEvent(new Event('visibilitychange'));document.dispatchEvent(new Event('visibilitychange'))",
       );
+      expect(await b.js("!!document.querySelector('[data-screen-playback]')")).toBe(false);
+      expect(
+        await b.js("document.querySelector('#screen-panel [role=alert]')?.textContent ?? ''"),
+      ).toBe('');
+      releaseCleanup!();
+      cleanupGate = undefined;
       await b.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
       await a.wait(
         "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxFramerate===15)",
@@ -212,6 +243,7 @@ it.each(['none', 'tab', 'three'] as const)(
           await browser.js("document.querySelector('[data-voice-status]')?.dataset.voiceStatus"),
         ).toBe('connected');
     } finally {
+      releaseCleanup?.();
       for (const browser of browsers) await browser.close();
       await server.app.close();
       for (const room of await server.voice!.media.listRooms())

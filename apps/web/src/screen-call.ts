@@ -357,7 +357,9 @@ export class ScreenCall {
       const notice = value as ScreenLinkNotice;
       if (notice.epoch !== this.binding?.binding.epoch || notice.revision < this.directoryRevision)
         return;
-      this.requestRenewal();
+      const link = notice.grant.link;
+      // Viewers adopt their select acknowledgement; only new outgoing links need discovery.
+      if (link.shareId === this.ownShare?.id && !this.outgoing.has(link.id)) this.requestRenewal();
       return;
     }
     if (event === 'closed') {
@@ -914,19 +916,32 @@ export class ScreenCall {
     this.update({ watching: null, playback: '' });
   };
   private visibility(visible: boolean) {
+    if (this.state.hidden === !visible) return;
     this.update({ hidden: !visible });
     if (!visible) {
       const selected = this.receiving?.selection;
-      this.resume = selected?.shareId
-        ? { shareId: selected.shareId, quality: qualityOnly(selected), epoch: selected.epoch }
-        : undefined;
+      if (selected?.shareId)
+        this.resume = {
+          shareId: selected.shareId,
+          quality: qualityOnly(selected),
+          epoch: selected.epoch,
+        };
       this.stopWatching(false);
     } else if (this.resume) {
-      const previous = this.resume;
+      void this.resumeWatching(this.resume);
+    }
+  }
+  private async resumeWatching(previous: NonNullable<ScreenCall['resume']>) {
+    const binding = this.binding;
+    try {
+      await this.cleanupRaw;
+      if (this.resume !== previous || this.state.hidden || !this.current(binding)) return;
       this.resume = undefined;
       const selected = this.state.shares.find((item) => item.id === previous.shareId);
-      if (selected && previous.epoch === this.binding?.binding.epoch)
-        void this.watch(selected.id, previous.quality).catch((cause) => this.error(cause));
+      if (selected && previous.epoch === binding?.binding.epoch)
+        await this.watch(selected.id, previous.quality);
+    } catch (cause) {
+      if (this.current(binding)) this.error(cause);
     }
   }
   observeVoice(voice: VoiceState) {
