@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Choose a source · Rajcord</title>
+    <link rel="stylesheet" href="picker.css" />
+    <script defer src="picker.js"></script>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">RAJCORD / SCREEN SHARING</p>
+      <h1>Choose what to share</h1>
+      <p class="intro">Source names stay on this device. Nothing is being sent yet.</p>
+      <p id="status" role="status" aria-live="polite">Loading available sources…</p>
+      <section aria-labelledby="sources-heading">
+        <h2 id="sources-heading">Screens and windows</h2>
+        <ul id="sources" aria-label="Available sources"></ul>
+      </section>
+      <fieldset id="sound" disabled>
+        <legend>Sound choice</legend>
+        <label><input type="radio" name="sound" value="none" /> Share video only</label>
+        <label
+          ><input id="system-sound" type="radio" name="sound" value="system" disabled /> Include
+          system sound</label
+        >
+        <p id="sound-help">Select a source to see its sound options.</p>
+      </fieldset>
+      <p class="notice">
+        A local preview and confirmation come next. This choice alone does not publish your screen.
+      </p>
+      <footer>
+        <button id="cancel" type="button">Cancel</button>
+        <button id="confirm" class="primary" type="button" disabled>Use this source</button>
+      </footer>
+    </main>
+  </body>
+</html>

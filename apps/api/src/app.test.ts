@@ -63,7 +63,7 @@ it('static assets cannot exhaust API quotas, and API quotas remain enforced', as
     throw new Error('Refusing unexpected test directory cleanup');
   const instance = createApp({ staticRoot: root });
   try {
-    await writeFile(path.join(root, 'index.html'), '<p>Tricord test</p>');
+    await writeFile(path.join(root, 'index.html'), '<p>Rajcord test</p>');
     for (let i = 0; i < 130; i++) expect((await instance.app.inject('/')).statusCode).toBe(200);
     for (let i = 0; i < 120; i++)
       expect((await instance.app.inject('/api/unavailable')).statusCode).toBe(503);

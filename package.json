@@ -9,6 +9,9 @@
   },
   "scripts": {
     "setup:desktop": "pnpm --filter @tricord/desktop exec install-electron",
+    "desktop:package": "pnpm --filter @tricord/desktop package:win",
+    "desktop:audit": "node scripts/desktop-audit.mjs",
+    "desktop:test:install": "powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/desktop-install-smoke.ps1",
     "dev": "pnpm build:packages && concurrently -k -n api,web \"pnpm --filter @tricord/api dev\" \"pnpm --filter @tricord/web dev\"",
     "dev:desktop": "pnpm build:packages && pnpm --filter @tricord/desktop build && concurrently -k --success command-desktop -n api,web,desktop \"pnpm --filter @tricord/api dev\" \"pnpm --filter @tricord/web dev\" \"node scripts/wait-for-dev.mjs && pnpm --filter @tricord/desktop dev\"",
     "build:packages": "pnpm --filter @tricord/shared build && pnpm --filter @tricord/ui build",
@@ -27,11 +30,16 @@
     "db:verify-persistence": "pnpm --filter @tricord/api db:verify-persistence",
     "owner:bootstrap": "pnpm --filter @tricord/api owner:bootstrap",
     "test:desktop": "pnpm build && pnpm --filter @tricord/api test:desktop",
-    "test:browser": "pnpm build && pnpm --filter @tricord/api test:browser",
+    "test:desktop:picker": "pnpm build:packages && pnpm --filter @tricord/desktop build && pnpm --filter @tricord/desktop test:picker",
+    "test:desktop:capture": "pnpm build:packages && pnpm --filter @tricord/desktop build && pnpm --filter @tricord/desktop test:capture",
+    "test:desktop:authority": "pnpm build && pnpm --filter @tricord/api test:desktop:authority",
+    "test:browser": "pnpm build && vitest run --config vitest.browser.config.ts && pnpm --filter @tricord/api test:browser",
     "voice:setup": "node scripts/voice-setup.mjs",
     "voice:up": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice up -d",
     "voice:down": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice down",
+    "test:presence": "pnpm build && pnpm --filter @tricord/api test:presence",
     "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice",
+    "test:screen": "pnpm build:packages && pnpm --filter @tricord/api test:screen",
     "test:voice:load": "pnpm --filter @tricord/api test:voice:check && pnpm build && pnpm --filter @tricord/api test:voice:load",
     "server:build": "docker build -f infrastructure/server/Dockerfile -t tricord-server:alpha .",
     "test:server-image": "node scripts/server-image-smoke.mjs",
@@ -48,7 +56,7 @@
     "prettier": "^3.6.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^5.0.5",
+    "vitest": "^5.1.0",
     "wait-on": "^9.0.0"
   }
 }

@@ -83,19 +83,25 @@ describe('real PostgreSQL foundation', () => {
       'suspended',
       'removed',
     ]);
-    expect(snapshot.journal).toHaveLength(5);
+    expect(snapshot.journal).toHaveLength(8);
     const tables = await database.pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name",
     );
     expect(tables.rows.map((row) => row.table_name)).toEqual([
       'approval_history',
+      'channel_categories',
+      'conversation_alert_preferences',
       'conversation_reads',
       'conversations',
       'credentials',
       'invitations',
       'memberships',
+      'message_mentions',
+      'message_pins',
+      'message_reactions',
       'messages',
       'platform',
+      'sender_alert_preferences',
       'sessions',
       'users',
       'voice_channels',

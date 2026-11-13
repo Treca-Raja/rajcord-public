@@ -1,10 +1,21 @@
 import type { PoolClient } from 'pg';
-import type { AuthUser, Conversation, ChatMessage, MessagePage, Invitation } from '@tricord/shared';
+import {
+  chatMetadataLimits,
+  type AuthUser,
+  type Conversation,
+  type ChatMessage,
+  type MessagePage,
+  type Invitation,
+  type ChannelCategory,
+  type ChannelCategoryPage,
+  type MessageNotice,
+} from '@tricord/shared';
 import { AuthService, approved, identity, digest } from '../auth/service.js';
 import { HttpError, input, text, uuid } from '../auth/validation.js';
+import { chatName, channelTopic, metadataPosition, checkMetadataRevision } from './metadata.js';
+import { hydrateMessages, messageVisibility } from './message-data.js';
 const missing = () => new HttpError(404, 'Conversation or message not found.');
-const visible =
-  'EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=m.conversation_id AND h.user_id=$2 AND m.seq>=h.start_seq AND (h.end_seq IS NULL OR m.seq<=h.end_seq))';
+const visible = messageVisibility;
 function content(value: unknown) {
   if (typeof value !== 'string' || !value.trim() || value.length > 4000)
     throw new HttpError(400, 'Messages must contain 1–4000 characters.');
@@ -20,32 +31,38 @@ function cursor(value: unknown) {
     throw new HttpError(400, 'Invalid message cursor.');
   return value;
 }
-function message(row: Record<string, unknown>): ChatMessage {
+function category(row: Record<string, unknown>): ChannelCategory {
   return {
     id: String(row.id),
-    conversationId: String(row.conversation_id),
-    clientId: String(row.client_id),
-    seq: String(row.seq),
-    change: String(row.change),
-    author: {
-      id: String(row.author_id),
-      username: String(row.username),
-      displayName: String(row.display_name),
-    },
-    body: row.deleted_at ? null : String(row.body),
-    deleted: !!row.deleted_at,
-    createdAt: (row.created_at as Date).toISOString(),
-    editedAt: row.edited_at ? (row.edited_at as Date).toISOString() : null,
+    name: String(row.name),
+    position: Number(row.position),
+    revision: String(row.revision),
   };
 }
 export class ChatService extends AuthService {
   async run<T>(token: string, work: (db: PoolClient, user: AuthUser) => Promise<T>) {
-    return this.transaction(async (db) => work(db, approved(await identity(db, token)).user));
+    try {
+      return await this.transaction(async (db) =>
+        work(db, approved(await identity(db, token)).user),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === '23505' &&
+        'constraint' in error &&
+        ['conversation_channel_name_key', 'channel_category_name_key'].includes(
+          String(error.constraint),
+        )
+      )
+        throw new HttpError(409, 'That name is already in use.');
+      throw error;
+    }
   }
   async access(db: PoolClient, userId: string, id: string) {
     const row = (
       await db.query(
-        "SELECT c.* FROM conversations c WHERE c.id=$1 AND (c.kind='channel' OR EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=c.id AND h.user_id=$2 AND h.end_seq IS NULL)) FOR UPDATE",
+        "SELECT c.*,k.name category_name,k.position category_position,k.revision category_revision FROM conversations c LEFT JOIN channel_categories k ON k.id=c.category_id WHERE c.id=$1 AND (c.kind='channel' OR EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=c.id AND h.user_id=$2 AND h.end_seq IS NULL)) FOR UPDATE OF c",
         [id, userId],
       )
     ).rows[0];
@@ -66,7 +83,7 @@ export class ChatService extends AuthService {
       await db.query(
         `SELECT coalesce(r.last_seq,0)::text last_read_seq,
         count(m.id)::int unread_count,
-        count(m.id) FILTER (WHERE m.body ~* ('(^|[^a-zA-Z0-9_@])@' || u.username || '($|[^a-zA-Z0-9_])'))::int mention_count
+        count(m.id) FILTER (WHERE EXISTS(SELECT 1 FROM message_mentions mm WHERE mm.message_id=m.id AND mm.user_id=u.id))::int mention_count
       FROM users u LEFT JOIN conversation_reads r ON r.user_id=u.id AND r.conversation_id=$1
       LEFT JOIN messages m ON m.conversation_id=$1 AND m.seq>coalesce(r.last_seq,0)
         AND m.author_id<>u.id AND m.deleted_at IS NULL
@@ -87,6 +104,17 @@ export class ChatService extends AuthService {
           ? (members.find((x) => x.id !== userId)?.display_name ?? 'Direct message')
           : row.name,
       archived: row.archived,
+      topic: row.topic,
+      category: row.category_id
+        ? category({
+            id: row.category_id,
+            name: row.category_name,
+            position: row.category_position,
+            revision: row.category_revision,
+          })
+        : null,
+      position: row.position,
+      metadataRevision: String(row.metadata_revision),
       managerId: row.manager_id,
       members: members.map((x) => ({
         id: x.id,
@@ -100,7 +128,7 @@ export class ChatService extends AuthService {
     return this.run(token, async (db, user) => {
       const rows = (
         await db.query(
-          "SELECT c.id FROM conversations c WHERE c.kind='channel' OR EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=c.id AND h.user_id=$1 AND h.end_seq IS NULL) ORDER BY c.created_at,c.id",
+          "SELECT c.id FROM conversations c LEFT JOIN channel_categories k ON k.id=c.category_id WHERE c.kind='channel' OR EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=c.id AND h.user_id=$1 AND h.end_seq IS NULL) ORDER BY CASE WHEN c.kind='channel' THEN 0 ELSE 1 END,k.position NULLS LAST,k.id,c.position,c.created_at,c.id",
           [user.id],
         )
       ).rows;
@@ -139,6 +167,34 @@ export class ChatService extends AuthService {
   async get(token: string, id: string) {
     return this.run(token, (db, user) => this.detail(db, user.id, uuid(id)));
   }
+  async delivery(token: string, id: string, messageId: string) {
+    return this.run(token, async (db, user) => {
+      const conversation = await this.detail(db, user.id, uuid(id));
+      const row = (
+        await db.query(
+          `SELECT m.id,m.seq,m.author_id,m.deleted_at,
+         EXISTS(SELECT 1 FROM message_mentions mm WHERE mm.message_id=m.id AND mm.user_id=$2) mention,
+         EXISTS(SELECT 1 FROM messages p WHERE p.id=m.reply_to_id AND p.conversation_id=m.conversation_id AND p.author_id=$2
+           AND ($3='channel' OR EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=p.conversation_id AND h.user_id=$2
+             AND p.seq>=h.start_seq AND (h.end_seq IS NULL OR p.seq<=h.end_seq)))) reply
+         FROM messages m WHERE m.conversation_id=$1 AND ($3='channel' OR ${visible}) AND m.id=$4`,
+          [id, user.id, conversation.kind, uuid(messageId)],
+        )
+      ).rows[0];
+      const notice: MessageNotice | null = row
+        ? {
+            conversationId: id,
+            messageId,
+            seq: String(row.seq),
+            authorId: String(row.author_id),
+            kind: conversation.kind,
+            mention: Boolean(row.mention),
+            reply: Boolean(row.reply),
+          }
+        : null;
+      return { conversation, notice, deleted: !!row?.deleted_at };
+    });
+  }
   // Central contact-policy boundary for future blocking; no implicit admin bypass.
   async contact(db: PoolClient, userId: string, target: string) {
     if (target === userId) throw new HttpError(400, 'Choose another member.');
@@ -147,11 +203,108 @@ export class ChatService extends AuthService {
     )
       throw missing();
   }
+  private async categoryId(db: PoolClient, value: unknown): Promise<string | null> {
+    if (value === undefined || value === null) return null;
+    const id = uuid(value);
+    if (!(await db.query('SELECT id FROM channel_categories WHERE id=$1', [id])).rowCount)
+      throw new HttpError(409, 'This category no longer exists. Reload channel details.');
+    return id;
+  }
+  async categories(
+    token: string,
+    query: Record<string, unknown> = {},
+  ): Promise<ChannelCategoryPage> {
+    input(query, ['after', 'limit']);
+    const limit = query.limit === undefined ? 50 : Number(query.limit);
+    let position = -1;
+    let afterId = '00000000-0000-4000-8000-000000000000';
+    if (query.after !== undefined) {
+      if (typeof query.after !== 'string' || !/^\d{1,10}:[0-9a-f-]{36}$/i.test(query.after))
+        throw new HttpError(400, 'Invalid category cursor.');
+      const [order, id] = query.after.split(':');
+      position = metadataPosition(Number(order));
+      afterId = uuid(id);
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw new HttpError(400, 'Invalid category page size.');
+    return this.run(token, async (db) => {
+      const rows = (
+        await db.query(
+          'SELECT * FROM channel_categories WHERE (position,id)>($1,$2::uuid) ORDER BY position,id LIMIT $3',
+          [position, afterId, limit + 1],
+        )
+      ).rows;
+      const categories = rows.slice(0, limit).map(category);
+      const last = categories.at(-1);
+      return {
+        categories,
+        nextAfter: rows.length > limit && last ? `${last.position}:${last.id}` : null,
+      };
+    });
+  }
+  async createCategory(token: string, value: unknown): Promise<ChannelCategory> {
+    const body = input(value, ['name', 'position']);
+    const name = chatName(body.name, chatMetadataLimits.categoryName, 'Category name');
+    const position = body.position === undefined ? 0 : metadataPosition(body.position);
+    return this.run(token, async (db) => {
+      const result = await db.query(
+        'INSERT INTO channel_categories(name,name_key,position) VALUES($1,$2,$3) RETURNING *',
+        [name.name, name.key, position],
+      );
+      return category(result.rows[0]);
+    });
+  }
+  async updateCategory(token: string, id: string, value: unknown, remove = false) {
+    const body = input(
+      value,
+      remove ? ['expectedRevision'] : ['name', 'position', 'expectedRevision'],
+    );
+    return this.run(token, async (db) => {
+      const row = (
+        await db.query('SELECT * FROM channel_categories WHERE id=$1 FOR UPDATE', [uuid(id)])
+      ).rows[0];
+      if (!row) throw new HttpError(404, 'Category not found.');
+      checkMetadataRevision(body.expectedRevision, row.revision);
+      if (remove) {
+        await db.query(
+          'UPDATE conversations SET category_id=NULL,metadata_revision=metadata_revision+1 WHERE category_id=$1',
+          [id],
+        );
+        await db.query('DELETE FROM channel_categories WHERE id=$1', [id]);
+        return null;
+      }
+      if (body.name === undefined && body.position === undefined)
+        throw new HttpError(400, 'Choose category details to change.');
+      const name =
+        body.name === undefined
+          ? { name: row.name, key: row.name_key }
+          : chatName(body.name, chatMetadataLimits.categoryName, 'Category name');
+      const position = body.position === undefined ? row.position : metadataPosition(body.position);
+      const result = await db.query(
+        'UPDATE channel_categories SET name=$1,name_key=$2,position=$3,revision=revision+1 WHERE id=$4 RETURNING *',
+        [name.name, name.key, position, id],
+      );
+      return category(result.rows[0]);
+    });
+  }
   async create(token: string, value: unknown) {
-    const body = input(value, ['kind', 'name', 'userId', 'userIds']);
+    const body = input(value, [
+      'kind',
+      'name',
+      'userId',
+      'userIds',
+      'topic',
+      'categoryId',
+      'position',
+    ]);
     if (!['channel', 'dm', 'group'].includes(String(body.kind)))
       throw new HttpError(400, 'Invalid conversation type.');
     return this.run(token, async (db, user) => {
+      if (
+        body.kind !== 'channel' &&
+        ['topic', 'categoryId', 'position'].some((key) => body[key] !== undefined)
+      )
+        throw new HttpError(400, 'These details apply only to public channels.');
       let id: string;
       if (body.kind === 'dm') {
         const target = uuid(body.userId);
@@ -176,21 +329,27 @@ export class ChatService extends AuthService {
             [id, member],
           );
       } else {
-        let name = text(body.name, 1, 80, 'conversation name');
+        let name: string;
+        let nameKey: string | null = null;
+        let topic = '';
+        let categoryId: string | null = null;
+        let position = 0;
         if (body.kind === 'channel') {
-          name = name.toLowerCase();
-          if (!/^[a-z0-9][a-z0-9-]{0,47}$/.test(name))
-            throw new HttpError(400, 'Use 1–48 lowercase letters, numbers or hyphens.');
+          const normalized = chatName(body.name, chatMetadataLimits.channelName, 'Channel name');
+          name = normalized.name;
+          nameKey = normalized.key;
+          topic = channelTopic(body.topic);
+          categoryId = await this.categoryId(db, body.categoryId);
+          position = body.position === undefined ? 0 : metadataPosition(body.position);
           if (
             (
-              await db.query(
-                "SELECT id FROM conversations WHERE kind='channel' AND lower(name)=$1",
-                [name],
-              )
+              await db.query("SELECT id FROM conversations WHERE kind='channel' AND name_key=$1", [
+                nameKey,
+              ])
             ).rowCount
           )
             throw new HttpError(409, 'Channel name already exists.');
-        }
+        } else name = text(body.name, 1, 80, 'conversation name');
         let invitees: string[] = [];
         if (body.kind === 'group' && body.userIds !== undefined) {
           if (!Array.isArray(body.userIds) || body.userIds.length > 9)
@@ -200,8 +359,17 @@ export class ChatService extends AuthService {
         }
         id = (
           await db.query(
-            'INSERT INTO conversations(kind,name,creator_id,manager_id) VALUES($1,$2,$3,$4) RETURNING id',
-            [body.kind, name, user.id, body.kind === 'group' ? user.id : null],
+            'INSERT INTO conversations(kind,name,creator_id,manager_id,name_key,topic,category_id,position) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
+            [
+              body.kind,
+              name,
+              user.id,
+              body.kind === 'group' ? user.id : null,
+              nameKey,
+              topic,
+              categoryId,
+              position,
+            ],
           )
         ).rows[0].id;
         if (body.kind === 'group') {
@@ -220,34 +388,66 @@ export class ChatService extends AuthService {
     });
   }
   async update(token: string, id: string, value: unknown) {
-    const body = input(value, ['name', 'archived']);
+    const body = input(value, [
+      'name',
+      'archived',
+      'topic',
+      'categoryId',
+      'position',
+      'expectedRevision',
+    ]);
     return this.run(token, async (db, user) => {
       const c = await this.access(db, user.id, uuid(id));
       if (c.kind === 'dm' || (c.kind === 'group' && c.manager_id !== user.id))
         throw new HttpError(403, 'Only the group manager can rename this conversation.');
-      if (body.name !== undefined) {
-        let name = text(body.name, 1, 80, 'conversation name');
-        if (c.kind === 'channel') {
-          name = name.toLowerCase();
-          if (!/^[a-z0-9][a-z0-9-]{0,47}$/.test(name))
-            throw new HttpError(400, 'Invalid channel name.');
-          if (
-            (
-              await db.query(
-                "SELECT id FROM conversations WHERE kind='channel' AND lower(name)=$1 AND id<>$2",
-                [name, id],
-              )
-            ).rowCount
+      if (c.kind === 'channel') {
+        checkMetadataRevision(body.expectedRevision, c.metadata_revision);
+        if (
+          !['name', 'archived', 'topic', 'categoryId', 'position'].some(
+            (key) => body[key] !== undefined,
           )
-            throw new HttpError(409, 'Channel name already exists.');
-        }
-        await db.query('UPDATE conversations SET name=$1 WHERE id=$2', [name, id]);
+        )
+          throw new HttpError(400, 'Choose channel details to change.');
+        if (
+          c.archived &&
+          ['name', 'topic', 'categoryId', 'position'].some((key) => body[key] !== undefined)
+        )
+          throw new HttpError(409, 'Restore this channel before changing its details.');
+        const name =
+          body.name === undefined
+            ? { name: c.name, key: c.name_key }
+            : chatName(body.name, chatMetadataLimits.channelName, 'Channel name');
+        if (body.archived !== undefined && typeof body.archived !== 'boolean')
+          throw new HttpError(400, 'Invalid archive setting.');
+        await db.query(
+          'UPDATE conversations SET name=$1,name_key=$2,topic=$3,category_id=$4,position=$5,archived=$6,metadata_revision=metadata_revision+1 WHERE id=$7',
+          [
+            name.name,
+            name.key,
+            body.topic === undefined ? c.topic : channelTopic(body.topic),
+            body.categoryId === undefined
+              ? c.category_id
+              : await this.categoryId(db, body.categoryId),
+            body.position === undefined ? c.position : metadataPosition(body.position),
+            body.archived === undefined ? c.archived : body.archived,
+            id,
+          ],
+        );
+        return this.detail(db, user.id, id);
       }
-      if (body.archived !== undefined) {
-        if (c.kind !== 'channel' || typeof body.archived !== 'boolean')
-          throw new HttpError(400, 'Only channels can be archived or restored.');
-        await db.query('UPDATE conversations SET archived=$1 WHERE id=$2', [body.archived, id]);
-      }
+      if (
+        ['topic', 'categoryId', 'position', 'expectedRevision'].some(
+          (key) => body[key] !== undefined,
+        )
+      )
+        throw new HttpError(400, 'These details apply only to public channels.');
+      if (body.archived !== undefined)
+        throw new HttpError(400, 'Only channels can be archived or restored.');
+      if (body.name !== undefined)
+        await db.query('UPDATE conversations SET name=$1 WHERE id=$2', [
+          text(body.name, 1, 80, 'conversation name'),
+          id,
+        ]);
       return this.detail(db, user.id, id);
     });
   }
@@ -397,7 +597,12 @@ export class ChatService extends AuthService {
       const hasMore = rows.length > limit,
         selected = rows.slice(0, limit);
       return {
-        messages: (after !== undefined ? selected : selected.reverse()).map(message),
+        messages: await hydrateMessages(
+          db,
+          user.id,
+          c,
+          after !== undefined ? selected : selected.reverse(),
+        ),
         hasMore,
         nextBefore: after === undefined && hasMore ? String(selected[0]?.seq) : null,
         change:
@@ -419,7 +624,7 @@ export class ChatService extends AuthService {
         )
       ).rows[0];
       if (!row || (!includeDeleted && row.deleted_at)) throw missing();
-      return message(row);
+      return (await hydrateMessages(db, user.id, c, [row]))[0]!;
     });
   }
   async send(token: string, id: string, value: unknown): Promise<ChatMessage> {
@@ -430,9 +635,12 @@ export class ChatService extends AuthService {
     id: string,
     value: unknown,
   ): Promise<{ message: ChatMessage; created: boolean }> {
-    const body = input(value, ['body', 'clientId']);
+    const body = input(value, ['body', 'clientId', 'replyToId']);
     const raw = content(body.body),
       clientId = uuid(body.clientId);
+    const replyToId =
+      body.replyToId === undefined || body.replyToId === null ? null : uuid(body.replyToId);
+    const requestHash = digest(replyToId ? JSON.stringify([raw, replyToId]) : raw);
     return this.run(token, async (db, user) => {
       const c = await this.access(db, user.id, uuid(id));
       if (c.archived) throw new HttpError(409, 'This channel is archived.');
@@ -445,9 +653,20 @@ export class ChatService extends AuthService {
         )
       ).rows[0];
       if (previous) {
-        if (previous.request_hash !== digest(raw))
+        if (previous.request_hash !== requestHash)
           throw new HttpError(409, 'This message identifier was already used.');
-        return { message: message(previous), created: false };
+        return { message: (await hydrateMessages(db, user.id, c, [previous]))[0]!, created: false };
+      }
+      let threadRootId: string | null = null;
+      if (replyToId) {
+        const target = (
+          await db.query(
+            `SELECT m.* FROM messages m WHERE m.conversation_id=$1 AND ($3='channel' OR ${visible}) AND m.id=$4 AND m.deleted_at IS NULL`,
+            [id, user.id, c.kind, replyToId],
+          )
+        ).rows[0];
+        if (!target) throw missing();
+        threadRootId = String(target.thread_root_id ?? target.id);
       }
       const count = Number(
         (
@@ -466,12 +685,26 @@ export class ChatService extends AuthService {
       ).rows[0];
       const row = (
         await db.query(
-          'INSERT INTO messages(conversation_id,author_id,client_id,request_hash,seq,change,body) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',
-          [id, user.id, clientId, digest(raw), counters.last_seq, counters.last_change, raw],
+          'INSERT INTO messages(conversation_id,author_id,client_id,request_hash,seq,change,body,reply_to_id,thread_root_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
+          [
+            id,
+            user.id,
+            clientId,
+            requestHash,
+            counters.last_seq,
+            counters.last_change,
+            raw,
+            replyToId,
+            threadRootId,
+          ],
         )
       ).rows[0];
       return {
-        message: message({ ...row, username: user.username, display_name: user.displayName }),
+        message: (
+          await hydrateMessages(db, user.id, c, [
+            { ...row, username: user.username, display_name: user.displayName },
+          ])
+        )[0]!,
         created: true,
       };
     });
@@ -509,7 +742,11 @@ export class ChatService extends AuthService {
           [raw, counters.last_change, remove, messageId],
         )
       ).rows[0];
-      return message({ ...result, username: user.username, display_name: user.displayName });
+      return (
+        await hydrateMessages(db, user.id, c, [
+          { ...result, username: user.username, display_name: user.displayName },
+        ])
+      )[0]!;
     });
   }
 }

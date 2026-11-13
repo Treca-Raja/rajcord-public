@@ -8,26 +8,24 @@ describe('release boundaries', () => {
   it('rejects mutable image tags and other repositories', () => {
     const sha = 'a'.repeat(40);
     const digest = 'ghcr.io/treca-raja/rajcord-public@sha256:' + 'b'.repeat(64);
-    expect(() => validateRelease('Treca-Raja/rajcord-public', sha, digest)).not.toThrow();
+    for (const repository of ['Treca-Raja/rajcord-public', 'treca-raja/rajcord-public'])
+      expect(() => validateRelease(repository, sha, digest)).not.toThrow();
     for (const image of [
       'ghcr.io/treca-raja/rajcord-public:main',
+      'ghcr.io/fakebane/tricord-public@sha256:' + 'b'.repeat(64),
+      'ghcr.io/treca-raja/tricord-public@sha256:' + 'b'.repeat(64),
       digest + ';echo bad',
       'ghcr.io/other/app@sha256:' + 'b'.repeat(64),
     ])
       expect(() => validateRelease('Treca-Raja/rajcord-public', sha, image)).toThrow();
-    expect(() => validateRelease('other/repo', sha, digest)).toThrow();
-  });
-
-  it('rejects the predecessor repository and its image under the current repository', () => {
-    const sha = 'a'.repeat(40);
-    const digest = 'ghcr.io/treca-raja/rajcord-public@sha256:' + 'b'.repeat(64);
-    const predecessorImage = 'ghcr.io/fakebane/tricord-public@sha256:' + 'b'.repeat(64);
-    expect(() => validateRelease('fakebane/tricord-public', sha, digest)).toThrow(
-      'Only the intended repository',
-    );
-    expect(() => validateRelease('Treca-Raja/rajcord-public', sha, predecessorImage)).toThrow(
-      'Use an immutable image digest',
-    );
+    for (const repository of [
+      'other/repo',
+      'fakebane/tricord-public',
+      'Treca-Raja/tricord-public',
+      'Treca-Raja/rajcord-public\n',
+      undefined,
+    ])
+      expect(() => validateRelease(repository, sha, digest)).toThrow();
   });
 
   it('fails closed when production approvals or branch protection are missing', () => {
@@ -53,13 +51,31 @@ describe('release boundaries', () => {
   });
 
   it('rejects non-main releases before making any GitHub request', async () => {
-    await expect(
-      checkPolicy('main', {
-        GITHUB_REPOSITORY: 'Treca-Raja/rajcord-public',
-        GITHUB_SHA: 'a'.repeat(40),
-        GITHUB_REF: 'refs/heads/untrusted',
-      }),
-    ).rejects.toThrow('Only main');
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    for (const branch of ['feature/example', 'develop', 'untrusted'])
+      await expect(
+        checkPolicy('main', {
+          GITHUB_REPOSITORY: 'Treca-Raja/rajcord-public',
+          GITHUB_SHA: 'a'.repeat(40),
+          GITHUB_REF: `refs/heads/${branch}`,
+        }),
+      ).rejects.toThrow('Only main');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects former repository identities before making any GitHub request', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    for (const repository of ['fakebane/tricord-public', 'Treca-Raja/tricord-public'])
+      await expect(
+        checkPolicy('main', {
+          GITHUB_REPOSITORY: repository,
+          GITHUB_SHA: 'a'.repeat(40),
+          GITHUB_REF: 'refs/heads/main',
+        }),
+      ).rejects.toThrow('Only the intended repository');
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('rejects superseded commits and GitHub permission errors', async () => {

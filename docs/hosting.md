@@ -1,25 +1,27 @@
 # Hosted alpha preparation
 
-This checkout targets [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public), with automated verification and the release image `ghcr.io/treca-raja/rajcord-public`. GitHub settings and deployment access must be verified for this repository. The historical preparation record below concerns the predecessor repository and its AlphaVPS host; no current remote configuration or service state has been verified for this checkout. The plan omits permanent staging and uses disposable CI tests before approval-gated production delivery.
+The active source repository is public at [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public), transferred from the maintainer's personal account, with automated verification. The previous private repository is retained as an archived predecessor. The server image is tested locally. The existing AlphaVPS VPS has host tools/firewalls, key-only SSH, production runtime secrets and public certificates prepared for the Cloudflare-managed domain rajcord.com. No application deployment has occurred and public HTTPS is not currently serving the app. The plan omits permanent staging and uses disposable CI tests before approval-gated production delivery.
 
-The [production delivery runbook](deployment.md) supplies service configuration, CI/CD setup, pre-migration backups, certificate renewal and operational jobs. Historical predecessor-repository evidence from 2026-10-27 records main-only production approval, separate deployment credentials, disabled administrator bypass and HOSTING_ENABLED=false. It also records DNS, public certificate issuance, renewal rehearsal and an initialized encrypted R2 repository with verified storage round trip/integrity. Live database recovery, app deployment, active maintenance jobs and WAN voice remained outstanding. Recheck the intended host and this repository's GitHub configuration before enabling delivery; release policy fails closed if required protection information is missing.
+Release configuration now targets `ghcr.io/treca-raja/rajcord-public`. Recheck organization package permissions, host image access and production settings before an authorized release; earlier verification does not establish their post-transfer state.
+
+The [production delivery runbook](deployment.md) supplies service configuration, CI/CD setup, pre-migration backups, certificate renewal and operational jobs. GitHub's production environment now has the main-only policy, maintainer reviewer and separate deployment credentials, while HOSTING_ENABLED remains false. Administrator bypass is disabled and verified by API readback; release policy fails closed if its status is missing. DNS, public certificate issuance and a renewal rehearsal are verified. The encrypted R2 repository is initialized and its storage round trip/integrity check passed; live database backup/recovery, source publication, app deployment, active maintenance jobs and WAN voice remain outstanding.
 
 ## What is ready
 
 - A multi-stage Linux image builds the existing application and runs only the API/web runtime as the non-root node user. Node base images and CI actions are pinned.
 - Docker build context excludes Git history, local environments, artifacts, node_modules, backups and local desktop profiles. Runtime packages include built code and migrations.
-- CI runs formatting, lint, TypeScript, unit tests, real PostgreSQL/LiveKit integration tests, a headless Google Chrome stable browser smoke with sandboxing enabled, the production build, workflow/shell validation and both image/hosted-stack smokes on Linux. A parallel Windows job runs type checking, unit tests and builds without launching Electron. Both must pass the required `verify` check. Pull requests have read-only repository permissions. Enabled trusted main runs publish the tested image by digest and await production approval before deploying that same digest.
+- CI runs formatting, lint, TypeScript, unit tests, real PostgreSQL/LiveKit integration tests, the production build, workflow/shell validation and both image/hosted-stack smokes. Pull requests have read-only repository permissions. Enabled trusted main runs publish the tested image by digest and await production approval before deploying that same digest.
 - The image smoke uses an isolated Docker network, a PostgreSQL tmpfs and a separate LiveKit container. It verifies migrations twice, web assets, database readiness, registration/login, Secure/HttpOnly/SameSite cookies, pending-account restrictions, authenticated private LiveKit control, and an actual pg_dump/pg_restore round trip.
-- Production voice configuration accepts the private Docker hostname livekit. Browser connections still pass through the authenticated Tricord signaling gateway; LiveKit bearer tokens remain internal.
+- Production voice configuration accepts the private Docker hostname livekit. Browser connections still pass through the authenticated Rajcord signaling gateway; LiveKit bearer tokens remain internal.
 - Hosted leases let LiveKit supply ICE/TURN configuration. Development leases retain an empty ICE-server list and loopback-only configuration.
-- Desktop can load an operator-configured exact HTTPS origin. Its microphone permissions, navigation restrictions and renderer isolation use that same trusted origin. Temporary-cookie cleanup is scoped to the selected server.
+- Unpackaged desktop can load an operator-configured exact HTTPS origin. Installed Rajcord is pinned to `https://rajcord.com`; see [desktop distribution](desktop-distribution.md). Its microphone permissions, navigation restrictions and renderer isolation use that same trusted origin. Temporary-cookie cleanup is scoped to the selected server.
 
 ## Local image verification
 
 Docker Desktop must be running:
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm server:build
 pnpm test:server-image
 ```
@@ -33,7 +35,7 @@ Use the existing AlphaVPS production VPS, starting with an alpha for two or thre
 ```mermaid
 flowchart LR
   Friend[Browser or desktop] -->|HTTPS and WSS| Proxy[TLS reverse proxy]
-  Proxy --> API[Tricord API and web assets]
+  Proxy --> API[Rajcord API and web assets]
   API --> DB[(Private PostgreSQL)]
   API -->|Private control and signaling| Media[LiveKit]
   Friend -->|Encrypted RTC media| Media

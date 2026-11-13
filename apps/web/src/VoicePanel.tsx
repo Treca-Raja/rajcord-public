@@ -1,34 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, MicOff, Headphones, PhoneOff, Volume2, Plus } from 'lucide-react';
 import { useAuth } from './Auth';
-import {
-  VoiceController,
-  concreteDevices,
-  type VoiceChannel,
-  type VoiceState,
-} from './voice-controller';
+import { useCall, type VoiceControls } from './CallProvider';
+import { concreteDevices, type VoiceChannel } from './voice-controller';
 import './voice.css';
-export function VoicePanel() {
+import { ScreenLauncher } from './ScreenPanel';
+export function VoicePanel({
+  onChannels,
+  requestedChannel,
+}: {
+  onChannels?: (channels: VoiceChannel[]) => void;
+  requestedChannel?: { id: string; version: number } | null;
+}) {
   const { request, state: auth } = useAuth();
   const ref = useRef(request);
   ref.current = request;
-  const controllerRef = useRef<VoiceController | null>(null);
-  const [voice, setVoice] = useState<VoiceState | null>(null),
-    [channels, setChannels] = useState<VoiceChannel[]>([]),
-    [devices, setDevices] = useState<MediaDeviceInfo[]>([]),
+  const notifyChannels = useRef(onChannels);
+  notifyChannels.current = onChannels;
+  const loaded = useRef(false),
+    handledReference = useRef(0);
+  const call = useCall();
+  const controlsRef = useRef(call?.controls);
+  controlsRef.current = call?.controls;
+  const voice = call?.voice;
+  const devices = call?.devices ?? [];
+  const [channels, setChannels] = useState<VoiceChannel[]>([]),
     [error, setError] = useState(''),
     [expanded, setExpanded] = useState(false),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    const controller = new VoiceController((...args) => ref.current(...args));
-    controllerRef.current = controller;
-    controller.onChange = () => setVoice({ ...controller.state });
-    controller.onChange();
     let live = true;
     const reload = async () => {
       try {
         const data = await ref.current<{ channels: VoiceChannel[] }>('/voice/channels');
-        if (live) setChannels(data.channels);
+        if (live) {
+          loaded.current = true;
+          setChannels(data.channels);
+          notifyChannels.current?.(data.channels);
+        }
       } catch (error) {
         if (live) setError((error as Error).message);
       }
@@ -38,23 +47,54 @@ export function VoicePanel() {
     return () => {
       live = false;
       clearInterval(timer);
-      controller.dispose();
-      controllerRef.current = null;
     };
   }, []);
-  async function action(work: (controller: VoiceController) => Promise<unknown>) {
-    const controller = controllerRef.current;
+  useEffect(() => {
+    if (expanded) void action((c) => c.refreshDevices());
+  }, [expanded, call?.controls]);
+  useEffect(() => {
+    if (
+      !requestedChannel ||
+      !loaded.current ||
+      handledReference.current === requestedChannel.version
+    )
+      return;
+    handledReference.current = requestedChannel.version;
+    if (!channels.some((channel) => channel.id === requestedChannel.id)) {
+      setError('That voice channel is no longer available.');
+      return;
+    }
+    setExpanded(true);
+    requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLButtonElement>(
+        '.voice-panel [data-voice-channel-id="' + requestedChannel.id + '"]',
+      );
+      target?.scrollIntoView({
+        block: 'nearest',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'instant'
+          : 'smooth',
+      });
+      target?.focus({ preventScroll: true });
+    });
+  }, [requestedChannel, channels]);
+  async function action(work: (controller: VoiceControls) => Promise<unknown>) {
+    const controller = call?.controls;
     if (!controller) return;
     setBusy(true);
     setError('');
     try {
       await work(controller);
     } catch (error) {
-      setError((error as Error).message);
+      if (controlsRef.current === controller) setError((error as Error).message);
     } finally {
-      setBusy(false);
+      if (controlsRef.current === controller) setBusy(false);
     }
   }
+  useEffect(() => {
+    setBusy(false);
+    setError('');
+  }, [call?.controls]);
   return (
     <section className="voice-panel">
       <div className="section-label voice-label">
@@ -66,9 +106,9 @@ export function VoicePanel() {
               const name = window.prompt('Voice channel name');
               if (!name) return;
               await ref.current('/voice/channels', 'POST', { name });
-              setChannels(
-                (await ref.current<{ channels: VoiceChannel[] }>('/voice/channels')).channels,
-              );
+              const data = await ref.current<{ channels: VoiceChannel[] }>('/voice/channels');
+              setChannels(data.channels);
+              notifyChannels.current?.(data.channels);
             })
           }
         >
@@ -79,7 +119,12 @@ export function VoicePanel() {
         {channels.map((channel) => (
           <button
             key={channel.id}
-            className={voice?.channelId === channel.id ? 'selected' : ''}
+            data-voice-channel-id={channel.id}
+            className={
+              voice?.channelId === channel.id || requestedChannel?.id === channel.id
+                ? 'selected'
+                : ''
+            }
             onClick={() => {
               setExpanded(true);
             }}
@@ -93,20 +138,37 @@ export function VoicePanel() {
       <button className="voice-settings-toggle" onClick={() => setExpanded(!expanded)}>
         {voice?.status === 'idle' ? 'Set up voice' : (voice?.status ?? 'Voice')} · Audio controls
       </button>
+      <ScreenLauncher />
       {expanded && voice && (
         <div className="voice-controls">
           <p className="voice-help">Choose your devices. You join muted.</p>
-          <button
-            disabled={busy}
-            onClick={() => void action(async (c) => setDevices(await c.devices()))}
+          <p
+            className="voice-help"
+            role={voice.devicesStatus === 'error' ? 'alert' : 'status'}
+            data-audio-devices-status={voice.devicesStatus}
           >
-            Find audio devices
-          </button>
+            {voice.devicesStatus === 'loading'
+              ? 'Checking audio devices…'
+              : voice.devicesError || 'Audio devices update automatically.'}
+          </p>
+          <div className="voice-device-actions">
+            {voice.devicesStatus === 'permission-needed' && (
+              <button disabled={busy} onClick={() => void action((c) => c.devices())}>
+                Allow microphone access
+              </button>
+            )}
+            <button
+              disabled={busy || voice.devicesStatus === 'loading'}
+              onClick={() => void action((c) => c.refreshDevices())}
+            >
+              Refresh audio devices
+            </button>
+          </div>
           <label>
             Microphone
             <select
               aria-label="Voice microphone"
-              value={voice.input}
+              value={voice.inputMissing ? '' : voice.input}
               onChange={(e) => void action((c) => c.selectInput(e.target.value))}
             >
               <option value="">Choose microphone</option>
@@ -121,7 +183,7 @@ export function VoicePanel() {
             Speakers
             <select
               aria-label="Voice speakers"
-              value={voice.output}
+              value={voice.outputMissing ? '' : voice.output}
               onChange={(e) => void action((c) => c.selectOutput(e.target.value))}
             >
               <option value="">Choose speakers</option>
@@ -132,13 +194,28 @@ export function VoicePanel() {
               ))}
             </select>
           </label>
+          <label className="voice-output-volume">
+            Voice output <output>{Math.round(voice.outputVolume * 100)}%</output>
+            <input
+              aria-label="Voice output volume"
+              aria-valuetext={Math.round(voice.outputVolume * 100) + '%'}
+              type="range"
+              min="0"
+              max="2"
+              step=".05"
+              value={voice.outputVolume}
+              onChange={(e) => void action((c) => c.setOutputVolume(Number(e.target.value)))}
+            />
+          </label>
           {voice.status === 'idle' ? (
             <label>
               Join channel
               <select
                 aria-label="Join voice channel"
                 value=""
-                disabled={busy || !voice.input || !voice.output}
+                disabled={
+                  busy || !voice.input || !voice.output || voice.inputMissing || voice.outputMissing
+                }
                 onChange={(e) => void action((c) => c.join(e.target.value))}
               >
                 <option value="">Choose a channel</option>
@@ -196,9 +273,7 @@ export function VoicePanel() {
                         max="1"
                         step=".05"
                         value={p.volume}
-                        onChange={(e) =>
-                          controllerRef.current?.volume(p.id, Number(e.target.value))
-                        }
+                        onChange={(e) => call?.controls.volume(p.id, Number(e.target.value))}
                       />
                     )}
                   </li>

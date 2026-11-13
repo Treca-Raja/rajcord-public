@@ -2,10 +2,14 @@
 
 Describe what this changes and why.
 
+## Branch flow
+
+- [ ] Source/target follows `feature/* -> develop` or `develop -> main`.
+
 ## Testing
 
-Explain which tests you ran, or why tests are not applicable.
+Describe added/updated regression tests and the local checks you ran. State skipped checks and missing prerequisites; documentation-only changes need formatting/link checks.
 
 ## Notes
 
-Mention breaking changes, schema changes, migration requirements, or security implications if any.
+Mention breaking changes, schema changes, migration requirements, security implications and updated feature documentation if applicable.

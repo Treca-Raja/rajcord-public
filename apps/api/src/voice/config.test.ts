@@ -30,3 +30,18 @@ it('hosted startup rejects missing or incomplete voice credentials', () => {
     }),
   ).toThrow();
 });
+
+it('requires an explicit bare screen TURN host and rejects URLs or credential-bearing values', () => {
+  const local = { ...base, LIVEKIT_URL: 'http://127.0.0.1:7880' };
+  expect(parseVoiceConfig({ ...local, SCREEN_TURN_HOST: 'turn.rajcord.com' })?.screenTurnHost).toBe(
+    'turn.rajcord.com',
+  );
+  for (const host of [
+    'https://turn.rajcord.com',
+    'user:secret@turn.rajcord.com',
+    'turn.rajcord.com:5349',
+    'turn..example',
+    'x\ninvalid',
+  ])
+    expect(() => parseVoiceConfig({ ...local, SCREEN_TURN_HOST: host })).toThrow();
+});

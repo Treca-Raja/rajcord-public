@@ -1,6 +1,6 @@
 # Code of Conduct
 
-Tricord welcomes contributors and users of different backgrounds and experience levels.
+Rajcord welcomes contributors and users of different backgrounds and experience levels.
 
 - Be respectful and constructive, including during disagreements and code reviews.
 - Do not engage in harassment, threats, personal attacks, or discriminatory abuse.

@@ -77,7 +77,7 @@ try {
     '-days',
     '2',
     '-subj',
-    '/CN=Tricord disposable hosting fixture',
+    '/CN=Rajcord disposable hosting fixture',
     '-addext',
     `subjectAltName=DNS:${publicHost},DNS:${turnHost}`,
     '-keyout',
@@ -141,7 +141,7 @@ volumes: !reset {}
     ]).toString();
   phase = 'trusted HTTPS readiness';
   assert.equal(JSON.parse(request('/ready')).database, 'connected');
-  assert.match(request('/'), /<title>Tricord/);
+  assert.match(request('/'), /<title>Rajcord/);
   assert.equal(
     JSON.parse(request('/health', ['--header', 'X-Forwarded-For: spoofed, 1.2.3.4'])).status,
     'ok',

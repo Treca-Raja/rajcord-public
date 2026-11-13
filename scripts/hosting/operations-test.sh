@@ -39,6 +39,10 @@ MOCK
 chmod 755 /usr/local/bin/docker /usr/local/bin/restic /usr/local/bin/curl /usr/local/bin/timeout
 deploy() { bash "$release/scripts/hosting/deploy.sh" staging "$image" "$sha" >/tmp/deploy-output 2>&1; }
 
+bash -c 'source "$1"; initialize_host staging; [[ $TRICORD_IMAGE == "$2" ]]' bash \
+  "$release/scripts/hosting/common.sh" \
+  ghcr.io/treca-raja/rajcord-public@sha256:0000000000000000000000000000000000000000000000000000000000000000
+
 # Failed off-server backup must block migrations and must not publish release markers.
 touch /tmp/fail-backup
 if deploy; then exit 1; fi
@@ -87,7 +91,54 @@ mv "$config/letsencrypt/live/tricord.fixture" "$config/letsencrypt/live/tricord"
 deploy
 grep -q -- 'https://rajcord.test/ready' /tmp/operations
 grep -q -- '-verify_hostname turn.rajcord.test -servername turn.rajcord.test' /tmp/operations
-if bash "$release/scripts/hosting/deploy.sh" staging ghcr.io/treca-raja/rajcord-public:latest "$sha" >/dev/null 2>&1; then exit 1; fi
-if bash "$release/scripts/hosting/deploy.sh" staging ghcr.io/fakebane/tricord-public@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb "$sha" >/dev/null 2>&1; then exit 1; fi
+: >/tmp/operations
+for rejected_image in \
+  ghcr.io/treca-raja/rajcord-public:latest \
+  "ghcr.io/fakebane/tricord-public@sha256:${image##*@sha256:}" \
+  "ghcr.io/treca-raja/tricord-public@sha256:${image##*@sha256:}" \
+  "ghcr.io/other/rajcord-public@sha256:${image##*@sha256:}"; do
+  if bash "$release/scripts/hosting/deploy.sh" staging "$rejected_image" "$sha" >/dev/null 2>&1; then exit 1; fi
+done
+[[ ! -s /tmp/operations && $(cat "$config/image") == "$image" ]]
 if bash "$release/scripts/hosting/deploy.sh" production "$image" "$sha" >/dev/null 2>&1; then exit 1; fi
-printf 'PASS: backup/migration/HTTPS failures block release success; immutable image and environment checks fail closed.\n'
+printf 'PASS: backup/migration/HTTPS failures block release success; Rajcord bootstrap and immutable image/environment checks fail closed.\n'
+
+# Unix sockets accept connections during the image's temporary initialization
+# server. Restoring must wait for the final TCP server instead.
+cat >/usr/local/bin/restic <<'MOCK'
+#!/usr/bin/env bash
+while [[ $# -gt 0 ]]; do
+  if [[ $1 == --target ]]; then printf 'PGDMP fixture' >"$2/database.dump"; break; fi
+  shift
+done
+MOCK
+cat >/usr/local/bin/docker <<'MOCK'
+#!/usr/bin/env bash
+if [[ $* == *'config --format json'* ]]; then printf '{"services":{"postgres":{"image":"postgres:17-alpine"}}}'; fi
+if [[ $* == *'pg_isready'* ]]; then
+  if [[ $* == *'-h 127.0.0.1'* ]]; then
+    if [[ ! -e /tmp/tcp-probed ]]; then touch /tmp/tcp-probed; exit 1; fi
+    touch /tmp/final-server-ready
+  fi
+fi
+if [[ $* == *'pg_restore'* ]]; then
+  [[ -f /tmp/final-server-ready && $* == *'-h 127.0.0.1'* ]] || exit 1
+fi
+if [[ $* == *'psql'* ]]; then
+  [[ $* == *'-h 127.0.0.1'* ]] || exit 1
+  printf 't\nt\n'
+fi
+MOCK
+cat >/usr/local/bin/jq <<'MOCK'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'postgres:17-alpine\n'
+MOCK
+cat >/usr/local/bin/openssl <<'MOCK'
+#!/usr/bin/env bash
+printf 'abcdef123456\n'
+MOCK
+chmod 755 /usr/local/bin/docker /usr/local/bin/restic /usr/local/bin/jq /usr/local/bin/openssl
+bash "$release/scripts/hosting/restore-check.sh" staging >/dev/null
+[[ -s $config/last-restore-check && -e /tmp/final-server-ready ]]
+printf 'PASS: restore verification waits past temporary socket readiness for final TCP readiness.\n'

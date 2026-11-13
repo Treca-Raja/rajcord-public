@@ -17,11 +17,14 @@ export type Lease = {
   revoked: boolean;
   close?: () => void;
 };
+export type LeaseInvalidation = Readonly<Pick<Lease, 'id' | 'userId'>>;
 export class VoiceService {
   readonly media: RoomServiceClient;
   readonly leases = new Map<string, Lease>();
   private queue: Promise<unknown> = Promise.resolve();
   private initialized = false;
+  private invalidated = new WeakSet<Lease>();
+  private invalidationListeners = new Set<(lease: LeaseInvalidation) => void>();
   readonly prefix: string;
   constructor(
     readonly pool: Pool,
@@ -167,9 +170,29 @@ export class VoiceService {
       return { ok: true };
     });
   }
-  async remove(lease: Lease) {
+  onLeaseInvalidated(listener: (lease: LeaseInvalidation) => void) {
+    this.invalidationListeners.add(listener);
+    return () => {
+      this.invalidationListeners.delete(listener);
+    };
+  }
+  invalidate(lease: Lease) {
     lease.revoked = true;
-    lease.close?.();
+    try {
+      if (!this.invalidated.has(lease)) {
+        this.invalidated.add(lease);
+        for (const listener of this.invalidationListeners)
+          listener({ id: lease.id, userId: lease.userId });
+      }
+    } finally {
+      lease.close?.();
+    }
+  }
+  invalidateAll() {
+    for (const lease of this.leases.values()) this.invalidate(lease);
+  }
+  async remove(lease: Lease) {
+    this.invalidate(lease);
     try {
       await this.media.removeParticipant(lease.room, lease.userId);
     } catch (error) {

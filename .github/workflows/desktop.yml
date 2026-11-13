@@ -1,0 +1,119 @@
+name: Windows desktop
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+    inputs:
+      publish_draft:
+        description: Explicitly authorize uploading a new draft GitHub release (never makes it public)
+        type: boolean
+        default: false
+      signed:
+        description: Sign the draft and enable verified automatic updates
+        type: boolean
+        default: false
+      release_tag:
+        description: Confirm v<desktop package version> when publishing a draft
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm desktop:package
+      - run: node scripts/desktop-audit.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Rajcord-Windows-review
+          path: artifacts/desktop/Rajcord-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  release-policy:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_draft == true
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - run: node scripts/ci/desktop-release.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAJCORD_RELEASE_TAG: ${{ inputs.release_tag }}
+
+  draft:
+    needs: [build, release-policy]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_draft == true
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: desktop-release
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Recheck policy after approval
+        run: node scripts/ci/desktop-release.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAJCORD_RELEASE_TAG: ${{ inputs.release_tag }}
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Build signed installer with protected credentials
+        if: inputs.signed == true
+        run: pnpm desktop:package
+        env:
+          RAJCORD_SIGNED_RELEASE: '1'
+          RAJCORD_PUBLISHER_DN: ${{ vars.RAJCORD_PUBLISHER_DN }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - name: Build unsigned manual-install release
+        if: inputs.signed != true
+        run: pnpm desktop:package
+      - name: Audit output
+        run: node scripts/desktop-audit.mjs
+        env:
+          RAJCORD_SIGNED_RELEASE: ${{ inputs.signed && '1' || '0' }}
+      - name: Upload assets to a new draft only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = @(Get-ChildItem -LiteralPath artifacts/desktop -File | Where-Object { $_.Name -match '^Rajcord-Setup-.*\.(exe|exe\.blockmap)$|^latest\.yml$' } | ForEach-Object FullName)
+          gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "Rajcord $env:RELEASE_TAG" --notes "Windows x64 desktop release. Maintainer must complete docs/desktop-distribution.md acceptance before explicitly publishing."
+          if ($LASTEXITCODE -ne 0) { throw 'Draft creation failed; existing releases are never overwritten.' }

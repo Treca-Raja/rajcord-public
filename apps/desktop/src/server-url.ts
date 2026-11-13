@@ -1,4 +1,6 @@
-export function serverUrl(env: Record<string, string | undefined>, test = false) {
+export function serverUrl(env: Record<string, string | undefined>, test = false, packaged = false) {
+  // Installed clients cannot be redirected by inherited development/test environment variables.
+  if (packaged) return 'https://rajcord.com';
   if (test) return 'http://127.0.0.1:3002';
   const dev = env.TRICORD_DEV_URL,
     remote = env.TRICORD_SERVER_URL;

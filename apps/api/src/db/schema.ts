@@ -12,6 +12,7 @@ import {
   index,
   uniqueIndex,
   check,
+  foreignKey,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 export const approvalStatus = pgEnum('approval_status', [
@@ -82,12 +83,38 @@ export const approvalHistory = pgTable('approval_history', {
 });
 
 export const conversationKind = pgEnum('conversation_kind', ['channel', 'dm', 'group']);
+export const channelCategories = pgTable(
+  'channel_categories',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: varchar('name', { length: 48 }).notNull(),
+    nameKey: varchar('name_key', { length: 96 }).notNull(),
+    position: integer('position').default(0).notNull(),
+    revision: bigint('revision', { mode: 'bigint' })
+      .default(sql`0`)
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex('channel_category_name_key').on(t.nameKey),
+    index('channel_category_order').on(t.position, t.id),
+    check('channel_category_bounds', sql`${t.position}>=0 AND ${t.revision}>=0`),
+  ],
+);
 export const conversations = pgTable(
   'conversations',
   {
     id: uuid('id').defaultRandom().primaryKey(),
     kind: conversationKind('kind').notNull(),
     name: varchar('name', { length: 80 }),
+    nameKey: varchar('name_key', { length: 160 }),
+    topic: varchar('topic', { length: 500 }).default('').notNull(),
+    categoryId: uuid('category_id').references(() => channelCategories.id, {
+      onDelete: 'set null',
+    }),
+    position: integer('position').default(0).notNull(),
+    metadataRevision: bigint('metadata_revision', { mode: 'bigint' })
+      .default(sql`0`)
+      .notNull(),
     creatorId: uuid('creator_id').references(() => users.id),
     managerId: uuid('manager_id').references(() => users.id),
     pairLow: uuid('pair_low').references(() => users.id),
@@ -103,9 +130,14 @@ export const conversations = pgTable(
   },
   (t) => [
     uniqueIndex('conversation_dm_pair').on(t.pairLow, t.pairHigh),
-    uniqueIndex('conversation_channel_name')
-      .on(sql`lower(${t.name})`)
+    uniqueIndex('conversation_channel_name_key')
+      .on(t.nameKey)
       .where(sql`${t.kind}='channel'`),
+    index('conversation_channel_order').on(t.categoryId, t.position, t.id),
+    check(
+      'conversation_metadata_shape',
+      sql`${t.position}>=0 AND ${t.metadataRevision}>=0 AND ((${t.kind}='channel' AND ${t.nameKey} IS NOT NULL) OR (${t.kind}<>'channel' AND ${t.nameKey} IS NULL AND ${t.categoryId} IS NULL AND ${t.topic}='' AND ${t.position}=0))`,
+    ),
     check(
       'conversation_pair_shape',
       sql`(${t.kind}='dm' AND ${t.pairLow} IS NOT NULL AND ${t.pairHigh} IS NOT NULL AND ${t.pairLow}<${t.pairHigh}) OR (${t.kind}<>'dm' AND ${t.pairLow} IS NULL AND ${t.pairHigh} IS NULL)`,
@@ -182,17 +214,103 @@ export const messages = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     editedAt: timestamp('edited_at', { withTimezone: true }),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    replyToId: uuid('reply_to_id'),
+    threadRootId: uuid('thread_root_id'),
   },
   (t) => [
     uniqueIndex('message_order').on(t.conversationId, t.seq),
     uniqueIndex('message_idempotency').on(t.conversationId, t.authorId, t.clientId),
     index('message_changes').on(t.conversationId, t.change),
     index('message_author_rate').on(t.authorId, t.createdAt),
+    uniqueIndex('message_conversation_id').on(t.conversationId, t.id),
+    index('message_thread_order').on(t.conversationId, t.threadRootId, t.seq),
+    index('message_reply_target').on(t.replyToId),
+    foreignKey({
+      columns: [t.conversationId, t.replyToId],
+      foreignColumns: [t.conversationId, t.id],
+      name: 'message_reply_conversation',
+    }),
+    foreignKey({
+      columns: [t.conversationId, t.threadRootId],
+      foreignColumns: [t.conversationId, t.id],
+      name: 'message_thread_conversation',
+    }),
+    check(
+      'message_reply_shape',
+      sql`(${t.replyToId} IS NULL AND ${t.threadRootId} IS NULL) OR (${t.replyToId} IS NOT NULL AND ${t.threadRootId} IS NOT NULL AND ${t.replyToId}<>${t.id} AND ${t.threadRootId}<>${t.id})`,
+    ),
     check(
       'message_content',
       sql`(${t.deletedAt} IS NULL AND ${t.body} IS NOT NULL AND length(${t.body}) BETWEEN 1 AND 4000) OR (${t.deletedAt} IS NOT NULL AND ${t.body} IS NULL)`,
     ),
   ],
+);
+export const messagePins = pgTable('message_pins', {
+  messageId: uuid('message_id')
+    .primaryKey()
+    .references(() => messages.id),
+  pinnedBy: uuid('pinned_by')
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+export const messageReactions = pgTable(
+  'message_reactions',
+  {
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => messages.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    emoji: varchar('emoji', { length: 32 }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.userId, t.emoji] })],
+);
+export const messageMentions = pgTable(
+  'message_mentions',
+  {
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => messages.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId] }),
+    index('message_mentions_user').on(t.userId, t.messageId),
+  ],
+);
+export const conversationAlertPreferences = pgTable(
+  'conversation_alert_preferences',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id),
+    mode: varchar('mode', { length: 16 }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.conversationId] }),
+    check('conversation_alert_mode', sql`${t.mode} IN ('all','mentions','muted')`),
+  ],
+);
+export const senderAlertPreferences = pgTable(
+  'sender_alert_preferences',
+  {
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    senderId: uuid('sender_id')
+      .notNull()
+      .references(() => users.id),
+    muted: boolean('muted').default(false).notNull(),
+    priority: boolean('priority').default(false).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.senderId] })],
 );
 
 export const voiceChannels = pgTable(

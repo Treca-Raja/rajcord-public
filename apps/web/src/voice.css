@@ -39,6 +39,11 @@
   padding: 8px;
   border-radius: 5px;
 }
+.voice-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .voice-controls button:disabled {
   opacity: 0.5;
 }
@@ -86,4 +91,14 @@
   bottom: 0;
   background: #191d23;
   flex-shrink: 0;
+}
+
+.voice-output-volume input {
+  display: block;
+  width: 100%;
+  accent-color: var(--accent-mint);
+}
+.voice-output-volume output {
+  float: right;
+  font-variant-numeric: tabular-nums;
 }

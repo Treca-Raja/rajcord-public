@@ -1,23 +1,39 @@
-# Tricord
+# Rajcord
 
-This checkout's repository: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public).
+Active public repository: [Treca-Raja/rajcord-public](https://github.com/Treca-Raja/rajcord-public).
+
+## Naming and compatibility
+
+The project and repository are now Rajcord. Open [rajcord.code-workspace](rajcord.code-workspace) from the current checkout; local folder names are independent of GitHub repository names. AI skill names use the `rajcord-` prefix.
+
+Existing technical identifiers remain compatible: `@tricord/*` workspace packages, `TRICORD_*` environment variables, `tricord_session`, database users/names, Docker projects/volumes, local image tags, server paths and systemd units. Keep using their documented names so existing configuration and data remain accessible. The Windows client/installer uses Rajcord identity and a separate per-user profile; see [desktop distribution](docs/desktop-distribution.md). Historical verification and milestone documents retain the names used at the time.
+
+See the [naming inventory](docs/naming.md) for audited surfaces, retained identifiers and overlap with the desktop distribution work.
+
+Release images now target `ghcr.io/treca-raja/rajcord-public`. Verify package access and host pull credentials before releasing; a repository rename does not migrate a registry package or existing deployed data.
+
+## Application overview
 
 Milestone 2C adds local community voice channels to the authenticated React/Electron application, alongside persistent shared text channels, private DMs and group DMs. Browser and desktop use the same messaging UI. PostgreSQL is the source of truth; authentication and account approvals from Milestone 2A are preserved.
 
 ## Working with coding agents
 
-Start with [AGENTS.md](AGENTS.md) for project rules, [MEMORY.md](MEMORY.md) for dated context and [SKILLS.md](SKILLS.md) for reusable verification, database, voice and hosting workflows.
+Start with [AGENTS.md](AGENTS.md) for project rules, [MEMORY.md](MEMORY.md) for dated context and [SKILLS.md](SKILLS.md) for reusable planning, documentation, verification, database, voice and hosting workflows. Repository skills can be used with Copilot/VS Code or Codex; check discovery in the selected tool.
+
+Screen sharing now has a main-window P2P flow with separate resolution, frame-rate and video-bitrate choices. See [using screen sharing](#screen-sharing) and the [current contributor/GPT handoff](docs/screen-sharing-handoff.md#current-continuation---2026-11-13) for implementation and acceptance boundaries. This source change does not update production or installed clients.
+
+Changes follow `feature/* -> develop -> main`: create feature branches from `develop`, target `develop` with feature PRs, and release through a `develop`-to-`main` PR. See [CONTRIBUTING.md](CONTRIBUTING.md). The deployment-option skill describes future component switches; those switches are not implemented yet.
 
 ## Windows prerequisites
 
 Windows 11, Node.js 24 LTS, pnpm 11.25.0, Git and Docker Desktop running Linux containers. Keep PostgreSQL and the API on loopback.
 
-On this workstation, if PowerShell cannot find the already-installed tools, add their locations for the current terminal:
+Run commands from your current clone (for example `C:\path\to\rajcord-public`). If PowerShell cannot find the already-installed tools, add their locations for the current terminal:
 
 ```powershell
 $env:Path += ";$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback"
 $env:Path += ";$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin"
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 ```
 
 On another machine, install pnpm normally with `npm install --global pnpm@11.25.0` and reopen PowerShell after installing Docker Desktop.
@@ -25,7 +41,7 @@ On another machine, install pnpm normally with `npm install --global pnpm@11.25.
 ## Setup and first owner
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm install --frozen-lockfile
 pnpm setup:desktop
 pnpm db:setup
@@ -51,7 +67,7 @@ The browser uses same-origin requests. Vite proxies `/api` and `/socket.io` to F
 ## Daily startup
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm db:up
 pnpm voice:setup
 pnpm voice:up
@@ -67,9 +83,20 @@ To run the desktop app, stop `pnpm dev` with Ctrl+C, then:
 pnpm dev:desktop
 ```
 
-The API uses Node’s watch mode with the existing tsx TypeScript loader. Desktop startup waits up to 30 seconds for Vite and a valid Tricord API health response, then opens Electron. If startup fails, it names the unavailable service and stops the helpers instead of waiting forever.
+The API uses Node’s watch mode with the existing tsx TypeScript loader. Desktop startup waits up to 30 seconds for Vite and a valid Rajcord API health response, then opens Electron. If startup fails, it names the unavailable service and stops the helpers instead of waiting forever.
 
-The same screens run in the sandboxed Electron renderer. A normal desktop exit stops its development helpers and returns success; actual app/helper failures still fail. Minimize retains the session. Closing the window fully quits; there is no tray mode. Temporary sessions are revoked on an orderly online quit and their local cookie is removed. Remembered sessions survive restart for up to 30 days. Settings includes display-name changes, password changes, device revocation and logout.
+The same screens run in the sandboxed Electron renderer. A normal development desktop exit stops its helpers and returns success; actual app/helper failures still fail. Minimize retains the session. Closing a development window quits. Installed Rajcord closes to the tray; **Quit Rajcord** or Ctrl+Q exits and disconnects voice. Temporary sessions are revoked on an orderly online quit and their local cookie is removed. Remembered sessions survive restart for up to 30 days. Settings includes display-name changes, password changes, device revocation and logout.
+
+## Rajcord Windows installer
+
+```powershell
+pnpm desktop:package
+pnpm desktop:audit
+```
+
+The Windows x64 NSIS installer is written to `artifacts/desktop/Rajcord-Setup-0.1.0-x64.exe` (version from `apps/desktop/package.json`). Installed clients always connect to `https://rajcord.com`. The default unsigned build supports manual installation; verified automatic updates require a signed build. See the [desktop distribution runbook](docs/desktop-distribution.md) for signing, versioning, guarded GitHub draft releases, install testing and manual voice/update acceptance gates. No release is published by a local build.
+
+Feature PRs target `develop`; reviewed integration then moves through a separate `develop` → `main` PR. Windows review builds run for both branches, while release publication stays restricted to explicitly authorized dispatches on `main`. Text files use LF on every platform through `.gitattributes`.
 
 From another terminal:
 
@@ -86,7 +113,7 @@ Readiness checks a real database connection; it does not apply migrations. Postg
 Close Electron if it is running, then press **Ctrl+C** in the development terminal. Stop PostgreSQL with:
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm voice:down
 pnpm db:down
 ```
@@ -95,13 +122,61 @@ This preserves the database volume. Never use `down -v`, volume removal or pruni
 
 ## Messaging behavior
 
+Explicit `http://` and `https://` URLs become clickable links, as do simple Markdown links such as `[GitHub](https://github.com)`. Links open in a new browser tab (the default browser from Electron); hover shows the normalized destination, including the ASCII form of international domain names. Common trailing sentence punctuation and paired emphasis markers are excluded from automatic URL targets. Only HTTP(S) destinations without embedded credentials are accepted; HTML stays escaped. Link destinations support balanced parentheses; incomplete destinations, spaces and Markdown link titles remain literal. Backtick code spans and fenced blocks remain literal, and other Markdown formatting is not interpreted. This applies to stored, incoming and edited messages without changing their stored text.
+
+After `pnpm build` and `pnpm setup:desktop`, run `pnpm --filter @tricord/desktop test:links` for an isolated Electron link smoke that needs no database or LiveKit. It exercises real window-open events with a recording OS adapter; it does not launch an external browser. The test profile is separate from the normal desktop profile.
+
+For authenticated desktop chat verification after building, run `pnpm --filter @tricord/api test:desktop --chat-only`. It checks links in sent, received and restored messages across three launches, along with authentication and session regressions, without microphone access or voice tests. PostgreSQL and the harness's LiveKit prerequisite must be configured and running. Omitting `--chat-only` retains the existing combined desktop/voice suite.
+
 Approved members can create, rename, archive and reopen shared channels. Use the sidebar plus buttons to open a DM or create a group; clicking a community member opens the same persistent DM for that pair. Groups start with the creator as manager. Any current member can invite approved users, but invitees must accept in their inbox. Only the manager can remove members, rename the group or transfer management. A manager must transfer before leaving a nonempty group.
+
+Public channel forms support readable names (1–80 Unicode code points, including spaces/emoji), an optional topic (up to 500 code points), a category and shared numeric ordering (0–2147483647; lower first). Names are NFC-normalized, surrounding/repeated whitespace is collapsed and lowercase-normalized names must be unique, including archived channels. Control/bidirectional-override characters are rejected; topics are single-line plain text. Existing channel IDs, message history and read progress do not change when details change.
+
+Use **Categories · Create & manage** beneath **TEXT CHANNELS** to create, rename, order or remove public categories. The sidebar button provides quick hover/press feedback. Channel create/settings forms also link to category management; their **Category** selector assigns the channel. Category names support 1–48 Unicode code points with the same normalization/uniqueness rules. Removing a category requires confirmation and moves its channels, including archived channels, to **Uncategorized** without deleting history. Categories and channels use stable tie-breaks when order numbers match. Category lists are paginated; **Load more categories** reveals additional choices. All approved members retain public-channel/category management rights; this adds no private channels or new group/DM naming permissions.
+
+Channel/category forms retain their original revision while being edited. Changes from another window are announced; **Reload channel details** / **Reload category details** explicitly discards unsaved form edits and loads the current values before saving. The server rejects stale edits/reorders rather than overwriting newer details. Archived channels must be restored before their name/topic/category/order can be changed; author-only message edits/deletes remain available. Dialogs support Escape, contained keyboard focus and focus restoration to their opener.
 
 New group members see messages sent after acceptance. Leaving or removal immediately denies group access. Rejoining restores messages from earlier membership periods plus new messages, while messages sent during the absence remain hidden. These rules apply to history pages, direct message IDs and realtime synchronization.
 
 Messages are plain text, limited to 4,000 characters. Enter sends; Shift+Enter adds a newline. Only the author can edit/delete, including in archived channels; administrators have no override. Deletion clears content and retains a stable tombstone for synchronization. History otherwise has no automatic expiry. “Load older messages” uses server sequence pagination.
 
-The composer keeps its draft on connection/send failure and retries with the same idempotency ID. Reconnection synchronizes missed sends, edits and deletions. There is no durable offline queue; reloading or switching conversations can discard an unsent draft. No uploads, search or blocking UI are included. Community voice is described below.
+The composer keeps unsent text and reply targets when switching conversations within the running client, including pending/unconfirmed send IDs. Retrying an unconfirmed send reuses the same intended body/target identifier; changing the target creates a new attempt. A send completing after a switch updates the reopened composer rather than leaving a duplicate draft. Drafts are memory-only and clear on logout/reload or loss of conversation access. There is no durable offline queue or persistent draft storage.
+
+Hover a message for **Reply**; right-click it for the complete action menu, including **Open thread**, **Add reaction**, pin/unpin and permitted edit/delete actions. The three-dot button also opens the menu, including on touch; focused messages support Shift+F10/the context-menu key, arrow keys and Escape. Actions do not occupy permanent rows. Timestamps and edit/pin metadata sit on the right. **Cancel reply** clears the current target. **Open thread** shows its root and single-level replies. Replying to a reply retains both the immediate target and the same root. These remain ordinary canonical messages in the parent timeline, not copies or separate unread entries. Opening/reading a thread never advances the parent read cursor. Inaccessible/deleted ancestors show safe placeholders; jumps and thread items follow current membership and membership-period visibility. **Jump to unread** selects the first accessible unread message; **Jump to latest messages** leaves older-history mode. Reading history does not force-scroll on new arrivals.
+
+**Pinned messages** toggles a paginated drawer with jumps to originals beyond loaded history; click it again to close. The drawer slides over history without snapping the timeline width, leaves the composer accessible and shows its loading shell before waiting for the server. All approved public-channel members, the group manager, or either approved DM participant can pin/unpin; pinning does not grant message edit/delete rights. Deleted or inaccessible messages are absent from both items and counts.
+
+Use **Add reaction** or the composer smile button for categorized Unicode 17 emoji. Search all 3,953 named entries, choose a category or skin tone, then scroll; there are no numbered pages and ordinary browsing shows base families instead of every skin variation. The grid renders only its visible window. Chat/picker/reaction artwork is self-hosted Twemoji SVG, including a pinned Unicode-17 supplement, so joined sequences and flags do not depend on the OS emoji font. The message input uses a self-hosted color font built from that same artwork, keeping picked/typed emoji consistent before sending while retaining native text editing and plain Unicode content. The text font is self-hosted Inter. Settings includes the font/artwork attribution and licenses; neither loads a font or emoji provider. The optional name/search catalog still loads only when needed. Maintainers can regenerate the bundled composer font with `python scripts/build-composer-emoji.py` after installing the pinned optional tools listed in that script; normal app builds do not require them.
+
+Reactions persist, count each user's choice once and let users remove only their own choices. Their pills hang below, outside the message highlight; adding them does not expand that field. Up to 32 different reaction kinds fit on one message, preserving the previous payload bound; existing choices/retries remain available at that limit. Reactions create neither alerts nor unread increments. Archived channels reject replies, pins and reaction mutations; existing author-only message edits/deletes remain available.
+
+Author names, usernames, **You**, timestamps and stable account-derived avatar accents distinguish participants without depending on color or implying a role/presence. Every message has a small avatar on the left and a compact sender header directly above the text, sharing one consistent text edge; there is no separate sender/table column. Timestamps sit at the right of that header. Consecutive rows do not shift indentation. Long identities truncate with a full-name tooltip; reactions align beneath the text outside its highlight. The timeline includes date separators. Hover/menu feedback uses roughly 120 ms transitions; drawers/settings use 160 ms, with motion removed for reduced-motion preferences. History/thread/pin pages default to 50, maximum 100 items; the client bounds loaded windows at 500 messages and incremental catch-up at four pages before explicitly requesting a reload. Unread cursors remain independent of these caches. No uploads, conversation search or blocking per-message prompts are included. Community voice is described below.
+
+Quoted replies have a compact translucent frame. Clicking one opens its authorized original in the main timeline and keeps that message highlighted until another jump or returning to latest messages. Choosing Reply also frames the selected target while composing.
+
+Use the **palette button** in the left rail or **Settings → Appearance** to switch between **Original** (charcoal/green) and **Retro** (racing-green navigation, a soft stone/blue-gray conversation canvas and dark readable text). Retro adds a fine matte-paper grain using a small, static, locally embedded SVG background tile; it does not overlay text, animate noise or contact an asset provider. Original is the default when no preference exists. The choice is saved on this device and synchronized across its same-origin tabs; switching changes styles without reloading chat, changing drafts or touching account data. Storage failures show a warning while leaving the selected theme usable. Both themes keep clear Inter message typography, shared surfaces and quick interactions, not pixel fonts or animated wallpaper. Normal message rows stay unboxed; actions appear on hover/focus for mouse/keyboard users, with a persistent menu control on touch. Short windows keep scrolling inside history rather than pushing the composer below the viewport. Motion stays at 120–160 ms using opacity/small transforms, and reduced-motion preferences remove it; modal backdrops do not blur the entire app.
+
+Theme changes use a 120–160 ms compositor crossfade in browsers with native View Transitions, or a short cancelable opacity fade otherwise. The selected preference updates immediately; rapid changes cancel obsolete animations and cannot reapply an old theme. Transition overlays do not intercept clicks or typing. Reduced-motion preferences and hidden documents apply themes without animation. Both appearances use the same compact message geometry and readable 15 px Inter text with 24 px line spacing, so switching does not rearrange history.
+
+### GIF links and privacy
+
+Use the **GIF** button or `/gif` to search **GIPHY** or **KLIPY** in separate tabs. Press Search to consent to sending the query and loading still previews; later typing in that open picker is debounced. Selecting a result immediately sends its original media URL as one ordinary message, preserving any unsent text. Clicking the GIF button again, focusing the composer, clicking outside, or Escape closes the picker with the same quick transition. The retired Tenor option is no longer offered in the client. Its legacy server contract remains for compatibility, but [Google discontinued the API on June 30, 2026](https://support.google.com/tenor/answer/10455265#whatll-happen-to-the-tenor-api); it is not a viable new setup.
+
+For GIPHY search, create an account at the [GIPHY Developer Dashboard](https://developers.giphy.com/dashboard/), choose **Create an API Key → API**, and copy the key into `apps/api/.env` as `GIPHY_API_KEY=your_key`. See [the example configuration](apps/api/.env.example). Edit the existing ignored file without replacing its database/voice settings, then restart the API/dev task and reopen the picker. GIPHY documents a beta limit of 100 calls per hour; production upgrades require a separate application and may involve pricing. Missing configuration is shown explicitly. Never paste keys into chat or commit them. No account, paid plan or purchase is created automatically. **GIPHY requires direct-browser searches**: its public key is intentionally visible to approved clients, and it receives client IP/search terms. Its returned media URLs/query parameters are preserved. The legacy Tenor key remains server-side. Queries/results/timeouts are bounded; provider attribution remains visible.
+
+For KLIPY, use the [Partner Panel](https://partner.klipy.com/) → API Keys to create a platform/key, then add `KLIPY_API_KEY=your_key` to the same existing ignored `apps/api/.env` and restart the API/dev task. Testing keys are documented as limited to 100 requests per hour; production access requires a separate application. Like GIPHY, KLIPY requires direct browser requests, so its public key is intentionally returned only to approved clients. Each tab requires Search consent before contacting that provider; switching clears old results and does not search the newly selected provider automatically. The picker uses the required **Search KLIPY** placeholder, provider-order results, unchanged delivery URLs and a visible attribution link. KLIPY content filtering is managed through its Partner Panel; the app does not promise an uncensored or identical Tenor catalog. No account, purchase, proxy or media cache is created automatically.
+
+Direct HTTPS `.gif` links from `media.giphy.com`, `media0.giphy.com`–`media4.giphy.com`, `i.giphy.com`, `media.tenor.com` and `static.klipy.com`/`static1.klipy.com`/`static2.klipy.com` offer opt-in message previews. Other HTTPS links remain usable as text. **Load GIF (paused)** is consent to contact the CDN: it learns the connection's IP address, but the client omits credentials/referrer and rejects redirects. Search uses only the fixed provider API endpoints; there is no arbitrary server URL fetch, media proxy, upload, iframe or HTML embedding.
+
+Supported secure-context Chromium browsers use native `ImageDecoder`/canvas for explicit **Play GIF**, **Pause GIF** and **Stop / unload GIF** controls. Loading starts paused, respects reduced motion and pauses when hidden/offscreen. Unsupported decoding, CORS denial and media failures report an explanation without removing text/link access. Limits are 5 MiB downloaded, 2048×2048 pixels, 300 frames, 16,777,216 cumulative decoded pixels, a 15-second initial-load deadline and two loaded previews per client; at most two eligible links per message offer controls. Decoded frames are not accumulated. Stop, unmount and access revocation release resources.
+
+## Member availability
+
+The right-hand **Members** panel groups approved accounts into **Online** and **Offline**, with distinct-account counts and an initially expanded, collapsible Offline section. Public channels show **Community**. DMs and groups start with **Participants** and offer a Community view. Offline members remain messageable. On smaller windows, **Members** opens a keyboard-accessible drawer; Escape or **Close members** closes it and returns focus. Messages covered by that drawer are not marked read.
+
+Online means at least one authorized application connection, including background or minimized browser/Electron windows. It does not mean reading, typing, using voice or available to answer, and it is separate from account approval. Signing in without an application connection does not make an account Online. Multiple tabs/devices count once; disconnecting one leaves the account Online while another remains.
+
+The approved timing policy uses a 25-second heartbeat interval, a 20-second heartbeat timeout and a five-second reconnect grace: undetected network loss can therefore take up to approximately 50 seconds to become Offline. Known logout, session revocation and account suspension/removal bypass grace. Healthy local propagation and snapshot targets are five seconds; client synchronization times out after five seconds. Timing approval and physical-device/network acceptance are recorded separately in [verification](docs/verification.md). Disconnection or synchronization failure shows **Presence unavailable** and unavailable counts until an authoritative snapshot succeeds. Presence is ephemeral within one API process; it stores no last-seen history and exposes no private conversation activity or device/session counts.
 
 ## Unread messages, mentions and notifications
 
@@ -109,20 +184,30 @@ Unread counts and @mention badges appear beside channels, DMs and groups, and th
 
 Opening a conversation at its latest messages marks earlier accessible messages read only while the window is focused and visible, with no dialog or mobile navigation covering it. Scrolling up preserves unread status for new arrivals and does not jump you away from history; use **Jump to latest messages** to catch up. Simply fetching history never marks it read. These are private account read cursors, not read receipts shown to other members.
 
-Write **@username** to mention someone (case-insensitive, complete usernames). Usernames appear in the people list. Matching messages are highlighted for the mentioned user. Repeating a mention in one message counts once; edits and deletions update unread mention counts without generating a fresh alert. There are no @everyone/@here broadcasts or mention autocomplete yet.
+Write **@username** to mention someone. Typing `@` offers approved visible members, including **You**; prefix typing filters the list, and Enter/Tab or touch selects a canonical username rather than a mutable display name. Self mentions can be inserted/highlighted but do not produce self-alerts or unread mention counts. Exact ASCII usernames match case-insensitively with Unicode-aware token boundaries; email-like text and partial/similar names do not mention another account. The server resolves recipients by account ID, excludes self/inaccessible recipients and supplies highlights/counts. Repeating a mention counts once; edits/deletions update counts without fresh alerts. There are no @everyone/@here broadcasts.
 
-Choose **Enable notifications** in the sidebar on each browser/device. Alerts cover private messages and mentions away from the focused conversation. Notification previews contain no message text or participant names; clicking opens the conversation. Turn them off with **Disable notifications**. Only this per-account notification preference is stored in localStorage; authentication remains in HttpOnly cookies.
+Typing `@` also suggests accessible text and voice channels. Selected channel names stay readable in the draft and encode stable IDs when sent, so renames cannot retarget them. A channel link only navigates: text links open that channel, and voice links reveal its existing controls without joining, capturing a microphone or alerting everyone. Unknown/inaccessible references show a neutral unavailable label.
 
-On Windows, enabling alerts registers a **Tricord development** Start Menu shortcut for Electron notifications. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
+Open the **Settings** cog at the bottom-right of your sidebar profile, then **Notifications**. First-time users receive a nonblocking **Set up notifications** invitation; dismissing it is remembered per account/device. Opening setup alone does not request OS permission or enable audio. Account-private conversation settings are **All messages**, **Mentions and replies**, or **Muted**; defaults remain All for DMs/groups and Mentions and replies for public channels. Replies alert the immediate target's author, not automatically the root author. Sender mute/priority settings also sync per account. Priority only decorates eligible alerts: it never overrides global disable, conversation mute, sender mute or OS denial. A mention-plus-reply produces one alert; mutes never hide messages or erase unread badges.
 
-Notifications require Tricord to stay open (minimized is fine). There is no push delivery after closing the browser/app and no replay of old alerts on reconnect; persisted unread counts catch up instead. Multiple open browsers/devices may each alert if enabled. Public browser hosting requires trusted HTTPS.
+**Enable notifications** in Settings enables availability on this browser/device; popup and sound delivery are independent opt-ins and may both be off. Enabling popups requests browser/OS permission through that user action, with an explicit retry control if blocked. Popups use a nonblocking in-app toast while focused or an opt-in browser/OS popup while away, never both for one delivery. **Notification sound**, **Enable / test sound** and **Volume** provide explicit opt-in, preview and recovery after autoplay restrictions. Denial/failure is reported, not silently replaced with unexpected audio. OS previews stay generic, without message text, names or media; clicking reauthorizes the target message/thread. In-app reason previews are separately configurable.
+
+Device settings and bounded short-lived same-account tab-coordination records use localStorage; authentication remains in HttpOnly cookies, and drafts never use persistent storage. Cooperating same-origin tabs coordinate one delivery and focused-conversation suppression. Distinct browsers/devices may alert independently. **Disable notifications** disables both deliveries without affecting unread badges.
+
+Open **Voice sounds** in the sidebar to opt in to voice join/leave cues, set their volume or use **Preview sound**. They start off and are independent of message-alert sounds and popups, which are managed in **Settings → Notifications**. Choose speakers in **Audio controls** first; voice cues use that exact output even outside a call, with no default-device fallback. Speaker selection must be repeated after a fresh page/app launch. Enablement and volume are remembered locally per account; unavailable storage is reported.
+
+Voice cues cover your successful join/leave and live participant joins/leaves in your current channel. The initial roster and reconnect snapshots are not replayed; enabling sounds mid-call does not replay prior events. Short local tones require no asset/provider download. Events within 300 ms are coalesced rather than queued. **Deafen**, zero sound volume, disabled sounds and missing speakers suppress playback; deafen/output changes stop a current tone. Blocked playback shows a status message: check the selected speakers and click **Preview sound** to retry. Recovery never replays missed cues. Microphone mute does not mute application sounds.
+
+On Windows, enabling alerts registers a **Rajcord development** Start Menu shortcut for Electron notifications. The app reports setup or native delivery failure instead of silently claiming success. Windows notification settings and Do Not Disturb can still suppress visible banners. The development shortcut is for notification registration; start development services with the commands above.
+
+Notifications require Rajcord to stay open (minimized is fine). There is no push delivery after closing the browser/app and no replay of old alerts on edits, reload or reconnect; persisted unread counts catch up instead. Public browser hosting requires trusted HTTPS.
 
 ## Verification
 
 With Docker Desktop running (the database suite and browser/Electron smoke also require the local voice service):
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm db:up
 pnpm voice:setup
 pnpm voice:up
@@ -133,7 +218,9 @@ pnpm typecheck
 pnpm test
 pnpm test:db
 pnpm build
+pnpm exec vitest run --config vitest.browser.config.ts
 pnpm --filter @tricord/api test:browser
+pnpm --filter @tricord/api test:presence
 pnpm --filter @tricord/api test:desktop
 pnpm --filter @tricord/api test:voice
 pnpm --filter @tricord/api test:voice:load
@@ -143,14 +230,16 @@ pnpm peers check
 pnpm audit --prod
 ```
 
-There are **139 passing Vitest tests**: 51 unit/regression tests and 88 database integration tests, including unread persistence, mention boundaries, membership privacy, read-cursor validation and notification delivery authorization. The browser and Electron commands are additional integration scenarios, separate from that count.
+Portable, database, browser and Electron suites report their own current counts. See [verification evidence](docs/verification.md) for dated results and their acceptance limits.
 
 - `test:db` checks the existing development schema with unique disposable rows. Authentication and messaging tests create uniquely named temporary databases, migrate it, then drop **only the database created by that test run**. Your development database, owner, migration history and volume are preserved. The local development database role must have CREATEDB permission for these tests.
-- The browser smoke runs a real headless Chromium browser with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence, live suspension and recovery when approval precedes socket subscription. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 12 authentication plus 19 messaging/unread/notification checks (31 total); OS notifications are mocked for deterministic permission, preview and click tests. It captures desktop/mobile screenshots. Edge's default Windows path is used locally; Linux CI selects Google Chrome stable. Set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed. Account state refreshes when the authenticated socket connects so changes missed during disconnection are recovered.
+- The browser smoke runs real headless Microsoft Edge with an isolated temporary profile and disposable database. It checks registration, pending restrictions, approval, cookies, administrator UI, reload persistence and live suspension. It also verifies channel messaging across independent sessions, plaintext rendering, editing/deletion, DMs, group invitation acceptance and history privacy: 11 authentication plus 19 messaging/unread/notification checks (30 total); OS notifications are mocked for deterministic permission, preview and click tests. It captures desktop/mobile screenshots. Edge's default Windows path is used; set `TRICORD_BROWSER_PATH` to another installed Chromium executable if needed.
 - The Electron smoke uses three real launches with an isolated temporary profile. It verifies registration, live approval, account settings, logout, minimization, temporary-session cleanup and remembered-session restoration, plus renderer isolation and absence of localStorage tokens. Sending, receiving from an independent account and restored message history plus voice device selection, microphone publication, camera denial, mute/deafen and leave bring the total to 26 checks, including notification IPC validation, Windows registration and a real native notification show event.
 - Browser/Electron smoke servers bind to **127.0.0.1:3003 / :3002**, respectively. Reports/screenshots go to ignored `artifacts/`. Their temporary profiles are separate from your real browser and desktop profile.
 - `db:verify-persistence` restarts the existing PostgreSQL container, uses its own disposable database to verify accounts, sessions, audit records, invitations, channels, DMs, group history boundaries, idempotent retries and message persistence. Existing Fastify/pg pools must recover. It then drops only its own test database and verifies the development migration journal is unchanged. Run it when interrupting development connections is acceptable.
-- `pnpm test:browser` and `pnpm test:desktop` are convenience commands that build first. Tests fail when required infrastructure is missing; they do not silently skip.
+- `pnpm test:presence` builds and runs focused presence acceptance on **127.0.0.1:3006**, using disposable PostgreSQL data and two isolated Edge profiles. It checks database uncertainty/recovery, obsolete snapshot acknowledgements, denied rosters, transport/API restart recovery, session expiry and decoded socket-event budgets. It needs local PostgreSQL but does not need LiveKit or capture microphones. Its ignored report is **artifacts/presence-browser.json**. The database suite also covers five rounds of ten-account/twenty-connection churn and a real heartbeat timeout plus reconnect grace.
+- `pnpm test:browser` and `pnpm test:desktop` are convenience commands that build first. The browser command also runs `vitest.browser.config.ts`: the isolated React call-owner fixture uses synthetic HTTP/media, while the native-cookie fixture uses a disposable PostgreSQL-backed API on **127.0.0.1:3007** and actual Edge HttpOnly cookies. It holds real logout/self-revocation/password responses after revocation and verifies that later logins survive their delivery. No physical devices are opened. These browser fixtures are separate from portable unit/database tests and from media acceptance. Select `apps/web/src/call-provider.integration.test.ts` with this config to run only the data-free mounted fixture. Tests fail when required infrastructure is missing; they do not silently skip.
+- The screen-peer browser fixture in that config also needs local PostgreSQL/LiveKit. It uses **127.0.0.1:3008 / :3009**, disposable accounts/database/voice leases and two owned Edge profiles to exercise actual authenticated screen signaling and native peers with generated canvas video/PCM audio. Incoming Opus is checked by an independent decoder without speaker output; native playback and physical source sound remain unqualified. Capture/enumeration and audio-output context creation are guarded against use. Its video-quality case also verifies native bitrate/frame/scale parameter round-trips without changing shared capture or source audio; readback confirms ceilings, not achieved throughput/FPS. Run only this fixture with `pnpm exec vitest run --config vitest.browser.config.ts apps/web/src/screen-peer.browser.integration.test.ts`. Its expiry case waits for the actual server-issued lease/link deadline, with a 75-second test timeout. See [transport evidence](docs/verification.md#screen-sharing-s3-real-browser-api-fixture---2026-11-01) and [quality evidence](docs/verification.md#screen-sharing-s3-video-quality-ceilings---2026-11-01); see the [current app composition and acceptance limits](docs/screen-sharing-handoff.md).
 
 ## Run the built applications locally
 
@@ -182,6 +271,8 @@ Additive `0002_overrated_puck.sql` creates conversations, membership periods, in
 
 Passwords use Argon2id. Random session tokens are stored only as hashes in PostgreSQL and HttpOnly SameSite=Strict cookies on clients. CSRF tokens stay in renderer memory. Mutations require an exact trusted Origin; authenticated mutations also require session-bound CSRF. Sessions have absolute 12-hour or 30-day expiry. Logout, password changes, device revocation, suspension and removal invalidate server sessions. Status and owner permissions are checked in the backend, including each protected socket event.
 
+Logout, current-device revocation and password-change responses revoke server sessions without deleting the shared browser cookie. This prevents an old delayed response from erasing a newer login. A browser may retain the revoked HttpOnly cookie until replacement or normal expiry; protected HTTP/socket requests reject it, and the next login replaces it. Cookie presence does not establish authentication. Electron retains its existing temporary-cookie removal at startup/full quit; a retained revoked remembered cookie cannot restore authentication.
+
 Removed accounts become tombstones, preserving audit and identity history. They cannot sign in. Administration grants no application access to private conversations and no permission to edit/delete another author’s messages. Messages are not end-to-end encrypted: the database operator can read stored content. Security configuration remains local operator configuration; there is no public settings editor or endpoint granting members control over it.
 
 Crash/offline quits cannot guarantee immediate server revocation. Electron discards temporary local cookies at startup, and remaining server sessions expire within 12 hours or can be revoked from another device. Browser session restoration may preserve session cookies according to browser settings. No password recovery, MFA, email verification, TLS deployment, signed installer or multi-process socket adapter is implemented. HTTP/socket event limits are in-process; the message-send quota is persisted in PostgreSQL. This implementation targets a single API process and up to ten friends. Login errors are generic; registration necessarily reveals whether a username can be used.
@@ -195,7 +286,7 @@ LiveKit 1.13.10 runs as a separate local Docker service. Approved users can crea
 First-time voice setup (preserves all existing database files and data):
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 pnpm voice:setup
 pnpm voice:up
 pnpm db:up
@@ -205,11 +296,15 @@ pnpm dev:desktop
 
 The setup command creates random keys in ignored infrastructure/.env.voice and preserves an existing file. The API reads this file locally. LiveKit control/signaling (7880), media TCP (7881) and media UDP (7882) are bound only to 127.0.0.1. No public STUN/TURN service, paid service or cloud deployment is used. Docker Compose keeps the voice service separate from the PostgreSQL volume.
 
-In the sidebar, open **Audio controls → Find audio devices**, allow microphone permission, select a concrete microphone and speakers, then choose a channel. Joining starts muted. Use the microphone, deafen and leave buttons; participant sliders control playback volume independently. Deafen also suppresses your microphone and restores your prior mute preference when disabled. “Enable audio playback” handles browser autoplay restrictions.
+In the sidebar, open **Audio controls**. Available devices are listed automatically and refresh when devices change. If device names are hidden, use **Allow microphone access** and grant permission; use **Refresh audio devices** to retry a failed scan. Select a concrete microphone and speakers, then choose a channel. Joining starts muted. Use the microphone, deafen and leave buttons; the Voice output slider defaults to 100% and can amplify received voice up to 200%. Participant sliders remain capped at 100% and multiply that master level. Microphone capture and app sounds receive no boost. Voice playback levels last for the current app session; a fresh launch starts at 100%. Amplification requires Web Audio support. Deafen also suppresses your microphone and restores your prior mute preference when disabled. “Enable audio playback” handles browser autoplay restrictions.
 
-Device discovery briefly opens and immediately stops a microphone to reveal device labels. It does not transmit audio. Calls use exact device IDs, excluding the Windows Default/Communications aliases. A missing microphone stops transmission; missing speakers mute playback. Choose a replacement explicitly. Browser/OS device-disconnection notifications determine when this is detected. This milestone requires output-selection support, verified in Edge and Electron on Windows 11; other browsers are not yet certified.
+Opening audio controls and automatic device refresh do not capture microphone audio or join a call. Only **Allow microphone access** briefly opens and immediately stops a microphone to reveal device labels, without transmitting audio. Denied permission and empty or unavailable device lists show setup/retry guidance. Device choices remain in memory and must be selected again after a fresh launch. Calls use exact device IDs, excluding the Windows Default/Communications aliases. A missing microphone stops transmission; missing speakers mute playback. Choose a replacement explicitly. Browser/OS device-disconnection notifications determine when this is detected. This milestone requires output-selection support, verified in Edge and Electron on Windows 11; other browsers are not yet certified.
+
+The Windows app remembers **Allow microphone** for the current app profile and server, so a full restart does not ask again. **Cancel** leaves access unapproved and can be retried. Windows privacy controls still apply. Use **Rajcord → Reset microphone permission (leaves voice)** (also available in the tray menu) to forget approval, stop voice and choose whether to allow access again; unsent chat text is preserved. A different server requires separate approval. Browser clients use their browser’s permission controls. Saved microphone approval does not remember device choices or join/unmute automatically.
 
 Network reconnection preserves in-memory mute/deafen, devices and participant volumes. Voice reservations have a 45-second heartbeat lifetime; still-authenticated clients can obtain a fresh reservation after expiry or an API restart. Manual leave, logout, suspension and full quit stop client recovery. Fresh launches never join automatically. An offline quit can leave a server reservation for up to 45 seconds.
+
+One call owner follows the verified approved session above the sidebar. View collapse/remount keeps that call and its available audio-device choices, without another microphone probe. Same-session refresh and manual leave retain those choices. Logout intent stops the call locally before the logout response arrives. Verified session replacement or loss of approval disposes the old controller and clears its device catalog without using a replacement session's credentials for late cleanup. A new owner scans available devices afresh and requires explicit selection; device labels remain local and are not persisted or sent to the API.
 
 Voice uses the existing session cookie and CSRF boundary. The API issues an opaque reservation credential, not a LiveKit bearer token. Its same-origin signaling gateway reauthorizes each handshake and replaces refreshed LiveKit tokens before forwarding them. Only microphone publication is granted. Removal is enforced at the media server; a one-second sweep also handles expiration and external account changes. This is a single-API-process development design. LiveKit terminates media encryption; it is not end-to-end encryption.
 
@@ -222,12 +317,45 @@ pnpm --filter @tricord/api test:voice
 
 This test covers actual received audio, independent sessions, mute/deafen, selected output, volume, disconnect/reconnect, API restart, simulated device loss and revocation. Electron tests also publish a synthetic microphone track and deny camera capture. Physical microphones, unplugging real USB/Bluetooth hardware, listening quality and WAN/TURN behavior still need manual validation.
 
+After `pnpm --filter @tricord/desktop build`, `pnpm --filter @tricord/desktop test:microphone` checks saved consent across separate Electron launches, origin isolation, reset, and camera/subframe/window denial with synthetic devices and a disposable profile. It does not access physical microphones.
+
+### Screen sharing
+
+Join voice with an explicitly selected microphone and speakers, then open **Screen sharing**. Choose resolution (480p/720p/1080p), frame rate (15/30/60 fps) and a separate video cap per viewer. Use **Prepare source**, then **Choose source** on a fresh click. Review the silent local preview and press **Start sharing**. Closing the panel keeps an outgoing share running; **Stop** remains in the sidebar and desktop menu/tray.
+
+Choose a participant's screen under **Available screens** to watch. Watching has its own resolution, frame-rate and video-cap controls; changing them affects that connection. Screen mute/volume are separate from the microphone. Deafen silences incoming voice and screen sound. Playback uses the selected Voice speakers and pauses if that device disappears, without choosing a default replacement. Use **Enable screen playback** if the browser requires another gesture.
+
+Video-only is the default. Edge tab sound requires choosing a browser tab and enabling its audio in the browser picker. Windows desktop system sound is an explicit whole-system choice: Rajcord and other applications may be audible, so a separate playback route may be needed to prevent digital feedback. Missing requested sound ends the attempt; it never silently falls back to video-only. Older desktop clients without the capture bridge must be updated.
+
+Screens prefer direct encrypted WebRTC with Cloudflare STUN. An operator can opt into existing LiveKit TURN fallback with `SCREEN_TURN_HOST=turn.rajcord.com`; the API issues separate short-lived relay credentials in memory. No extra VPS ports are needed. The setting remains off until configured, and real restrictive-network/forced-relay acceptance is still required. Hiding/minimizing pauses incoming screen delivery while outgoing sharing continues; returning authorizes a fresh selection with the prior watching limits. Logout, voice-lease replacement, source end or authorization loss stops the affected screen lifetime without automatically recapturing.
+
+These controls are limits, not guarantees of delivered resolution/FPS/bitrate. Physical source/audio/routing/feedback, sustained rendered 1080p60 and cross-network operation still need manual qualification. The main-window design does not guarantee independent Stop if its renderer is frozen. See [current evidence](docs/verification.md#screen-sharing-completion---2026-11-13).
+
+### Screen-sharing feasibility harness (development only)
+
+`pnpm test:desktop:picker` separately builds and checks the isolated Electron source picker with synthetic source lists and a disposable profile. It needs no database/LiveKit and never enumerates or captures the physical desktop or audio devices. It exercises picker consent, IPC isolation, cancellation and lifecycle cleanup; it is not a media benchmark. The app uses a separately authorized capture boundary; the picker fixture does not qualify physical capture. See the [current handoff](docs/screen-sharing-handoff.md).
+
+`pnpm test:desktop:capture` checks the native display-request boundary and picker together, capturing video only from a test-owned synthetic WebContents. It verifies disabled/missing-authorization gates, foreign/subframe rejection, one-use intents, revocation and cleanup. It uses no desktop enumeration, microphone, system loopback, speakers, accounts or database services and measures no media performance. The app wires this boundary through exact-binding preparation, a native gesture and publication handoff. Disposable API integration tests run under `pnpm test:db`; the separate authority fixture checks Electron's session/network path. Neither qualifies physical media.
+
+`pnpm test:desktop:authority` builds and connects the actual Electron session provider, HttpOnly cookie jar, disposable authenticated API and native picker/capture handler. It needs local PostgreSQL/LiveKit test services; the fixture API binds only to `127.0.0.1:3006`. Generated accounts, database, room prefix and profiles are disposable. Video comes only from owned WebContents; no physical enumeration, source audio or screen peers are used. The fixture publishes metadata and proves transfer into a distinct publication authority record beyond the old preview deadline. Response readers are observed for cleanup, with one controlled delay after native body cancellation to test admission retention. Physical picker/audio and performance qualification remain open.
+
+Screen sharing is still under development. `pnpm test:screen` builds and runs isolated Edge and pinned Electron probes with deterministic 1920 × 1080 moving content and synthetic source audio. It needs no database or LiveKit. Profiles and windows are disposable; the HTTP fixture binds to loopback. No physical microphone/camera, private desktop, system-audio loopback or real account is captured.
+
+```powershell
+pnpm test:screen --runtime=edge --codec=VP8 --content=motion --phase-ms=10000
+pnpm test:screen --runtime=electron --codec=H264 --content=stress --phase-ms=10000
+```
+
+Runtime defaults to `all` (sequential probes), codec to `VP8`, content to `motion` and each bitrate measurement to 10 seconds. `motion` moves a tiled panel over a reference grid; `stress` changes the whole grid each frame. Both include a frame/time marker. The runner compares 2 and 8 Mb/s video caps with a 60-fps ceiling and resolution-preserving adaptation. Requested settings do not prove delivered resolution/FPS. Timestamped reports in ignored `artifacts/screen/` contain sanitized RTP/frame/audio-energy measurements, direct candidate types, SDP sizes, failures and bitrate effects; raw SDP, IP addresses and source titles are excluded.
+
+Electron uses hidden offscreen test windows and an explicit display handler restricted to its own synthetic WebContents video/audio. These are automated fixture probes with autoplay bypass, **not** real-picker, Windows display/system-audio, Edge tab-audio, exact speaker routing, human listening/sync, fan-out/active-voice or WAN qualification. Required hardware/performance budgets and those tests remain gates in the [screen-sharing implementation design](docs/screen-sharing-design.md). A successful harness means its transport/evidence assertions passed; inspect actual delivery before claiming 1080p60 support. `TRICORD_BROWSER_PATH` selects the test browser as in the voice harness; normal tests use installed Edge.
+
 ## Ten-client voice reliability test
 
 Start Docker Desktop and the existing services first:
 
 ```powershell
-Set-Location F:\tricord
+Set-Location C:\path\to\rajcord-public
 docker desktop start
 pnpm db:up
 pnpm voice:setup
@@ -247,12 +375,10 @@ This is ten real software clients on one Windows host using loopback networking,
 
 See [hosting preparation](docs/hosting.md) for the tested server image, automated GitHub checks, HTTPS desktop configuration and remaining deployment steps. Local development commands remain unchanged.
 
-The [Verify workflow](.github/workflows/verify.yml) runs Linux integration/image checks and Windows unit tests/builds in parallel. Linux also exercises browser authentication, chat, unread progress and notifications with the runner's installed Google Chrome stable. That browser uses Ubuntu's existing AppArmor allowance, with its sandbox enabled; local Windows browser tests still default to Edge. The required `verify` check succeeds only when both jobs pass. Windows CI builds Electron code but does not launch its GUI or certify native notifications, audio devices or WAN voice.
+The [production deployment runbook](docs/deployment.md) describes CI, production approval, certificate renewal and encrypted off-server backup/restore jobs. Linux **Verify** runs on PRs, non-main pushes and manual requests. **Delivery** runs the same reusable verification on every `main` push, including when `HOSTING_ENABLED=false`. Enabled main pushes then publish that run's exact tested image and deploy its immutable digest after production approval. The existing **Windows desktop** workflow remains separate. CI uses disposable test environments; a permanent staging server is not required. Verify the hosted stack locally with `pnpm test:hosting` after `pnpm server:build`. Generate server-only configuration with `pnpm hosting:init production PUBLIC_IPV4 ABSOLUTE_DIRECTORY rajcord.com turn.rajcord.com`; omitting the last two arguments retains IP-only TLS. Domain DNS, public certificate issuance and renewal rehearsal have been verified; deployed service reloads and WAN voice still need live validation.
 
-Eligible `main` runs publish the exact tested image to `ghcr.io/treca-raja/rajcord-public` and deploy its digest only after production approval. Keep `HOSTING_ENABLED` unset or `false` until this repository's GitHub environment, deployment credentials, registry access and server are verified. Settings and server-readiness notes from the predecessor repository do not establish those prerequisites for this checkout. The deployment guide lists every variable and secret; credentials never belong in workflow YAML.
+For the Linux VPS, the reviewed host helpers under `scripts/hosting/` prepare Docker/firewall rules, key-only SSH and a separate CI deployment account. `initialize-runtime.sh` generates server-only configuration using the pinned Node container, so host Node installation is optional. The existing VPS now has these foundations and issued public certificates; the encrypted R2 repository is initialized and its storage round trip is verified. The application, live database backup/recovery and active release maintenance jobs remain pending. See the dated verification record before treating a prepared component as live.
 
-The [production deployment runbook](docs/deployment.md) describes the prepared CI/CD pipeline, production approval, certificate renewal and encrypted off-server backup/restore jobs. CI uses disposable test environments; a permanent staging server is not required. Delivery stays disabled until the production host and GitHub environment are configured and `HOSTING_ENABLED=true` is set. Verify the hosted stack locally with `pnpm test:hosting` after `pnpm server:build`. Generate server-only configuration with `pnpm hosting:init production PUBLIC_IPV4 ABSOLUTE_DIRECTORY rajcord.com turn.rajcord.com`; omitting the last two arguments retains IP-only TLS. Domain DNS, public certificate issuance and renewal rehearsal have been verified; deployed service reloads and WAN voice still need live validation.
+For first-release image preparation, `gh workflow run delivery.yml --ref main -f publish_only=true` tests and publishes the current-main image without entering production policy/approval/deployment jobs, even if `HOSTING_ENABLED=true`. Keep `HOSTING_ENABLED=false` while configuring GHCR image access. A manual Delivery run with `publish_only=false` performs verification only; production deployment requires an enabled `main` push.
 
-For the Linux VPS, the reviewed host helpers under `scripts/hosting/` prepare Docker/firewall rules, key-only SSH and a separate CI deployment account. `initialize-runtime.sh` generates server-only configuration using the pinned Node container, so host Node installation is optional. Historical preparation on 2026-10-27 for the predecessor repository verified those foundations, issued certificates and an initialized encrypted R2 repository. Application deployment, live database recovery and active release maintenance jobs remained pending. Recheck the intended host and this repository's access; see the dated verification record before treating a prepared component as live.
-
-For first-release image preparation, `gh workflow run verify.yml --ref main -f publish_only=true` tests and publishes the current-main image without entering production policy/approval/deployment jobs. Keep `HOSTING_ENABLED=false` while configuring GHCR image access. The normal workflow's publication and approval-gated deployment behavior is unchanged when this manual input is false.
+Andrej se igra

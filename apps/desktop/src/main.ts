@@ -1,16 +1,42 @@
-import { validNotice, trustedNoticeFrame } from './notification-policy.js';
+import {
+  validNotice,
+  validNativeNotice,
+  trustedNoticeFrame,
+  canCoalesceNativeNotice,
+  nativeNotificationResponse,
+  type NativeNotificationTarget,
+  type NativeNotificationResult,
+} from './notification-policy.js';
+import { createWindowOpenHandler } from './external-links.js';
 import { serverUrl } from './server-url.js';
-import { trustedAudioRequest, trustedAudioCheck } from './media-permissions.js';
-import { app, BrowserWindow, session, dialog, ipcMain, Notification, shell } from 'electron';
+import { MicrophonePermission, microphonePermissions } from './microphone-permission.js';
+import { installNativeCapture } from './native-capture.js';
+import { createSessionCaptureAuthority } from './capture-authority-http.js';
+import { installScreenIpc } from './screen-ipc.js';
+import {
+  app,
+  BrowserWindow,
+  session,
+  dialog,
+  ipcMain,
+  Notification,
+  shell,
+  desktopCapturer,
+} from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
-import { runAuthSmoke } from './smoke.js';
-const smoke = process.argv.includes('--smoke');
-const authSmoke = process.argv.includes('--auth-smoke');
+import { configureUpdates } from './updates.js';
+import { Menu, Tray, nativeImage } from 'electron';
+const smoke = !app.isPackaged && process.argv.includes('--smoke');
+const authSmoke = !app.isPackaged && process.argv.includes('--auth-smoke');
 const local = authSmoke ? process.env.TRICORD_TEST_PROFILE : path.resolve(__dirname, '../.local');
 if (!local) throw new Error('Test profile required.');
-fs.mkdirSync(local, { recursive: true });
-app.setPath('userData', local);
+app.setName('Rajcord');
+if (app.isPackaged) app.setPath('userData', path.join(app.getPath('appData'), 'Rajcord'));
+else {
+  fs.mkdirSync(local, { recursive: true });
+  app.setPath('userData', local);
+}
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.on('second-instance', () => {
   const window = BrowserWindow.getAllWindows()[0];
@@ -23,8 +49,9 @@ app.on('second-instance', () => {
 if (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1') {
   app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 }
-const target = serverUrl(process.env, authSmoke);
+const target = serverUrl(process.env, authSmoke, app.isPackaged);
 let quitting = false;
+let tray: Tray | undefined;
 async function clearTemporarySession() {
   const cookies = await session.defaultSession.cookies.get({
     name: 'tricord_session',
@@ -65,52 +92,33 @@ app
   .whenReady()
   .then(async () => {
     await clearTemporarySession();
-    let microphoneAllowed = authSmoke && process.env.TRICORD_VOICE_SMOKE === '1';
-    session.defaultSession.setPermissionRequestHandler(
-      (contents, permission, callback, details) => {
-        if (
-          !contents ||
-          !trustedAudioRequest(
-            target,
-            details.requestingUrl,
-            details.isMainFrame,
-            permission,
-            'mediaTypes' in details ? details.mediaTypes : undefined,
-          )
-        ) {
-          callback(false);
-          return;
+    const microphone = new MicrophonePermission({
+      profileDirectory: app.getPath('userData'),
+      target,
+      ask: async () => {
+        if (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1') {
+          console.log('TRICORD_SMOKE_MICROPHONE_PERMISSION_PROMPT');
+          return true;
         }
-        if (microphoneAllowed || (authSmoke && process.env.TRICORD_VOICE_SMOKE === '1')) {
-          microphoneAllowed = true;
-          callback(true);
-          return;
-        }
-        void dialog
-          .showMessageBox({
-            type: 'question',
-            title: 'Allow microphone access?',
-            message: 'Allow Tricord to use your microphone for voice?',
-            detail:
-              'You select a device and join muted. Camera and screen capture remain disabled.',
-            buttons: ['Cancel', 'Allow microphone'],
-            defaultId: 0,
-            cancelId: 0,
-          })
-          .then((result) => {
-            microphoneAllowed = result.response === 1;
-            callback(microphoneAllowed);
-          })
-          .catch(() => callback(false));
+        const result = await dialog.showMessageBox({
+          type: 'question',
+          title: 'Allow microphone access?',
+          message: 'Allow Rajcord to use your microphone for voice?',
+          detail:
+            'Approval is remembered in this app profile for this server. You select a device and join muted. Reset approval from the Rajcord menu. Camera access is disabled. Screen sharing uses its own source picker.',
+          buttons: ['Cancel', 'Allow microphone'],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        return result.response === 1;
       },
-    );
-    session.defaultSession.setPermissionCheckHandler(
-      (contents, permission, origin, details) =>
-        !!contents &&
-        microphoneAllowed &&
-        trustedAudioCheck(target, origin, details.isMainFrame, permission, details.mediaType),
-    );
+      onError: (message) => {
+        setImmediate(() => dialog.showErrorBox('Microphone permission', message));
+      },
+    });
     const win = new BrowserWindow({
+      title: 'Rajcord',
+      icon: path.join(__dirname, '../resources/icon.png'),
       width: 1360,
       height: 880,
       minWidth: 720,
@@ -124,17 +132,85 @@ app
         nodeIntegration: false,
         webSecurity: true,
         backgroundThrottling: false,
+        additionalArguments: ['--rajcord-version=' + app.getVersion()],
       },
     });
-    const notificationAppId = app.isPackaged ? 'Tricord' : process.execPath;
+    const captureAuthority = createSessionCaptureAuthority({
+      owner: win,
+      session: session.defaultSession,
+      origin: target,
+      context: () => captureBoundary?.context() ?? null,
+      shutdown: app,
+      onError: (code) => console.warn('Capture authority unavailable:', code),
+    });
+    const captureBoundary: ReturnType<typeof installNativeCapture> = installNativeCapture({
+      owner: win,
+      session: session.defaultSession,
+      targetOrigin: target,
+      permissions: microphonePermissions(win.webContents, target, microphone),
+      shutdown: app,
+      authority: captureAuthority,
+      enabled: true,
+      qualification: 'native-provider',
+      systemAudio: process.platform === 'win32' ? 'consented-windows-loopback' : 'unqualified',
+      enumerate: async (signal) => {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 0, height: 0 },
+          fetchWindowIcons: false,
+        });
+        if (signal.aborted) throw new Error('Screen enumeration cancelled.');
+        return sources.map((source) => ({ id: source.id, name: source.name, video: source }));
+      },
+      onError: (code) => console.warn('Display capture boundary unavailable:', code),
+    });
+    let microphoneResetReady = false;
+    const resetMenus: Electron.Menu[] = [];
+    const setMicrophoneResetReady = (ready: boolean) => {
+      microphoneResetReady = ready;
+      for (const menu of resetMenus) {
+        const item = menu.getMenuItemById('reset-microphone-permission');
+        if (item) item.enabled = ready;
+      }
+    };
+    const createMenu = (template: Electron.MenuItemConstructorOptions[]) => {
+      const menu = Menu.buildFromTemplate(template);
+      resetMenus.push(menu);
+      setMicrophoneResetReady(microphoneResetReady);
+      return menu;
+    };
+    const resetMicrophone = () => {
+      if (!microphoneResetReady) return;
+      microphone.reset();
+      screens.stop();
+      if (!win.isDestroyed()) win.webContents.send('microphone:reset');
+    };
+    const notificationAppId = app.isPackaged ? 'com.rajcord.desktop' : process.execPath;
     app.setAppUserModelId(notificationAppId);
-    const trustedSender = (event: Electron.IpcMainInvokeEvent) =>
+    const trustedSender = (event: Pick<Electron.IpcMainEvent, 'sender' | 'senderFrame'>) =>
       event.sender === win.webContents &&
       trustedNoticeFrame(
         target,
         event.senderFrame?.url ?? '',
         event.senderFrame === win.webContents.mainFrame,
       );
+    const screens = installScreenIpc({
+      owner: win,
+      ipc: ipcMain,
+      authority: captureAuthority,
+      trusted: trustedSender,
+      systemSound: process.platform === 'win32',
+    });
+    const resetAvailability = (event: Electron.IpcMainEvent, ready: unknown) => {
+      if (trustedSender(event) && typeof ready === 'boolean') setMicrophoneResetReady(ready);
+    };
+    ipcMain.on('microphone:reset-listener', resetAvailability);
+    win.webContents.on('did-navigate', () => setMicrophoneResetReady(false));
+    win.webContents.on('render-process-gone', () => setMicrophoneResetReady(false));
+    ipcMain.handle('notifications:capabilities', (event) => {
+      if (!trustedSender(event)) throw new Error('Untrusted notification request.');
+      return { version: 2 };
+    });
     ipcMain.handle('notifications:enable', (event) => {
       if (!trustedSender(event) || !Notification.isSupported()) return false;
       if (process.platform !== 'win32' || app.isPackaged) return true;
@@ -145,7 +221,7 @@ app
         'Windows',
         'Start Menu',
         'Programs',
-        'Tricord development.lnk',
+        'Rajcord development.lnk',
       );
       try {
         if (fs.existsSync(shortcut)) {
@@ -158,49 +234,79 @@ app
           args: '"' + path.join(__dirname, 'main.js') + '"',
           cwd: path.resolve(__dirname, '../../..'),
           appUserModelId: notificationAppId,
-          description: 'Tricord development app notification registration',
+          description: 'Rajcord development app notification registration',
         });
       } catch {
         return false;
       }
     });
     const notices = new Set<Notification>();
-    let lastAlert = 0;
+    let burst:
+      | {
+          at: number;
+          active: boolean;
+          count: number;
+          target: NativeNotificationTarget;
+          shown: Promise<boolean>;
+        }
+      | undefined;
     ipcMain.handle('notifications:show', async (event, value: unknown) => {
-      if (
-        event.sender !== win.webContents ||
-        !trustedNoticeFrame(
-          target,
-          event.senderFrame?.url ?? '',
-          event.senderFrame === win.webContents.mainFrame,
-        ) ||
-        !validNotice(value) ||
-        !Notification.isSupported()
-      )
-        return false;
-      if (Date.now() - lastAlert < 3000) return true;
-      lastAlert = Date.now();
+      const modern = validNativeNotice(value);
+      const requestedModern = !!value && typeof value === 'object' && 'version' in value;
+      const result = (value: NativeNotificationResult) =>
+        nativeNotificationResponse(requestedModern, value);
+      if (!trustedSender(event) || (!modern && !validNotice(value)))
+        return result({ status: 'invalid' });
+      if (!Notification.isSupported()) return result({ status: 'unavailable' });
+      const destination: NativeNotificationTarget = modern
+        ? value.target
+        : { conversationId: (value as { conversationId: string }).conversationId };
+      if (modern && canCoalesceNativeNotice(burst, Date.now()) && burst) {
+        const existing = burst;
+        if (!(await existing.shown)) return result({ status: 'unavailable' });
+        if (existing.active) {
+          existing.target = destination;
+          existing.count++;
+          return result({ status: 'coalesced', count: existing.count });
+        }
+      }
       try {
         const notification = new Notification({
-          title: 'Tricord',
-          body: value.mention
-            ? 'You were mentioned. Open Tricord to read it.'
-            : 'New private message. Open Tricord to read it.',
+          title: 'Rajcord',
+          body: 'New activity. Open Rajcord to read it.',
           silent: true,
         });
+        while (notices.size >= 8) {
+          const oldest = notices.values().next().value!;
+          notices.delete(oldest);
+          oldest.close();
+        }
         notices.add(notification);
-        notification.on('close', () => notices.delete(notification));
-        notification.on('failed', () => notices.delete(notification));
+        const delivery = {
+          at: Date.now(),
+          active: true,
+          count: 1,
+          target: destination,
+          shown: Promise.resolve(false),
+        };
+        const closed = () => {
+          delivery.active = false;
+          notices.delete(notification);
+        };
+        notification.on('close', closed);
+        notification.on('failed', closed);
         notification.on('click', () => {
           if (win.isDestroyed()) return;
           if (win.isMinimized()) win.restore();
           win.show();
           win.focus();
-          win.webContents.send('notifications:open', value.conversationId);
+          if (modern) win.webContents.send('notifications:open-target', delivery.target);
+          else win.webContents.send('notifications:open', delivery.target.conversationId);
           notification.close();
         });
-        return await new Promise<boolean>((resolve) => {
+        delivery.shown = new Promise<boolean>((resolve) => {
           const timer = setTimeout(() => {
+            closed();
             notification.close();
             resolve(false);
           }, 4000);
@@ -214,20 +320,140 @@ app
           });
           notification.show();
         });
+        if (modern) burst = delivery;
+        return result({ status: (await delivery.shown) ? 'shown' : 'unavailable' });
       } catch {
-        return false;
+        return result({ status: 'unavailable' });
       }
     });
     win.on('closed', () => {
+      ipcMain.removeListener('microphone:reset-listener', resetAvailability);
       ipcMain.removeHandler('notifications:show');
       ipcMain.removeHandler('notifications:enable');
+      ipcMain.removeHandler('notifications:capabilities');
       for (const notice of notices) notice.close();
     });
-    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.setWindowOpenHandler(
+      await createWindowOpenHandler({
+        target,
+        currentUrl: () => win.webContents.getURL(),
+        openExternal: (href) => shell.openExternal(href),
+        onError: () => {
+          console.warn('Could not open web link in the default browser.');
+        },
+      }),
+    );
     win.webContents.on('will-navigate', (event) => event.preventDefault());
     win.webContents.on('will-attach-webview', (event) => event.preventDefault());
-    await win.loadURL(target);
+    win.webContents.on('will-redirect', (event, url) => {
+      if (new URL(url).origin !== target) event.preventDefault();
+    });
+    win.on('page-title-updated', (event) => {
+      event.preventDefault();
+      win.setTitle('Rajcord');
+    });
+    const showWindow = () => {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    };
+    const updates = configureUpdates(
+      async () => {
+        await clearTemporarySession();
+        await session.defaultSession.cookies.flushStore();
+        quitting = true;
+      },
+      () => {
+        quitting = false;
+      },
+    );
+    Menu.setApplicationMenu(
+      createMenu([
+        {
+          label: 'Rajcord',
+          submenu: [
+            { label: 'Show Rajcord', click: showWindow },
+            { label: 'Stop screen sharing', click: screens.stop },
+            {
+              id: 'reset-microphone-permission',
+              label: 'Reset microphone permission (leaves voice)',
+              enabled: microphoneResetReady,
+              click: resetMicrophone,
+            },
+            { label: 'Check for updates…', click: updates.check },
+            { label: 'Install downloaded update…', click: updates.install },
+            { type: 'separator' },
+            { label: 'Quit Rajcord', accelerator: 'Control+Q', click: () => app.quit() },
+          ],
+        },
+        {
+          label: 'Edit',
+          submenu: [
+            { role: 'undo' },
+            { role: 'redo' },
+            { type: 'separator' },
+            { role: 'cut' },
+            { role: 'copy' },
+            { role: 'paste' },
+            { role: 'selectAll' },
+          ],
+        },
+        {
+          label: 'View',
+          submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }],
+        },
+      ]),
+    );
+    if (app.isPackaged) {
+      win.on('query-session-end', () => {
+        quitting = true;
+      });
+      try {
+        tray = new Tray(
+          nativeImage
+            .createFromPath(path.join(__dirname, '../resources/icon.png'))
+            .resize({ width: 32, height: 32 }),
+        );
+        tray.setToolTip('Rajcord — close keeps voice running; Quit disconnects');
+        tray.setContextMenu(
+          createMenu([
+            { label: 'Show Rajcord', click: showWindow },
+            { label: 'Stop screen sharing', click: screens.stop },
+            {
+              id: 'reset-microphone-permission',
+              label: 'Reset microphone permission (leaves voice)',
+              enabled: microphoneResetReady,
+              click: resetMicrophone,
+            },
+            { label: 'Check for updates…', click: updates.check },
+            { label: 'Quit Rajcord', click: () => app.quit() },
+          ]),
+        );
+        tray.on('double-click', showWindow);
+      } catch {
+        tray = undefined;
+      }
+      win.on('close', (event) => {
+        if (!quitting && tray) {
+          event.preventDefault();
+          win.hide();
+        }
+      });
+    }
+    try {
+      await win.loadURL(target);
+    } catch (error) {
+      if (!app.isPackaged) throw error;
+      await dialog.showMessageBox(win, {
+        type: 'error',
+        title: 'Rajcord unavailable',
+        message:
+          'Could not connect to https://rajcord.com. Check your connection and restart Rajcord.',
+      });
+      app.quit();
+    }
     if (authSmoke) {
+      const { runAuthSmoke } = await import('./smoke.js');
       await runAuthSmoke(win, target);
       app.quit();
     } else if (smoke) {
@@ -254,3 +480,4 @@ app.on('before-quit', (event) => {
     .finally(() => app.quit());
 });
 app.on('window-all-closed', () => app.quit());
+app.on('will-quit', () => tray?.destroy());

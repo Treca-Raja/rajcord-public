@@ -1,4 +1,6 @@
+import { VoiceOutput } from './voice-output';
 import type { Room, LocalAudioTrack, RemoteTrack } from 'livekit-client';
+import { ScreenBindingOwner, type ScreenBindingDependency } from './screen-binding';
 export type VoiceChannel = {
   id: string;
   name: string;
@@ -11,14 +13,21 @@ export type VoiceState = {
   deafened: boolean;
   input: string;
   output: string;
+  outputVolume: number;
   inputMissing: boolean;
   outputMissing: boolean;
   error: string;
+  devices: MediaDeviceInfo[];
+  devicesStatus: 'idle' | 'loading' | 'ready' | 'permission-needed' | 'error';
+  devicesError: string;
   participants: { id: string; name: string; speaking: boolean; muted: boolean; volume: number }[];
 };
 type Request = <T>(path: string, method?: string, body?: unknown) => Promise<T>;
 type Lease = { id: string; channelId: string; credential: string; useServerIceServers?: boolean };
-export const concreteDevices = (devices: MediaDeviceInfo[], kind: MediaDeviceKind) =>
+export const concreteDevices = <T extends Pick<MediaDeviceInfo, 'kind' | 'deviceId'>>(
+  devices: readonly T[],
+  kind: MediaDeviceKind,
+) =>
   devices.filter(
     (d) => d.kind === kind && d.deviceId && !['default', 'communications'].includes(d.deviceId),
   );
@@ -30,9 +39,13 @@ export class VoiceController {
     deafened: false,
     input: '',
     output: '',
+    outputVolume: 1,
     inputMissing: false,
     outputMissing: false,
     error: '',
+    devices: [],
+    devicesStatus: 'idle',
+    devicesError: '',
     participants: [],
   };
   private room?: Room;
@@ -40,9 +53,11 @@ export class VoiceController {
   private microphone?: LocalAudioTrack;
   private publishing = new WeakSet<LocalAudioTrack>();
   private elements = new Map<string, HTMLAudioElement>();
+  private outputAudio = new VoiceOutput();
   private volumes = new Map<string, number>();
   private generation = 0;
   private captureAttempt = 0;
+  private outputAttempt = 0;
   private playback = new WeakMap<HTMLAudioElement, Promise<void>>();
   private wanted = false;
   private retry?: ReturnType<typeof setTimeout>;
@@ -50,20 +65,143 @@ export class VoiceController {
   private retryCount = 0;
   private beating = false;
   private disposed = false;
+  private leaseInvalidations = new Set<() => void>();
+  private notifyingLease = false;
+  private leaseAuthorized = false;
+  private readonly screens: ScreenBindingOwner;
+  private deviceScan?: Promise<void>;
+  private deviceRevision = 0;
+  private permissionRequested = false;
+  private permissionScan = false;
   onChange: () => void = () => {};
-  constructor(private request: Request) {
+  constructor(
+    private request: Request,
+    screens?: ScreenBindingDependency,
+  ) {
+    this.screens = new ScreenBindingOwner(screens);
     navigator.mediaDevices?.addEventListener('devicechange', this.devicesChanged);
+  }
+  // Revocation only: no lease IDs, credentials, deadlines or authorization grants escape.
+  onLeaseInvalidated(listener: () => void) {
+    if (this.disposed) throw new Error('Voice controller was disposed.');
+    this.leaseInvalidations.add(listener);
+    return () => {
+      this.leaseInvalidations.delete(listener);
+    };
+  }
+  private invalidateLease() {
+    this.leaseAuthorized = false;
+    this.screens.invalidate();
+    if (this.notifyingLease) return;
+    this.notifyingLease = true;
+    try {
+      for (const listener of [...this.leaseInvalidations]) {
+        try {
+          listener();
+        } catch (error) {
+          // Subscriber failures cannot interrupt local voice cleanup or other revocations.
+          queueMicrotask(() => {
+            throw error;
+          });
+        }
+      }
+    } finally {
+      this.notifyingLease = false;
+    }
+  }
+  bindScreens(options: { signal?: AbortSignal } = {}) {
+    const lease = this.lease,
+      generation = this.generation;
+    const current = () =>
+      !this.disposed &&
+      this.wanted &&
+      this.leaseAuthorized &&
+      this.lease === lease &&
+      this.generation === generation &&
+      (this.state.status === 'connected' || this.state.status === 'reconnecting');
+    if (!lease || !current())
+      return Promise.reject(new Error('Join voice before binding screens.'));
+    return this.screens.bind(lease, current, options.signal);
   }
   update(values: Partial<VoiceState>) {
     this.state = { ...this.state, ...values };
     this.onChange();
   }
-  async devices() {
-    if (!navigator.mediaDevices)
-      throw new Error('Audio requires a supported browser on localhost or HTTPS.');
-    const probe = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    probe.getTracks().forEach((track) => track.stop());
-    return navigator.mediaDevices.enumerateDevices();
+  refreshDevices() {
+    return this.scanDevices(false);
+  }
+  devices() {
+    return this.scanDevices(true);
+  }
+  private scanDevices(requestPermission: boolean, changed = false): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    const needsProbe = requestPermission && !this.permissionScan;
+    if (needsProbe) {
+      this.permissionRequested = true;
+      this.permissionScan = true;
+    }
+    if (this.deviceScan) {
+      if (changed || needsProbe) this.deviceRevision++;
+      return this.deviceScan;
+    }
+    this.deviceScan = this.readDevices().finally(() => {
+      this.deviceScan = undefined;
+      this.permissionScan = false;
+    });
+    return this.deviceScan;
+  }
+  private async readDevices() {
+    let revision: number;
+    do {
+      revision = this.deviceRevision;
+      const requestPermission = this.permissionRequested;
+      this.permissionRequested = false;
+      this.update({ devicesStatus: 'loading', devicesError: '' });
+      try {
+        const media = navigator.mediaDevices;
+        if (typeof media?.enumerateDevices !== 'function')
+          throw new Error('Audio requires a supported browser on localhost or HTTPS.');
+        if (requestPermission) {
+          let probe: MediaStream | undefined;
+          try {
+            probe = await media.getUserMedia({ audio: true, video: false });
+          } finally {
+            probe?.getTracks().forEach((track) => track.stop());
+          }
+        }
+        if (this.disposed) return;
+        if (revision !== this.deviceRevision) continue;
+        const devices = await media.enumerateDevices();
+        if (this.disposed) return;
+        if (revision !== this.deviceRevision) continue;
+        this.checkSelectedDevices(devices);
+        const inputs = concreteDevices(devices, 'audioinput');
+        const outputs = concreteDevices(devices, 'audiooutput');
+        const available = [...inputs, ...outputs];
+        const needsPermission = !available.length || available.some((device) => !device.label);
+        this.update({
+          devices: available,
+          devicesStatus: needsPermission ? 'permission-needed' : 'ready',
+          devicesError: needsPermission
+            ? 'Allow microphone access to identify audio devices. If already allowed, connect a device and refresh.'
+            : !inputs.length
+              ? 'No microphones found. Connect a microphone and refresh.'
+              : !outputs.length
+                ? 'No speakers found. Connect speakers and refresh.'
+                : '',
+        });
+      } catch (error) {
+        if (this.disposed) return;
+        if (revision !== this.deviceRevision) continue;
+        const denied = ['NotAllowedError', 'SecurityError'].includes((error as Error).name);
+        this.update({
+          devicesStatus: denied ? 'permission-needed' : 'error',
+          devicesError: denied
+            ? 'Microphone access was denied. Allow access in browser or Windows privacy settings, then try again.'
+            : 'Cannot check audio devices. ' + (error as Error).message + ' Try again.',
+        });
+      }
+    } while (!this.disposed && (revision !== this.deviceRevision || this.permissionRequested));
   }
   async selectInput(id: string) {
     const generation = this.generation;
@@ -172,8 +310,13 @@ export class VoiceController {
   }
   async join(channelId: string) {
     if (this.wanted) throw new Error('Leave the current voice session first.');
-    if (!this.state.input || !this.state.output)
-      throw new Error('Select a microphone and speakers first.');
+    if (
+      !this.state.input ||
+      !this.state.output ||
+      this.state.inputMissing ||
+      this.state.outputMissing
+    )
+      throw new Error('Select an available microphone and speakers first.');
     this.wanted = true;
     const generation = ++this.generation;
     this.update({ status: 'joining', channelId, error: '', muted: true });
@@ -185,6 +328,7 @@ export class VoiceController {
         return;
       }
       this.lease = lease;
+      this.leaseAuthorized = true;
       this.heartbeat = setInterval(() => void this.pulse(), 10000);
       await this.connect(generation);
     } catch (error) {
@@ -201,8 +345,11 @@ export class VoiceController {
       previous = this.lease;
     try {
       await this.request('/voice/heartbeat', 'POST', { leaseId: previous.id });
+      if (this.wanted && generation === this.generation && this.lease === previous)
+        this.leaseAuthorized = true;
     } catch (error) {
-      if (!this.wanted || generation !== this.generation) return;
+      if (!this.wanted || generation !== this.generation || this.lease !== previous) return;
+      this.invalidateLease();
       const status = (error as { status?: number }).status;
       if (status === 410) {
         try {
@@ -215,6 +362,7 @@ export class VoiceController {
             return;
           }
           this.lease = next;
+          this.leaseAuthorized = true;
           const room = this.room;
           this.room = undefined;
           room?.removeAllListeners();
@@ -249,8 +397,15 @@ export class VoiceController {
     });
     this.room = room;
     const current = () => this.wanted && this.generation === generation && this.room === room;
+    let participantUpdatePending = false;
     const participants = () => {
-      if (current()) this.updateParticipants();
+      if (!current() || participantUpdatePending) return;
+      participantUpdatePending = true;
+      // The SDK can clear peers before emitting its reconnect state in the same turn.
+      queueMicrotask(() => {
+        participantUpdatePending = false;
+        if (current()) this.updateParticipants();
+      });
     };
     room
       .on(RoomEvent.ParticipantConnected, participants)
@@ -275,7 +430,10 @@ export class VoiceController {
     room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
       const element = this.elements.get(track.sid!);
       if (element) {
+        element.muted = true;
         element.pause();
+        this.outputAudio.release(element);
+        element.srcObject = null;
         element.remove();
         this.elements.delete(track.sid!);
       }
@@ -283,10 +441,12 @@ export class VoiceController {
     room.on(RoomEvent.Reconnecting, () => {
       if (current()) this.update({ status: 'reconnecting' });
     });
+    room.on(RoomEvent.SignalReconnecting, () => {
+      if (current()) this.update({ status: 'reconnecting' });
+    });
     room.on(RoomEvent.Reconnected, () => {
       if (current()) {
-        this.update({ status: 'connected', error: '' });
-        participants();
+        this.updateParticipants({ status: 'connected', error: '' });
       }
     });
     room.on(RoomEvent.Disconnected, () => {
@@ -315,8 +475,7 @@ export class VoiceController {
         return;
       }
       this.retryCount = 0;
-      this.update({ status: 'connected', error: '' });
-      this.updateParticipants();
+      this.updateParticipants({ status: 'connected', error: '' });
       if (!this.state.inputMissing)
         try {
           await this.capture(generation);
@@ -357,7 +516,9 @@ export class VoiceController {
     this.microphone?.stop();
     this.microphone = undefined;
     for (const element of this.elements.values()) {
+      element.muted = true;
       element.pause();
+      this.outputAudio.release(element);
       element.srcObject = null;
       element.remove();
     }
@@ -366,6 +527,7 @@ export class VoiceController {
   async leave() {
     this.wanted = false;
     this.generation++;
+    this.invalidateLease();
     clearTimeout(this.retry);
     clearInterval(this.heartbeat);
     const room = this.room,
@@ -375,6 +537,11 @@ export class VoiceController {
     room?.removeAllListeners();
     this.clearMedia();
     this.update({ status: 'idle', channelId: null, participants: [] });
+    try {
+      await this.outputAudio.close();
+    } catch (error) {
+      this.update({ error: 'Cannot close voice audio: ' + (error as Error).message });
+    }
     await room?.disconnect();
     if (lease)
       try {
@@ -402,10 +569,46 @@ export class VoiceController {
   async resumeAudio() {
     for (const element of this.elements.values()) await this.play(element);
   }
+  async setOutputVolume(value: number) {
+    if (!Number.isFinite(value) || value < 0 || value > 2)
+      throw new Error('Voice output volume must be between 0% and 200%.');
+    const attempt = ++this.outputAttempt;
+    this.update({ outputVolume: value });
+    this.outputAudio.setVolume(value);
+    const generation = this.generation;
+    const prepare = [...this.elements.values()].some((element) =>
+      this.outputAudio.needsPreparation(element),
+    );
+    for (const element of this.elements.values())
+      element.volume =
+        (this.volumes.get(element.dataset.voiceAudio ?? '') ?? 1) *
+        this.outputAudio.volumeFor(element);
+    if (
+      !prepare &&
+      !this.outputAudio.needsEnable &&
+      !this.state.error.startsWith('Audio output needs attention:')
+    )
+      return;
+    for (const element of this.elements.values()) {
+      element.muted = true;
+      element.pause();
+    }
+    try {
+      await this.outputAudio.enable();
+      if (generation !== this.generation || attempt !== this.outputAttempt) return;
+      for (const element of this.elements.values()) await this.play(element);
+    } catch (error) {
+      if (generation === this.generation && attempt === this.outputAttempt)
+        this.update({ error: 'Audio output needs attention: ' + (error as Error).message });
+    }
+  }
   volume(id: string, value: number) {
+    if (!Number.isFinite(value) || value < 0 || value > 1)
+      throw new Error('Participant volume must be between 0% and 100%.');
     this.volumes.set(id, value);
     for (const element of this.elements.values())
-      if (element.dataset.voiceAudio === id) element.volume = value;
+      if (element.dataset.voiceAudio === id)
+        element.volume = value * this.outputAudio.volumeFor(element);
     this.updateParticipants();
   }
   private play(element: HTMLAudioElement, id = element.dataset.voiceAudio ?? '') {
@@ -422,13 +625,17 @@ export class VoiceController {
       generation === this.generation &&
       [...this.elements.values()].includes(element);
     if (!current()) return;
-    element.volume = this.volumes.get(id) ?? 1;
     if (this.state.deafened || this.state.outputMissing || !this.state.output) {
       element.muted = true;
       element.pause();
       return;
     }
     try {
+      await this.outputAudio.enable();
+      if (!current()) return;
+      await this.outputAudio.prepare(element, this.state.output);
+      if (!current()) return;
+      element.volume = (this.volumes.get(id) ?? 1) * this.outputAudio.volumeFor(element);
       if (typeof element.setSinkId !== 'function')
         throw new Error(
           'This browser cannot select an output device. Use Edge or the desktop app.',
@@ -442,6 +649,8 @@ export class VoiceController {
       }
       element.muted = false;
       await element.play();
+      if (current() && this.state.error.startsWith('Audio output needs attention:'))
+        this.update({ error: '' });
     } catch (error) {
       element.muted = true;
       element.pause();
@@ -449,11 +658,12 @@ export class VoiceController {
         this.update({ error: 'Audio output needs attention: ' + (error as Error).message });
     }
   }
-  private updateParticipants() {
+  private updateParticipants(values: Partial<VoiceState> = {}) {
     const room = this.room;
     if (!room) return;
     const list = [room.localParticipant, ...room.remoteParticipants.values()];
     this.update({
+      ...values,
       participants: list.map((p) => ({
         id: p.identity,
         name: p.name || p.identity,
@@ -463,17 +673,7 @@ export class VoiceController {
       })),
     });
   }
-  private devicesChanged = async () => {
-    if (this.disposed) return;
-    let devices: MediaDeviceInfo[];
-    try {
-      devices = await navigator.mediaDevices.enumerateDevices();
-    } catch {
-      if (!this.disposed)
-        this.update({ error: 'Cannot check audio devices. Try finding devices again.' });
-      return;
-    }
-    if (this.disposed) return;
+  private checkSelectedDevices(devices: MediaDeviceInfo[]) {
     if (
       this.state.input &&
       !devices.some((d) => d.kind === 'audioinput' && d.deviceId === this.state.input)
@@ -500,11 +700,18 @@ export class VoiceController {
         error: 'Selected speakers are missing. Choose a replacement.',
       });
     }
+  }
+  private devicesChanged = () => {
+    void this.scanDevices(false, true);
   };
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
+    this.screens.dispose();
+    this.deviceRevision++;
     navigator.mediaDevices?.removeEventListener('devicechange', this.devicesChanged);
     this.onChange = () => {};
     void this.leave();
+    this.leaseInvalidations.clear();
   }
 }
