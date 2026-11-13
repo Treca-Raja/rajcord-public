@@ -9,6 +9,7 @@ import {
   type NativeCaptureSource,
 } from './native-capture.js';
 import { screenPickerUrl } from './screen-picker.js';
+import { microphonePermissions } from './microphone-permission.js';
 import { ServerCaptureAuthority } from './capture-authority.js';
 import type { DesktopCapturePolicy } from './screen-capture-policy.js';
 import type { DesktopPickerSnapshot } from '@tricord/shared' with { 'resolution-mode': 'import' };
@@ -44,6 +45,7 @@ function fixture(overrides: Partial<Parameters<typeof installNativeCapture>[0]> 
     mainFrame: frame,
     session,
     isDestroyed: () => false,
+    getURL: () => frame.url,
   }) as unknown as WebContents;
   const owner = Object.assign(new EventEmitter(), {
     webContents: contents,
@@ -198,6 +200,34 @@ afterEach(() => {
   for (const boundary of boundaries.splice(0)) boundary.dispose();
   expect(vi.getTimerCount()).toBe(0);
   vi.useRealTimers();
+});
+
+it('composes remembered microphone consent with the independently armed screen boundary', async () => {
+  const consent = { allowed: true, request: vi.fn().mockResolvedValue(true) };
+  const permissions: NativeCapturePermissions = {
+    request: (...args) =>
+      microphonePermissions(f.contents, 'http://127.0.0.1:3001', consent).request(...args),
+    check: (...args) =>
+      microphonePermissions(f.contents, 'http://127.0.0.1:3001', consent).check(...args),
+  };
+  const f = fixture({ permissions });
+  expect(f.allowed()).toBe(false);
+  expect(f.permissionCheck('media', { mediaType: 'audio' })).toBe(true);
+  const allowed = f.permissionRequest('media', { mediaTypes: ['audio'] });
+  await flush();
+  expect(allowed).toHaveBeenCalledExactlyOnceWith(true);
+  expect(f.permissionRequest('media', { mediaTypes: ['video'] })).toHaveBeenCalledExactlyOnceWith(
+    false,
+  );
+  f.issue();
+  expect(f.allowed()).toBe(true);
+  const captured = f.native();
+  await flush();
+  expect((await f.select()).ok).toBe(true);
+  expect(captured).toHaveBeenCalledExactlyOnceWith({ video: f.source.video });
+  consent.allowed = false;
+  expect(f.permissionCheck('media', { mediaType: 'audio' })).toBe(false);
+  expect(f.allowed()).toBe(false);
 });
 
 it.each([

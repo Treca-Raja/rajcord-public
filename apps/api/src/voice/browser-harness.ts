@@ -221,10 +221,26 @@ export async function setup(browser: Browser, token: string, origin: string) {
     deviceScaleFactor: 1,
     mobile: false,
   });
+  await browser.call('Browser.grantPermissions', { origin, permissions: ['audioCapture'] });
   await browser.call('Page.navigate', { url: origin });
   await browser.wait("!!document.querySelector('.voice-settings-toggle')");
   await browser.js("document.querySelector('.voice-settings-toggle').click()");
-  await browser.click('Find audio devices');
+  await browser.wait(
+    "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
+  );
+  assert.equal(
+    await browser.js('window.__captureCount'),
+    0,
+    'Automatic setup must not capture audio',
+  );
+  assert.equal(
+    await browser.js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
+    '',
+  );
+  assert.equal(
+    await browser.js('document.querySelector(\'select[aria-label="Voice speakers"]\').value'),
+    '',
+  );
   await browser.wait(
     'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
   );

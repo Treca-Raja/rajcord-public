@@ -50,6 +50,9 @@ export function VoicePanel({
     };
   }, []);
   useEffect(() => {
+    if (expanded) void action((c) => c.refreshDevices());
+  }, [expanded, call?.controls]);
+  useEffect(() => {
     if (
       !requestedChannel ||
       !loaded.current ||
@@ -139,14 +142,33 @@ export function VoicePanel({
       {expanded && voice && (
         <div className="voice-controls">
           <p className="voice-help">Choose your devices. You join muted.</p>
-          <button disabled={busy} onClick={() => void action((c) => c.devices())}>
-            Find audio devices
-          </button>
+          <p
+            className="voice-help"
+            role={voice.devicesStatus === 'error' ? 'alert' : 'status'}
+            data-audio-devices-status={voice.devicesStatus}
+          >
+            {voice.devicesStatus === 'loading'
+              ? 'Checking audio devices…'
+              : voice.devicesError || 'Audio devices update automatically.'}
+          </p>
+          <div className="voice-device-actions">
+            {voice.devicesStatus === 'permission-needed' && (
+              <button disabled={busy} onClick={() => void action((c) => c.devices())}>
+                Allow microphone access
+              </button>
+            )}
+            <button
+              disabled={busy || voice.devicesStatus === 'loading'}
+              onClick={() => void action((c) => c.refreshDevices())}
+            >
+              Refresh audio devices
+            </button>
+          </div>
           <label>
             Microphone
             <select
               aria-label="Voice microphone"
-              value={voice.input}
+              value={voice.inputMissing ? '' : voice.input}
               onChange={(e) => void action((c) => c.selectInput(e.target.value))}
             >
               <option value="">Choose microphone</option>
@@ -161,7 +183,7 @@ export function VoicePanel({
             Speakers
             <select
               aria-label="Voice speakers"
-              value={voice.output}
+              value={voice.outputMissing ? '' : voice.output}
               onChange={(e) => void action((c) => c.selectOutput(e.target.value))}
             >
               <option value="">Choose speakers</option>
@@ -172,13 +194,28 @@ export function VoicePanel({
               ))}
             </select>
           </label>
+          <label className="voice-output-volume">
+            Voice output <output>{Math.round(voice.outputVolume * 100)}%</output>
+            <input
+              aria-label="Voice output volume"
+              aria-valuetext={Math.round(voice.outputVolume * 100) + '%'}
+              type="range"
+              min="0"
+              max="2"
+              step=".05"
+              value={voice.outputVolume}
+              onChange={(e) => void action((c) => c.setOutputVolume(Number(e.target.value)))}
+            />
+          </label>
           {voice.status === 'idle' ? (
             <label>
               Join channel
               <select
                 aria-label="Join voice channel"
                 value=""
-                disabled={busy || !voice.input || !voice.output}
+                disabled={
+                  busy || !voice.input || !voice.output || voice.inputMissing || voice.outputMissing
+                }
                 onChange={(e) => void action((c) => c.join(e.target.value))}
               >
                 <option value="">Choose a channel</option>

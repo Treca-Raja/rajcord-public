@@ -239,7 +239,9 @@ it('device enumeration failure is reported without an unhandled rejection or fal
   const { media } = setup();
   media.enumerateDevices.mockRejectedValueOnce(new Error('Device API unavailable'));
   media.dispatchEvent(new Event('devicechange'));
-  await vi.waitFor(() => expect(controller.state.error).toContain('Cannot check audio devices'));
+  await vi.waitFor(() =>
+    expect(controller.state.devicesError).toContain('Cannot check audio devices'),
+  );
   expect(media.getUserMedia).not.toHaveBeenCalled();
 });
 
@@ -354,4 +356,257 @@ it('hosted leases allow the media server to provide ICE servers while local leas
   });
   await controller.join('room');
   expect(sdk.rooms[1]!.connect.mock.calls[0]![2].rtcConfig).not.toHaveProperty('iceServers');
+});
+
+function outputFixture(resume = vi.fn().mockResolvedValue(undefined)) {
+  const derived = { stop: vi.fn() };
+  const source = { connect: vi.fn(), disconnect: vi.fn() };
+  const gain = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() };
+  const destination = { stream: { getTracks: () => [derived] } };
+  const context = {
+    state: 'running',
+    resume,
+    createMediaStreamSource: vi.fn(() => source),
+    createGain: vi.fn(() => gain),
+    createMediaStreamDestination: vi.fn(() => destination),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  vi.stubGlobal(
+    'AudioContext',
+    class {
+      constructor() {
+        return context;
+      }
+    },
+  );
+  const element = {
+    dataset: {},
+    muted: true,
+    autoplay: false,
+    srcObject: null,
+    volume: 1,
+    setSinkId: vi.fn().mockResolvedValue(undefined),
+    pause: vi.fn(),
+    play: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn(),
+  };
+  const feeder = {
+    ...element,
+    dataset: {},
+    pause: vi.fn(),
+    play: vi.fn().mockResolvedValue(undefined),
+    setSinkId: vi.fn().mockResolvedValue(undefined),
+  };
+  vi.stubGlobal('document', {
+    createElement: vi.fn().mockReturnValueOnce(element).mockReturnValue(feeder),
+    body: { appendChild: vi.fn() },
+  });
+  vi.stubGlobal('MediaStream', class {});
+  const subscribe = () =>
+    sdk.rooms
+      .at(-1)!
+      .emit(
+        'TrackSubscribed',
+        { kind: 'audio', sid: 'remote', mediaStreamTrack: {} },
+        {},
+        { identity: 'friend' },
+      );
+  return { context, source, gain, derived, destination, element, feeder, subscribe };
+}
+
+it('boosts only received voice, preserves participant attenuation and exact speaker routing', async () => {
+  const { media } = setup();
+  const f = outputFixture();
+  await controller.join('room');
+  f.subscribe();
+  await vi.waitFor(() => expect(f.element.play).toHaveBeenCalledOnce());
+  expect(controller.state.outputVolume).toBe(1);
+  expect(f.context.createGain).not.toHaveBeenCalled();
+  controller.volume('friend', 0.25);
+  await controller.setOutputVolume(0.5);
+  expect(f.element.volume).toBe(0.125);
+  expect(f.context.createGain).not.toHaveBeenCalled();
+  await controller.setOutputVolume(2);
+  expect(f.gain.gain.value).toBe(2);
+  expect(f.element.volume).toBe(0.25);
+  expect(f.element.srcObject).toBe(f.destination.stream);
+  expect(f.source.connect).toHaveBeenCalledWith(f.gain);
+  expect(f.gain.connect).toHaveBeenCalledWith(f.destination);
+  expect(f.feeder.muted).toBe(true);
+  expect(f.feeder.volume).toBe(0);
+  expect(f.feeder.setSinkId).toHaveBeenCalledWith('speaker');
+  expect(f.element.setSinkId.mock.calls.every(([id]) => id === 'speaker')).toBe(true);
+  expect(f.element.setSinkId.mock.invocationCallOrder.at(-1)).toBeLessThan(
+    f.element.play.mock.invocationCallOrder.at(-1)!,
+  );
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  expect(sdk.tracks).toHaveLength(1);
+  const plays = f.element.play.mock.calls.length;
+  await controller.setOutputVolume(1.5);
+  expect(f.gain.gain.value).toBe(1.5);
+  expect(f.element.play).toHaveBeenCalledTimes(plays);
+  await controller.setOutputVolume(0);
+  expect(f.gain.gain.value).toBe(0);
+  await controller.deafen();
+  await controller.setOutputVolume(2);
+  expect(f.element.muted).toBe(true);
+  expect(controller.state.muted).toBe(true);
+  await controller.leave();
+  expect(f.derived.stop).toHaveBeenCalledOnce();
+  expect(f.feeder.srcObject).toBeNull();
+  expect(f.feeder.pause).toHaveBeenCalled();
+  expect(f.source.disconnect).toHaveBeenCalledOnce();
+  expect(f.gain.disconnect).toHaveBeenCalledOnce();
+  expect(f.context.close).toHaveBeenCalledOnce();
+  expect(f.element.srcObject).toBeNull();
+});
+
+it('applies the master level to later subscriptions and releases graphs on unsubscribe', async () => {
+  setup();
+  const f = outputFixture();
+  await controller.setOutputVolume(2);
+  await controller.join('room');
+  f.subscribe();
+  await vi.waitFor(() => expect(f.element.play).toHaveBeenCalled());
+  expect(f.gain.gain.value).toBe(2);
+  sdk.rooms[0]!.emit('TrackUnsubscribed', { sid: 'remote' });
+  expect(f.derived.stop).toHaveBeenCalledOnce();
+  expect(f.element.srcObject).toBeNull();
+  expect(f.element.muted).toBe(true);
+  await controller.leave();
+  expect(f.derived.stop).toHaveBeenCalledOnce();
+});
+
+it('rejects invalid master and participant levels without changing current volumes', async () => {
+  setup();
+  for (const value of [-1, 2.01, NaN, Infinity])
+    await expect(controller.setOutputVolume(value)).rejects.toThrow('0% and 200%');
+  for (const value of [-1, 1.01, NaN, Infinity])
+    expect(() => controller.volume('friend', value)).toThrow('0% and 100%');
+  expect(controller.state.outputVolume).toBe(1);
+});
+
+it('failed amplification stays paused with a visible error and allows an explicit retry', async () => {
+  setup();
+  const f = outputFixture(vi.fn().mockRejectedValueOnce(new Error('Audio blocked')));
+  await controller.join('room');
+  f.subscribe();
+  await vi.waitFor(() => expect(f.element.play).toHaveBeenCalledOnce());
+  f.context.state = 'suspended';
+  await controller.setOutputVolume(2);
+  expect(controller.state.error).toContain('Audio blocked');
+  expect(f.element.muted).toBe(true);
+  expect(f.element.play).toHaveBeenCalledOnce();
+  f.context.state = 'running';
+  await controller.resumeAudio();
+  expect(f.element.muted).toBe(false);
+  expect(f.gain.gain.value).toBe(2);
+});
+
+it('a late amplification permission cannot revive audio after leaving', async () => {
+  setup();
+  const pending = deferred<void>();
+  const f = outputFixture(vi.fn().mockReturnValue(pending.promise));
+  await controller.join('room');
+  f.subscribe();
+  await vi.waitFor(() => expect(f.element.play).toHaveBeenCalledOnce());
+  f.context.state = 'suspended';
+  const setting = controller.setOutputVolume(2);
+  await controller.leave();
+  pending.resolve();
+  await setting;
+  expect(f.element.play).toHaveBeenCalledOnce();
+  expect(f.context.createGain).not.toHaveBeenCalled();
+  expect(f.element.muted).toBe(true);
+});
+
+it('unsupported amplification surfaces an error without capturing or changing devices', async () => {
+  const { media } = setup();
+  vi.stubGlobal('AudioContext', undefined);
+  await controller.setOutputVolume(2);
+  expect(controller.state.error).toContain('amplification is unavailable');
+  expect(media.getUserMedia).not.toHaveBeenCalled();
+  expect(controller.state.input).toBe('mic');
+  expect(controller.state.output).toBe('speaker');
+});
+
+it('missing speakers stay silent while the boosted master changes, with no default fallback', async () => {
+  const { media } = setup();
+  const f = outputFixture();
+  await controller.join('room');
+  await controller.setOutputVolume(2);
+  f.subscribe();
+  await vi.waitFor(() => expect(f.element.play).toHaveBeenCalledOnce());
+  media.dispatchEvent(new Event('devicechange'));
+  await vi.waitFor(() => expect(controller.state.outputMissing).toBe(true));
+  await controller.setOutputVolume(1.5);
+  await controller.resumeAudio();
+  expect(f.element.muted).toBe(true);
+  expect(f.element.play).toHaveBeenCalledOnce();
+  expect(f.element.setSinkId.mock.calls.every(([id]) => id === 'speaker')).toBe(true);
+});
+
+it('returning to 100% recovers raw playback when amplification is unsupported', async () => {
+  setup();
+  const f = outputFixture();
+  vi.stubGlobal('AudioContext', undefined);
+  await controller.join('room');
+  f.subscribe();
+  await vi.waitFor(() => expect(f.element.play).toHaveBeenCalledOnce());
+  await controller.setOutputVolume(2);
+  expect(f.element.muted).toBe(true);
+  await controller.setOutputVolume(1);
+  expect(f.element.muted).toBe(false);
+  expect(f.element.volume).toBe(1);
+  expect(controller.state.error).toBe('');
+});
+
+it('leaving during silent source routing cannot start the feeder or processed playback later', async () => {
+  setup();
+  const f = outputFixture();
+  const pending = deferred<void>();
+  f.feeder.setSinkId.mockReturnValue(pending.promise);
+  await controller.setOutputVolume(2);
+  await controller.join('room');
+  f.subscribe();
+  await vi.waitFor(() => expect(f.feeder.setSinkId).toHaveBeenCalled());
+  await controller.leave();
+  pending.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(f.feeder.play).not.toHaveBeenCalled();
+  expect(f.element.play).not.toHaveBeenCalled();
+  expect(f.derived.stop).toHaveBeenCalledOnce();
+  expect(f.feeder.srcObject).toBeNull();
+});
+
+it('gain graph failures release derived media and leave output silent with an error', async () => {
+  setup();
+  const f = outputFixture();
+  f.source.connect.mockImplementationOnce(() => {
+    throw new Error('Graph failed');
+  });
+  await controller.setOutputVolume(2);
+  await controller.join('room');
+  f.subscribe();
+  await vi.waitFor(() => expect(controller.state.error).toContain('Graph failed'));
+  expect(f.element.muted).toBe(true);
+  expect(f.element.play).not.toHaveBeenCalled();
+  expect(f.derived.stop).toHaveBeenCalledOnce();
+  expect(f.feeder.srcObject).toBeNull();
+});
+
+it('participant volume changes during amplification setup are preserved when playback starts', async () => {
+  setup();
+  const f = outputFixture();
+  const pending = deferred<void>();
+  f.feeder.setSinkId.mockReturnValue(pending.promise);
+  await controller.setOutputVolume(2);
+  await controller.join('room');
+  f.subscribe();
+  await vi.waitFor(() => expect(f.feeder.setSinkId).toHaveBeenCalled());
+  controller.volume('friend', 0.25);
+  pending.resolve();
+  await vi.waitFor(() => expect(f.element.play).toHaveBeenCalled());
+  expect(f.element.volume).toBe(0.25);
 });

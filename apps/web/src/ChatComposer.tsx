@@ -8,10 +8,18 @@ import {
 } from 'react';
 import type { ChatMessage, Conversation, ChannelReference } from '@tricord/shared';
 import { SendHorizontal, X, Hash, Volume2, AtSign } from 'lucide-react';
+import { preload } from 'react-dom';
+import composerEmojiFont from './assets/composer-emoji.woff2';
 import { EmojiPicker } from './EmojiPicker';
 import { composerSuggestions, referenceLabel, type ComposerSuggestion } from './channel-references';
 import { GifSearch } from './GifSearch';
 import { useAnimatedPresence } from './useAnimatedPresence';
+
+function resizeComposerInput(input: HTMLTextAreaElement | null) {
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+}
 
 export function ChatComposer({
   body,
@@ -48,6 +56,7 @@ export function ChatComposer({
   onReference?: (channel: ChannelReference) => boolean;
   onSendGif?: (url: string) => Promise<void>;
 }) {
+  preload(composerEmojiFont, { as: 'font', type: 'font/woff2', crossOrigin: 'anonymous' });
   const replyBlocked = replyLoading || replyFailed;
   const textarea = useRef<HTMLTextAreaElement>(null);
   const controls = useRef<HTMLDivElement>(null);
@@ -70,11 +79,26 @@ export function ChatComposer({
     return () => document.removeEventListener('pointerdown', outside);
   }, [gifOpen]);
   useLayoutEffect(() => {
+    resizeComposerInput(textarea.current);
+  }, [body]);
+  useLayoutEffect(() => {
     const input = textarea.current;
     if (!input) return;
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
-  }, [body]);
+    let width = input.getBoundingClientRect().width;
+    const resize = () => resizeComposerInput(input);
+    const observer = new ResizeObserver(() => {
+      const next = input.getBoundingClientRect().width;
+      if (next === width) return;
+      width = next;
+      resize();
+    });
+    observer.observe(input);
+    document.fonts.addEventListener('loadingdone', resize);
+    return () => {
+      observer.disconnect();
+      document.fonts.removeEventListener('loadingdone', resize);
+    };
+  }, []);
   const prefix = body.slice(0, caret);
   const match = prefix.match(/(^|[^\p{L}\p{N}_@])@([^\n@]{0,80})$/u);
   const query = !dismissed && match ? match[2]!.toLowerCase() : null;

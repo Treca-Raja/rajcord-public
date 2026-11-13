@@ -16,7 +16,8 @@
     "package:win": "pnpm build && electron-builder --config electron-builder.cjs --win nsis --x64 --publish never",
     "test:links": "node ../../scripts/test-desktop-links.mjs",
     "test:picker": "node ../../scripts/test-screen-picker.mjs",
-    "test:capture": "node ../../scripts/test-screen-picker.mjs --native"
+    "test:capture": "node ../../scripts/test-screen-picker.mjs --native",
+    "test:microphone": "node ../../scripts/test-desktop-microphone.mjs"
   },
   "dependencies": {
     "@tricord/shared": "workspace:*",
@@ -25,7 +26,7 @@
   },
   "devDependencies": {
     "@types/js-yaml": "4.0.9",
-    "electron": "45.0.0",
+    "electron": "45.1.0",
     "electron-builder": "26.18.0"
   }
 }

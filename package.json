@@ -37,6 +37,7 @@
     "voice:setup": "node scripts/voice-setup.mjs",
     "voice:up": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice up -d",
     "voice:down": "docker compose --env-file infrastructure/.env.voice -f infrastructure/compose.voice.yaml -p tricord-voice down",
+    "test:presence": "pnpm build && pnpm --filter @tricord/api test:presence",
     "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice",
     "test:screen": "pnpm build:packages && pnpm --filter @tricord/api test:screen",
     "test:voice:load": "pnpm --filter @tricord/api test:voice:check && pnpm build && pnpm --filter @tricord/api test:voice:load",
@@ -54,8 +55,8 @@
     "globals": "^17.0.0",
     "prettier": "^3.6.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "^8.72.0",
-    "vitest": "^5.0.5",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0",
     "wait-on": "^9.0.0"
   }
 }

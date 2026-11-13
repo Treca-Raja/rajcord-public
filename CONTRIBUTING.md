@@ -28,7 +28,7 @@ Thanks for helping build Rajcord. Contributions are welcome from anyone. You do 
 
 Trusted collaborators may push their feature branches when authorized. Contributors without write access can submit pull requests from forks, also targeting `develop`. Check the PR source/base pair and required checks before merging. Preserve configured branch protections; this document does not change GitHub settings. Review is encouraged for security-sensitive and substantial changes.
 
-Verification runs on feature/develop branches and pull requests without publishing or deploying. Only verified `main` commits enter the separately gated release pipeline; a PR merge does not authorize bypassing production approval.
+Verification runs on pull requests and pushes to develop without publishing or deploying. Feature pushes are checked through their pull request to avoid duplicate runs. Windows PR tests remain enabled. Only verified `main` commits enter the separately gated release pipeline; a PR merge does not authorize bypassing production approval.
 
 ## Licensing
 

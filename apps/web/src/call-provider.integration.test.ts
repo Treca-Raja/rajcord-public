@@ -505,8 +505,8 @@ const devices=navigator.mediaDevices;
 const add=devices.addEventListener.bind(devices), remove=devices.removeEventListener.bind(devices);
 devices.addEventListener=(event,listener,...args)=>{if(event==='devicechange'){listeners.add(listener);f.created++;f.active=listeners.size}return add(event,listener,...args)};
 devices.removeEventListener=(event,listener,...args)=>{if(event==='devicechange'){listeners.delete(listener);f.active=listeners.size}return remove(event,listener,...args)};
-devices.getUserMedia=()=>{f.captureCalls++;f.capture=deferred();f.captures.push(f.capture);return f.capture.promise};
-devices.enumerateDevices=async()=>{f.enumerateCalls++;if(f.holdEnumeration){f.holdEnumeration=false;f.enumeration=deferred();f.enumerations.push(f.enumeration);return f.enumeration.promise}return f.deviceList};
+devices.getUserMedia=()=>{f.expectPermissionEnumeration=true;f.captureCalls++;f.capture=deferred();f.captures.push(f.capture);return f.capture.promise};
+devices.enumerateDevices=async()=>{if(f.expectPermissionEnumeration){f.enumerateCalls++;f.expectPermissionEnumeration=false}else{f.passiveEnumerateCalls=(f.passiveEnumerateCalls??0)+1}if(f.holdEnumeration){f.holdEnumeration=false;f.enumeration=deferred();f.enumerations.push(f.enumeration);return f.enumeration.promise}return f.deviceList};
 f.finishCapture=(capture=f.capture)=>capture.resolve({getTracks:()=>[{stop:()=>f.stopped++}]});
 f.state=(csrf='a',status='approved')=>({user:{id:'account',username:'fixture',displayName:'Fixture',status,isOwner:false},csrfToken:csrf,expiresAt:new Date(Date.now()+600000).toISOString(),remember:false});
 f.server=f.state();
@@ -599,7 +599,7 @@ async function audioControls(browser: Awaited<ReturnType<typeof launch>>) {
 
 async function discoverAudio(browser: Awaited<ReturnType<typeof launch>>) {
   await browser.js(
-    "fixture.deviceList=[{kind:'audioinput',deviceId:'owned-mic',label:'Owned synthetic microphone',groupId:'private-group'},{kind:'audiooutput',deviceId:'owned-output',label:'Owned synthetic speakers',groupId:'private-group'}];[...document.querySelectorAll('button')].find(b=>b.textContent==='Find audio devices').click()",
+    "fixture.deviceList=[{kind:'audioinput',deviceId:'owned-mic',label:'Owned synthetic microphone',groupId:'private-group'},{kind:'audiooutput',deviceId:'owned-output',label:'Owned synthetic speakers',groupId:'private-group'}];fixture.observe(fixture.call.controls.devices(),'explicitDiscovery')",
   );
   await browser.wait('!!fixture.capture');
   await browser.js('fixture.finishCapture()');
@@ -607,6 +607,91 @@ async function discoverAudio(browser: Awaited<ReturnType<typeof launch>>) {
     'document.querySelector(\'[aria-label="Voice microphone"]\').options.length===2',
   );
 }
+
+it('opens audio inventory without capture and routes the master level through the shared call', async () => {
+  await mountedFixture(async (browser) => {
+    await browser.wait('!!window.fixture?.call && fixture.active===1');
+    await audioControls(browser);
+    await browser.wait("fixture.call.voice.devicesStatus==='permission-needed'");
+    expect(await browser.js('fixture.captureCalls')).toBe(0);
+    expect(await browser.js('fixture.passiveEnumerateCalls')).toBe(1);
+    await browser.js(
+      "fixture.deviceList=[{kind:'audioinput',deviceId:'mic',label:'Synthetic mic'},{kind:'audiooutput',deviceId:'speaker',label:'Synthetic speakers'}];[...document.querySelectorAll('button')].find(button=>button.textContent==='Allow microphone access').click();fixture.finishCapture()",
+    );
+    await browser.wait("fixture.call.voice.devicesStatus==='ready'");
+    await browser.js(
+      "(()=>{const slider=document.querySelector('[aria-label=\"Voice output volume\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'2');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}))})()",
+    );
+    await browser.wait('fixture.call.voice.outputVolume===2');
+    await browser.js(
+      "(async()=>{await fixture.call.controls.selectInput('mic');await fixture.call.controls.selectOutput('speaker');fixture.deviceList=[];navigator.mediaDevices.dispatchEvent(new Event('devicechange'))})()",
+    );
+    await browser.wait('fixture.call.voice.inputMissing && fixture.call.voice.outputMissing');
+    await browser.js(
+      "fixture.deviceList=[{kind:'audioinput',deviceId:'mic',label:'Synthetic mic'},{kind:'audiooutput',deviceId:'speaker',label:'Synthetic speakers'}];navigator.mediaDevices.dispatchEvent(new Event('devicechange'))",
+    );
+    await browser.wait("fixture.call.voice.devicesStatus==='ready'");
+    expect(
+      await browser.js(
+        "[...document.querySelectorAll('.voice-controls select')].slice(0,2).map(select=>select.value)",
+      ),
+    ).toEqual(['', '']);
+    expect(
+      await browser.js('document.querySelector(\'[aria-label="Join voice channel"]\').disabled'),
+    ).toBe(true);
+    await browser.js(
+      "for(const [label,id] of [['Voice microphone','mic'],['Voice speakers','speaker']]){const select=document.querySelector('[aria-label=\"'+label+'\"]');select.value=id;select.dispatchEvent(new Event('change',{bubbles:true}))}",
+    );
+    await browser.wait('!fixture.call.voice.inputMissing && !fixture.call.voice.outputMissing');
+    expect(await browser.js('fixture.captureCalls')).toBe(1);
+    expect(await browser.js('fixture.joins.length')).toBe(0);
+    expect(
+      await browser.js("fixture.call.voice.input==='mic' && fixture.call.voice.output==='speaker'"),
+    ).toBe(true);
+    expect(await browser.js('fixture.errors')).toEqual([]);
+  });
+});
+
+it('native microphone reset replaces only the call owner and fences old pending work and callbacks', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call && fixture.active===1');
+      await audioControls(browser);
+      await discoverAudio(browser);
+      await browser.js(
+        "(async()=>{fixture.saved=fixture.call.controls;fixture.staleReset=[...fixture.resets][0];await fixture.call.controls.selectInput('owned-mic');await fixture.call.controls.selectOutput('owned-output');fixture.observe(fixture.call.controls.join('room'),'oldJoin');const field=document.createElement('textarea');field.id='reset-draft';field.value='Keep this draft';document.body.append(field);field.focus();fixture.staleReset()})()",
+      );
+      await browser.wait(
+        "fixture.oldJoin==='Voice session ended.' && !!fixture.call && fixture.call.controls!==fixture.saved && fixture.active===1",
+      );
+      expect(
+        await browser.js(
+          "fixture.call.voice.status==='idle' && fixture.call.voice.input==='' && fixture.call.voice.output==='' && document.activeElement.id==='reset-draft' && document.activeElement.value==='Keep this draft'",
+        ),
+      ).toBe(true);
+      expect(await browser.js('fixture.resets.size')).toBe(1);
+      await browser.js('fixture.replacement=fixture.call.controls;fixture.staleReset()');
+      expect(await browser.js('fixture.call.controls===fixture.replacement')).toBe(true);
+      await browser.js('[...fixture.resets][0]()');
+      await browser.wait(
+        '!!fixture.call && fixture.call.controls!==fixture.replacement && fixture.active===1',
+      );
+      await browser.js(
+        "fixture.respond(fixture.joins[0],{id:'old-reset-lease',channelId:'room',credential:'synthetic'})",
+      );
+      await browser.wait(
+        "fixture.calls.some(call=>call.path==='/api/voice/leave'&&JSON.parse(call.body).leaseId==='old-reset-lease')",
+      );
+      expect(await browser.js('fixture.resets.size')).toBe(1);
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    fixture.replace(
+      'f.mount();',
+      `f.resets=new Set();window.tricordDesktop={onMicrophonePermissionReset(listener){f.resets.add(listener);return ()=>f.resets.delete(listener)}};f.mount();`,
+    ),
+  );
+});
 
 it('panel remount preserves the discovered visible selections without opening devices again', async () => {
   await mountedFixture(async (browser) => {
@@ -672,7 +757,7 @@ it('the local catalog copies only immutable concrete audio metadata', async () =
       {kind:'audiooutput',deviceId:'communications',label:'Automatic'},
       {kind:'audioinput',deviceId:'',label:'Empty ID'},
       {kind:'videoinput',deviceId:'camera',label:'Unused camera'}];
-      [...document.querySelectorAll('button')].find(b=>b.textContent==='Find audio devices').click();fixture.finishCapture()`);
+      fixture.observe(fixture.call.controls.devices(),'explicitDiscovery');fixture.finishCapture()`);
     await browser.wait('fixture.call.devices.length===2');
     expect(
       await browser.js(
@@ -703,7 +788,7 @@ it('discovery started by an old panel can finish into the same owned call after 
     await browser.wait('!!window.fixture?.call && fixture.active===1');
     await audioControls(browser);
     await browser.js(
-      "fixture.deviceList=[{kind:'audioinput',deviceId:'pending-mic',label:'Pending microphone'}];[...document.querySelectorAll('button')].find(b=>b.textContent==='Find audio devices').click();fixture.toggle()",
+      "fixture.deviceList=[{kind:'audioinput',deviceId:'pending-mic',label:'Pending microphone'}];fixture.observe(fixture.call.controls.devices(),'explicitDiscovery');fixture.toggle()",
     );
     await browser.wait("!document.querySelector('.voice-panel')");
     await browser.js('fixture.toggle()');
@@ -729,7 +814,7 @@ it.each(['resolve', 'reject'] as const)(
       await audioControls(browser);
       await discoverAudio(browser);
       await browser.js(
-        "fixture.observe(fixture.call.controls.devices(),'oldDiscovery');fixture.oldCapture=fixture.capture;fixture.server=fixture.state('b');fixture.auth.refresh()",
+        "fixture.observe(fixture.call.controls.devices(),'oldDiscovery');fixture.oldCapture=fixture.capture;fixture.deviceList=[];fixture.server=fixture.state('b');fixture.auth.refresh()",
       );
       await browser.wait(
         "fixture.auth.state.csrfToken==='b' && fixture.oldDiscovery==='Voice session ended.' && !!fixture.call",
@@ -802,7 +887,7 @@ it.each(['logout', 'approval', 'unmount', 'recovery'] as const)(
       await browser.wait('!!window.fixture?.call && fixture.active===1');
       await audioControls(browser);
       await discoverAudio(browser);
-      await browser.js('fixture.previousControls=fixture.call.controls');
+      await browser.js('fixture.previousControls=fixture.call.controls;fixture.deviceList=[]');
       if (loss === 'unmount') {
         await browser.js('fixture.root.unmount()');
         expect(await browser.js('fixture.active')).toBe(0);
@@ -842,34 +927,35 @@ it.each(['logout', 'approval', 'unmount', 'recovery'] as const)(
 );
 
 it.each(['resolve', 'reject'] as const)(
-  'an older overlapping discovery %s cannot overwrite the latest catalog',
-  async (late) => {
+  'overlapping discovery coalesces one consent probe and reports its %s result',
+  async (outcome) => {
     await mountedFixture(async (browser) => {
       await browser.wait('!!window.fixture?.call && fixture.active===1');
       await browser.js(
-        "fixture.observe(fixture.call.controls.devices(),'oldDiscovery');fixture.oldCapture=fixture.capture;fixture.observe(fixture.call.controls.devices(),'latestDiscovery');fixture.deviceList=[{kind:'audioinput',deviceId:'latest',label:'Latest microphone'}];fixture.finishCapture()",
+        "fixture.observe(fixture.call.controls.devices(),'oldDiscovery');fixture.observe(fixture.call.controls.devices(),'latestDiscovery');fixture.deviceList=[{kind:'audioinput',deviceId:'latest',label:'Latest microphone'}]",
+      );
+      expect(await browser.js('fixture.captureCalls')).toBe(1);
+      await browser.js(
+        outcome === 'resolve'
+          ? 'fixture.finishCapture()'
+          : "fixture.capture.reject(Error('Synthetic discovery failure'))",
       );
       await browser.wait(
-        "fixture.latestDiscovery==='resolved' && fixture.call.devices[0]?.deviceId==='latest'",
+        "fixture.oldDiscovery==='resolved' && fixture.latestDiscovery==='resolved'",
       );
-      await browser.js(
-        "fixture.deviceList=[{kind:'audioinput',deviceId:'obsolete',label:'Obsolete microphone'}]",
-      );
-      await browser.js(
-        late === 'resolve'
-          ? 'fixture.finishCapture(fixture.oldCapture)'
-          : "fixture.oldCapture.reject(Error('Old discovery failed'))",
-      );
-      await browser.wait(
-        late === 'resolve'
-          ? "fixture.oldDiscovery==='resolved'"
-          : "fixture.oldDiscovery==='Old discovery failed'",
-      );
-      expect(
-        await browser.js(
-          "fixture.call.devices.length===1 && fixture.call.devices[0].deviceId==='latest' && fixture.captureCalls===2",
-        ),
-      ).toBe(true);
+      expect(await browser.js('fixture.captureCalls')).toBe(1);
+      if (outcome === 'resolve') {
+        expect(await browser.js('fixture.call.devices.map(device=>device.deviceId)')).toEqual([
+          'latest',
+        ]);
+        expect(await browser.js('fixture.stopped')).toBe(1);
+      } else {
+        expect(await browser.js('fixture.call.devices')).toEqual([]);
+        expect(await browser.js('fixture.call.voice.devicesError')).toContain(
+          'Synthetic discovery failure',
+        );
+        expect(await browser.js('fixture.call.voice.devicesStatus')).toBe('error');
+      }
       expect(await browser.js('fixture.errors')).toEqual([]);
     });
   },
@@ -881,7 +967,7 @@ it('failed explicit discovery keeps the previous catalog and reports the current
     await audioControls(browser);
     await discoverAudio(browser);
     await browser.js(
-      "fixture.previousCatalog=fixture.call.devices;[...document.querySelectorAll('button')].find(b=>b.textContent==='Find audio devices').click();fixture.capture.reject(Error('Synthetic current discovery failure'))",
+      "fixture.previousCatalog=fixture.call.devices;fixture.observe(fixture.call.controls.devices(),'explicitDiscovery');fixture.capture.reject(Error('Synthetic current discovery failure'))",
     );
     await browser.wait("document.body.textContent.includes('Synthetic current discovery failure')");
     expect(
@@ -1061,7 +1147,7 @@ it('owns one approved-session call across actual React mounts, logout, replaceme
     await browser.wait("!!document.querySelector('.voice-panel')");
     expect(await browser.js('fixture.created')).toBe(created);
     expect(await browser.js('Object.keys(fixture.call.controls).sort().join(",")')).toBe(
-      'deafen,devices,join,leave,mute,resumeAudio,selectInput,selectOutput,volume',
+      'deafen,devices,join,leave,mute,refreshDevices,resumeAudio,selectInput,selectOutput,setOutputVolume,volume',
     );
     expect(
       await browser.js(

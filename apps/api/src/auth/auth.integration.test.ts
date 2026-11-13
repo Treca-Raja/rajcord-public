@@ -141,8 +141,11 @@ describe('authentication on real PostgreSQL', () => {
         user.id,
       ])
     ).rows[0];
-    expect(row.password_hash).toMatch(/^\$argon2id\$v=19\$m=19456,p=1,t=2\$/);
+    expect(row.password_hash).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
     expect(await checkPassword(row.password_hash, secret)).toBe(true);
+    const legacyHash = row.password_hash.replace('$m=19456,t=2,p=1$', '$m=19456,p=1,t=2$');
+    expect(await checkPassword(legacyHash, secret)).toBe(true);
+    expect(await checkPassword(legacyHash, secret + '-wrong')).toBe(false);
     expect(row.password_hash).not.toContain(secret);
   });
   it('rejects case-insensitive duplicate usernames without altering the account', async () => {

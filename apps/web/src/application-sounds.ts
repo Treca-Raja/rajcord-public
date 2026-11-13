@@ -33,7 +33,7 @@ export class VoiceSoundTracker {
     this.synchronized = false;
     this.peers.clear();
   }
-  update(voice: VoiceState): SoundKind | undefined {
+  update(voice: Pick<VoiceState, 'status' | 'channelId' | 'participants'>): SoundKind | undefined {
     if (voice.status === 'idle') {
       const left = this.channel !== null;
       this.reset();
@@ -122,7 +122,7 @@ export class ApplicationSoundPlayer {
       this.stop();
     this.preferences = { ...preferences };
   }
-  updateVoice(voice: VoiceState) {
+  updateVoice(voice: Omit<VoiceState, 'devices'>) {
     if (
       this.output !== voice.output ||
       this.unavailable !== voice.outputMissing ||

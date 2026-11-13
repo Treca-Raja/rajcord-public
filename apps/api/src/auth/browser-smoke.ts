@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtemp, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -12,6 +12,7 @@ import { testDatabase } from '../db/test-database.js';
 import { AuthService } from './service.js';
 import { createApp } from '../app.js';
 import { voiceConfig } from '../voice/config.js';
+import { waitForBrowserPort } from './browser-startup.js';
 const origin = 'http://127.0.0.1:3003';
 const fixture = await testDatabase(),
   service = new AuthService(fixture.database.pool);
@@ -39,7 +40,7 @@ const giphyFixture = {
   ],
   pagination: { offset: 0, count: 1, total_count: 1 },
 };
-const app = createApp({
+const { app, io: serverIo } = createApp({
   gifSearch: {
     config: { giphyApiKey: 'fixture-public-giphy', tenorApiKey: 'fixture-private-tenor' },
     fetcher: async (input) => {
@@ -70,7 +71,12 @@ const app = createApp({
   allowedOrigins: [origin],
   rateLimits: false,
   staticRoot: fileURLToPath(new URL('../../../web/dist', import.meta.url)),
-}).app;
+});
+// Smoke-only gate for account changes that occur before notification subscription.
+let holdSocketConnections = false;
+serverIo.use((_socket, next) =>
+  next(holdSocketConnections ? new Error('Authentication unavailable.') : undefined),
+);
 const profile = await mkdtemp(path.join(tmpdir(), 'tricord-browser-smoke-'));
 const artifacts = fileURLToPath(new URL('../../../../artifacts/', import.meta.url));
 await mkdir(artifacts, { recursive: true });
@@ -110,7 +116,8 @@ async function js<T = unknown>(expression: string): Promise<T> {
     'Runtime.evaluate',
     { expression, returnByValue: true, awaitPromise: true, userGesture: true },
   );
-  if (result.exceptionDetails) throw new Error('Browser evaluation failed.');
+  if (result.exceptionDetails)
+    throw new Error('Browser evaluation failed: ' + JSON.stringify(result.exceptionDetails));
   return result.result.value;
 }
 async function tabJs<T = unknown>(sessionId: string, expression: string): Promise<T> {
@@ -200,23 +207,9 @@ try {
       '--user-data-dir=' + profile,
       'about:blank',
     ],
-    { windowsHide: true, stdio: 'ignore' },
+    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] },
   );
-  let launchError: Error | undefined;
-  child.on('error', (error) => {
-    launchError = error;
-  });
-  let port = '';
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (launchError) throw launchError;
-    try {
-      port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]!;
-      break;
-    } catch {
-      await delay(100);
-    }
-  }
-  assert.match(port, /^\d+$/);
+  const port = await waitForBrowserPort(child, profile);
   const pages = (await (await fetch('http://127.0.0.1:' + port + '/json/list')).json()) as {
     type: string;
     webSocketDebuggerUrl: string;
@@ -1224,6 +1217,130 @@ try {
     "[...document.querySelectorAll('.chat-composer-controls .emoji-picker-grid button')].find(button=>button.textContent==='🇭🇷').click()",
   );
   await wait("document.querySelector('textarea[name=message]').value==='🇭🇷'");
+  const emojiDraft = '😀 👍🏽 👩🏽‍💻 🇭🇷 ❤️‍🔥 🍉 1️⃣ 0123456789 # *';
+  async function screenshotComposer(name: string) {
+    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await wait(
+      "document.querySelector('.chat-composer-controls').getAnimations({subtree:true}).every(animation=>animation.playState!=='running')",
+    );
+    await screenshot(name);
+  }
+  await compose(emojiDraft);
+  await wait(
+    `[...document.querySelectorAll('.message-scroll .message-body')].some(body=>body.textContent===${JSON.stringify(emojiDraft)}&&body.querySelectorAll('.emoji-glyph').length===7)`,
+  );
+  await writeDraft(emojiDraft);
+  const emojiDifferences = await js<number[]>(`(async()=>{
+    const input=document.querySelector('textarea[name=message]');
+    await document.fonts.load('14px "Rajcord Composer Emoji"',input.value);
+    const family=getComputedStyle(input).fontFamily;
+    const textContext=document.createElement('canvas').getContext('2d');
+    textContext.font='14px '+family;
+    if([...'0123456789#*'].some(character=>textContext.measureText(character).width===0))
+      throw new Error('Composer text fonts must keep ordinary digits and punctuation visible');
+    const examples=[['😀','1f600'],['👍🏽','1f44d-1f3fd'],['👩🏽‍💻','1f469-1f3fd-200d-1f4bb'],['🇭🇷','1f1ed-1f1f7'],['❤️‍🔥','2764-fe0f-200d-1f525'],['🍉','1f349'],['1️⃣','31-20e3']];
+    function normalize(canvas){
+      const pixels=canvas.getContext('2d').getImageData(0,0,160,160).data;
+      let left=160,top=160,right=0,bottom=0;
+      for(let y=0;y<160;y++)for(let x=0;x<160;x++)if(pixels[(y*160+x)*4+3]>32){
+        left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);
+      }
+      const result=document.createElement('canvas');result.width=result.height=64;
+      const w=right-left+1,h=bottom-top+1,scale=60/Math.max(w,h);
+      result.getContext('2d').drawImage(canvas,left,top,w,h,(64-w*scale)/2,(64-h*scale)/2,w*scale,h*scale);
+      return result.getContext('2d').getImageData(0,0,64,64).data;
+    }
+    return Promise.all(examples.map(async([emoji,icon])=>{
+      const image=new Image();image.src='/emoji/17-b6b55fef/'+icon+'.svg';await image.decode();
+      const font=document.createElement('canvas'),svg=document.createElement('canvas');
+      font.width=font.height=svg.width=svg.height=160;
+      const context=font.getContext('2d');context.font='100px '+family;context.fillText(emoji,20,120);
+      const scale=100/Math.max(image.naturalWidth,image.naturalHeight);
+      const width=image.naturalWidth*scale,height=image.naturalHeight*scale;
+      svg.getContext('2d').drawImage(image,20+(100-width)/2,20+(100-height)/2,width,height);
+      const a=normalize(font),b=normalize(svg);let difference=0;
+      for(let i=0;i<a.length;i+=4){
+        for(let k=0;k<3;k++)difference+=Math.abs(a[i+k]*a[i+3]/255-b[i+k]*b[i+3]/255);
+        difference+=Math.abs(a[i+3]-b[i+3]);
+      }
+      return difference/(a.length*255);
+    }));
+  })()`);
+  assert.ok(
+    emojiDifferences.every((difference) => difference < 0.06),
+    'Composer emoji must match picker/sent SVG artwork: ' + JSON.stringify(emojiDifferences),
+  );
+  await openEmoji('.chat-composer-controls');
+  await wait("!!document.querySelector('.chat-composer-controls .emoji-picker-panel')");
+  await screenshotComposer('emoji-composer-consistent.png');
+  const emojiTheme = await js<string>('document.documentElement.dataset.appearance');
+  await js("document.documentElement.dataset.appearance='retro'");
+  await screenshotComposer('emoji-composer-retro.png');
+  await js(
+    "document.querySelector('textarea[name=message]').focus();document.querySelector('textarea[name=message]').setSelectionRange(0,2)",
+  );
+  await call('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 1,
+    mobile: true,
+  });
+  assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+  await wait(
+    "document.querySelector('textarea[name=message]').scrollHeight<=document.querySelector('textarea[name=message]').clientHeight",
+  );
+  await screenshotComposer('emoji-composer-mobile.png');
+  await call('Emulation.setDeviceMetricsOverride', {
+    width: 1360,
+    height: 880,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await js(`document.documentElement.dataset.appearance=${JSON.stringify(emojiTheme)}`);
+  await call('Input.insertText', { text: '🇭🇷' });
+  assert.equal(
+    await js("document.querySelector('textarea[name=message]').value"),
+    '🇭🇷' + emojiDraft.slice(2),
+  );
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'z',
+    code: 'KeyZ',
+    modifiers: 2,
+    windowsVirtualKeyCode: 90,
+    nativeVirtualKeyCode: 90,
+  });
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'z',
+    code: 'KeyZ',
+    modifiers: 2,
+    windowsVirtualKeyCode: 90,
+    nativeVirtualKeyCode: 90,
+  });
+  assert.equal(await js("document.querySelector('textarea[name=message]').value"), emojiDraft);
+  await js("document.querySelector('textarea[name=message]').setSelectionRange(0,0)");
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Enter',
+    code: 'Enter',
+    text: '\r',
+    modifiers: 8,
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+  });
+  await call('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Enter',
+    code: 'Enter',
+    modifiers: 8,
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+  });
+  assert.equal(
+    await js("document.querySelector('textarea[name=message]').value"),
+    '\n' + emojiDraft,
+  );
   await writeDraft('');
 
   await fixture.database.pool.query(
@@ -2051,7 +2168,15 @@ try {
   await click('Preview sound');
   await wait("document.querySelector('.sound-settings').innerText.includes('Choose speakers')");
   await js("document.querySelector('.voice-settings-toggle').click()");
-  await click('Find audio devices');
+  await wait(
+    "['ready','permission-needed'].includes(document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus)",
+  );
+  if (
+    await js(
+      "document.querySelector('[data-audio-devices-status]').dataset.audioDevicesStatus==='permission-needed'",
+    )
+  )
+    await click('Allow microphone access');
   await wait('document.querySelector(\'select[aria-label="Voice speakers"]\').options.length>1');
   await js(
     `(()=>{const s=document.querySelector('select[aria-label="Voice speakers"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
@@ -2319,6 +2444,32 @@ try {
   });
   await screenshot('auth-browser-mobile.png');
   assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+
+  // Force approval before any socket can receive account:changed. Connecting must resync.
+  holdSocketConnections = true;
+  const delayed = await service.register({
+    username: 'delayed_' + randomUUID().replaceAll('-', '').slice(0, 20),
+    displayName: 'Delayed approval member',
+    password: secret,
+  });
+  await fill({ username: delayed.username, password: secret });
+  await js("document.querySelector('form').requestSubmit()");
+  await wait("!!document.querySelector('[data-account-status=pending]')");
+  assert.equal(await js("fetch('/api/members').then(r=>r.status)"), 403);
+  assert.equal(serverIo.sockets.sockets.size, 0);
+  const delayedApproval = await app.inject({
+    url: '/api/admin/accounts/' + delayed.id,
+    method: 'POST',
+    headers: ownerHeaders,
+    payload: { action: 'approve' },
+  });
+  assert.equal(delayedApproval.statusCode, 200);
+  assert.equal(serverIo.sockets.sockets.size, 0);
+  assert.equal(await js("!!document.querySelector('[data-account-status=pending]')"), true);
+  holdSocketConnections = false;
+  await wait("!!document.querySelector('[data-connection=connected]')");
+  assert.equal(await js("fetch('/api/members').then(r=>r.status)"), 200);
+
   await writeFile(
     path.join(artifacts, 'auth-browser.json'),
     JSON.stringify(
@@ -2341,6 +2492,7 @@ try {
           'stale metadata edits preserve unsaved input',
           'archive, restore and reload persistence',
           'channel dialog keyboard focus and narrow layout',
+          'approval before socket subscription recovers on connect',
         ],
         profile,
       },
