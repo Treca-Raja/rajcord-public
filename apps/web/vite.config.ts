@@ -10,6 +10,7 @@ const fontLicenses = [
   'Inter — @fontsource-variable/inter',
   readFileSync(require.resolve('@fontsource-variable/inter/LICENSE'), 'utf8'),
   'Twemoji graphics — Twitter, Inc. and contributors — CC BY 4.0',
+  'Rajcord Composer Emoji — color font derived from the same Twemoji SVG artwork; built with scripts/build-composer-emoji.py',
   'https://github.com/jdecked/twemoji — Unicode 17 supplement pinned to b6b55fef1e8636b540a6d016a4729ca8cdf2e60b',
   readFileSync(
     fileURLToPath(new URL('./src/assets/twemoji-graphics-license.txt', import.meta.url)),
