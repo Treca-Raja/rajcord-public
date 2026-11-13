@@ -10,6 +10,7 @@ import type {
   ScreenAck,
   ScreenBinding,
   ScreenShare,
+  ScreenPublishGrant,
   ScreenLinkGrant,
   ScreenDirectory,
   ScreenSignalNotice,
@@ -33,6 +34,42 @@ let owner: Person,
   otherChannel: string;
 let address: string;
 const sockets: Socket[] = [];
+it('requires main capture to correlate the same session and current connected screen epoch', async () => {
+  const p = await socketBind(publisher),
+    v = await socketBind(viewer);
+  const requestId = randomUUID();
+  const prepare = (epoch: string) =>
+    server.app.inject({
+      method: 'POST',
+      url: '/api/screen/capture/prepare',
+      headers: {
+        origin,
+        cookie: 'tricord_session=' + publisher.token,
+        'x-csrf-token': publisher.csrf,
+      },
+      payload: { requestId, epoch, sound: 'none' },
+    });
+  expect((await prepare(v.binding.epoch)).statusCode).toBe(403);
+  const response = await prepare(p.binding.epoch);
+  expect(response.statusCode).toBe(200);
+  const grant = response.json();
+  expect(Object.keys(grant).sort()).toEqual(['id', 'remainingMs']);
+  p.socket.disconnect();
+  await vi.waitFor(async () => {
+    const checked = await server.app.inject({
+      method: 'POST',
+      url: '/api/screen/capture/consume',
+      headers: {
+        origin,
+        cookie: 'tricord_session=' + publisher.token,
+        'x-csrf-token': publisher.csrf,
+      },
+      payload: { id: grant.id },
+    });
+    expect(checked.statusCode).toBe(403);
+  });
+  expect(server.voice!.leases.get(publisher.id)?.id).toBe(p.lease.id);
+});
 async function open(person: Person) {
   const socket = connect(address, {
     transports: ['websocket'],
@@ -50,6 +87,7 @@ async function open(person: Person) {
 async function command<T>(socket: Socket, event: string, data: unknown): Promise<T> {
   const result: ScreenAck<T> = await socket.timeout(3000).emitWithAck(event, data);
   if (!result.ok) throw new Error(result.code + ': ' + result.error);
+  if (event === 'screen:publish') return (result.data as ScreenPublishGrant).share as T;
   return result.data;
 }
 async function socketBind(person: Person, channelId = channel) {
@@ -59,7 +97,7 @@ async function socketBind(person: Person, channelId = channel) {
     socket.once('screen:directory', resolve),
   );
   const binding = await command<ScreenBinding>(socket, 'screen:bind', {
-    version: 1,
+    version: 2,
     leaseId: lease.id,
     requestId: randomUUID(),
   });
@@ -146,7 +184,7 @@ async function bind(person: Person, channelId = channel) {
   const lease = await server.voice!.join(person.token, { channelId });
   const context = caller(person);
   const binding = await server.screen!.bind(context, {
-    version: 1,
+    version: 2,
     leaseId: lease.id,
     requestId: randomUUID(),
   });
@@ -155,7 +193,7 @@ async function bind(person: Person, channelId = channel) {
 async function linked() {
   const p = await bind(publisher),
     v = await bind(viewer);
-  const share = await server.screen!.publish(p.context, {
+  const { share } = await server.screen!.publish(p.context, {
     epoch: p.binding.epoch,
     requestId: randomUUID(),
     sourceGeneration: 1,
@@ -227,7 +265,7 @@ afterAll(async () => {
 
 it('binds real approved sessions and rejects pending, other-account and other-session credentials', async () => {
   const p = await bind(publisher);
-  const request = { version: 1, leaseId: p.lease.id, requestId: randomUUID() };
+  const request = { version: 2, leaseId: p.lease.id, requestId: randomUUID() };
   await expect(server.screen!.bind(caller(pending), request)).rejects.toMatchObject({
     statusCode: 403,
   });
@@ -433,7 +471,7 @@ it.each(['epoch', 'lease', 'session'] as const)(
       } else lease = await server.voice!.join(f.viewer.token, { channelId: channel });
     }
     const binding = await command<ScreenBinding>(socket, 'screen:bind', {
-      version: 1,
+      version: 2,
       leaseId: lease.id,
       requestId: randomUUID(),
     });
@@ -497,7 +535,7 @@ it('rejects malformed, oversized and caller-injected packets without affecting a
         type: 'ice',
         candidate: {
           ...screenIce,
-          candidate: screenIce.candidate.replace('typ host', 'typ relay'),
+          candidate: screenIce.candidate.replace('typ host', 'typ invalid'),
         },
       },
     },
@@ -593,7 +631,10 @@ it('handles ten authenticated clients and 1280 direct-candidate relays with prod
     ...(await Promise.all(Array.from({ length: 8 }, (_, i) => login('screen_burst_' + i)))),
   ];
   const clients = [];
-  for (const person of people) clients.push(await socketBind(person));
+  for (const person of people) {
+    await open(person); // Main application socket remains independent of its screen transport.
+    clients.push(await socketBind(person));
+  }
   const shares: ScreenShare[] = [];
   for (const client of clients)
     shares.push(
@@ -693,7 +734,7 @@ it('fences old socket epochs after rebind and stops relay immediately at lease e
   await vi.waitFor(() => expect(server.io.sockets.sockets.has(oldId)).toBe(false));
   const replacement = await open(viewer);
   const binding = await command<ScreenBinding>(replacement, 'screen:bind', {
-    version: 1,
+    version: 2,
     leaseId: v.lease.id,
     requestId: randomUUID(),
   });
@@ -747,7 +788,7 @@ it('sends a fresh directory when the same socket obtains a new epoch without dir
     p.socket.once('screen:directory', resolve),
   );
   const binding = await command<ScreenBinding>(p.socket, 'screen:bind', {
-    version: 1,
+    version: 2,
     leaseId: p.lease.id,
     requestId: randomUUID(),
   });

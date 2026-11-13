@@ -1,5 +1,13 @@
+import {
+  SCREEN_RESOLUTIONS,
+  SCREEN_FRAME_RATES,
+  screenQualityCeiling,
+  type ScreenResolution,
+  type ScreenFrameRate,
+} from '@tricord/shared';
+
 export type WebCaptureDevices = Pick<MediaDevices, 'getDisplayMedia'>;
-export type CaptureSound = 'none' | 'tab';
+export type CaptureSound = 'none' | 'tab' | 'system';
 export type CaptureEnd =
   'stopped' | 'cancelled' | 'disposed' | 'video-ended' | 'audio-ended' | 'stream-changed';
 export type CaptureErrorCode =
@@ -35,7 +43,7 @@ export type LocalScreenCapture = Readonly<{
   dispose: () => void;
 }>;
 type DisplayOptions = DisplayMediaStreamOptions & {
-  systemAudio: 'exclude';
+  systemAudio: 'exclude' | 'include';
   windowAudio: 'exclude';
   selfBrowserSurface: 'exclude';
   surfaceSwitching: 'exclude';
@@ -48,29 +56,49 @@ export class WebScreenCapture {
   private disposed = false;
   private readonly timeoutMs: number;
   // Runtime qualification policy is separate from the user's per-capture sound consent.
-  private readonly tabAudio: 'unqualified' | 'qualified-selected-tab';
+  private readonly tabAudio: 'unqualified' | 'qualified-selected-tab' | 'consented-selected-tab';
+  private readonly desktop: boolean;
   constructor(
     private readonly devices: WebCaptureDevices | undefined,
-    options: { timeoutMs?: number; tabAudio?: 'unqualified' | 'qualified-selected-tab' } = {},
+    options: {
+      timeoutMs?: number;
+      tabAudio?: 'unqualified' | 'qualified-selected-tab' | 'consented-selected-tab';
+      desktop?: boolean;
+    } = {},
   ) {
     this.timeoutMs = options.timeoutMs ?? 60000;
     this.tabAudio = options.tabAudio ?? 'unqualified';
+    this.desktop = options.desktop === true;
     if (
       !Number.isSafeInteger(this.timeoutMs) ||
       this.timeoutMs < 1 ||
       this.timeoutMs > 2147483647 ||
-      !['unqualified', 'qualified-selected-tab'].includes(this.tabAudio)
+      !['unqualified', 'qualified-selected-tab', 'consented-selected-tab'].includes(this.tabAudio)
     )
       throw new ScreenCaptureError('invalid', 'Invalid screen capture policy.');
   }
-  start(request: { sound: CaptureSound; signal?: AbortSignal }): Promise<LocalScreenCapture> {
+  start(request: {
+    sound: CaptureSound;
+    signal?: AbortSignal;
+    resolution?: ScreenResolution;
+    frameRate?: ScreenFrameRate;
+  }): Promise<LocalScreenCapture> {
     if (this.disposed)
       return Promise.reject(new ScreenCaptureError('disposed', 'Screen capture was disposed.'));
-    if (!request || !['none', 'tab'].includes(request.sound))
+    if (!request || !(this.desktop ? ['none', 'system'] : ['none', 'tab']).includes(request.sound))
       return Promise.reject(
         new ScreenCaptureError('invalid', 'Choose source sound or video only explicitly.'),
       );
     const { sound, signal } = request;
+    const explicit = request.resolution !== undefined || request.frameRate !== undefined;
+    if (
+      explicit &&
+      (!(SCREEN_RESOLUTIONS as readonly unknown[]).includes(request.resolution) ||
+        !(SCREEN_FRAME_RATES as readonly unknown[]).includes(request.frameRate))
+    )
+      return Promise.reject(
+        new ScreenCaptureError('invalid', 'Choose a supported resolution and frame rate.'),
+      );
     if (signal?.aborted)
       return Promise.reject(new ScreenCaptureError('cancelled', 'Screen capture was cancelled.'));
     if (this.current || this.pickerPending)
@@ -84,7 +112,7 @@ export class WebScreenCapture {
       return Promise.reject(
         new ScreenCaptureError('unsupported', 'Display capture is unavailable.'),
       );
-    if (sound === 'tab' && this.tabAudio !== 'qualified-selected-tab')
+    if (sound === 'tab' && this.tabAudio === 'unqualified')
       return Promise.reject(
         new ScreenCaptureError(
           'unsupported',
@@ -143,9 +171,20 @@ export class WebScreenCapture {
     );
     signal?.addEventListener('abort', abort, { once: true });
     const options: DisplayOptions = {
-      video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60, max: 60 } },
-      audio: sound === 'tab',
-      systemAudio: 'exclude',
+      video: (() => {
+        const ceiling = screenQualityCeiling({
+          profile: 'smooth',
+          videoBitrate: null,
+          ...(explicit ? { resolution: request.resolution, frameRate: request.frameRate } : {}),
+        });
+        return {
+          width: { ideal: ceiling.width },
+          height: { ideal: ceiling.height },
+          frameRate: { ideal: ceiling.frameRate, max: ceiling.frameRate },
+        };
+      })(),
+      audio: sound !== 'none',
+      systemAudio: sound === 'system' ? 'include' : 'exclude',
       windowAudio: 'exclude',
       selfBrowserSurface: 'exclude',
       surfaceSwitching: 'exclude',
@@ -201,7 +240,7 @@ export class WebScreenCapture {
               'invalid_tracks',
               'Unexpected source sound was returned for video-only capture.',
             );
-          if (sound === 'tab' && !audio)
+          if (sound !== 'none' && !audio)
             throw new ScreenCaptureError(
               'missing_sound',
               'No source sound was provided. Choose another source or explicitly share video only.',
@@ -210,6 +249,11 @@ export class WebScreenCapture {
             throw new ScreenCaptureError(
               'unsupported',
               'Tab sound requires a supported browser-tab source.',
+            );
+          if (sound === 'system' && displaySurface !== 'monitor')
+            throw new ScreenCaptureError(
+              'unsupported',
+              'System sound requires a selected display.',
             );
           const listen = (target: EventTarget, event: string, handler: () => void) => {
             target.addEventListener(event, handler);

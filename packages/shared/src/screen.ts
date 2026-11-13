@@ -1,4 +1,8 @@
-export const SCREEN_PROTOCOL_VERSION = 1;
+export const SCREEN_PROTOCOL_VERSION = 2;
+export const SCREEN_RESOLUTIONS = [480, 720, 1080] as const;
+export const SCREEN_FRAME_RATES = [15, 30, 60] as const;
+export type ScreenResolution = (typeof SCREEN_RESOLUTIONS)[number];
+export type ScreenFrameRate = (typeof SCREEN_FRAME_RATES)[number];
 export const SCREEN_PROFILES = ['low', 'auto', 'high', 'smooth', 'ultra'] as const;
 export type ScreenProfile = (typeof SCREEN_PROFILES)[number];
 // Experimental manual ceilings; these are not qualified performance defaults.
@@ -7,7 +11,28 @@ export const SCREEN_VIDEO_BITRATES = [
 ] as const;
 export type ScreenVideoBitrate = (typeof SCREEN_VIDEO_BITRATES)[number] | null;
 export type ScreenSound = 'none' | 'tab' | 'system';
-export type ScreenQuality = { profile: ScreenProfile; videoBitrate: ScreenVideoBitrate };
+export type ScreenQuality = {
+  profile: ScreenProfile;
+  videoBitrate: ScreenVideoBitrate;
+  resolution?: ScreenResolution;
+  frameRate?: ScreenFrameRate;
+};
+export function screenQualityCeiling(quality: Readonly<ScreenQuality>) {
+  const presets = {
+    low: { width: 854, height: 480, frameRate: 15 },
+    auto: { width: 1280, height: 720, frameRate: 30 },
+    high: { width: 1920, height: 1080, frameRate: 30 },
+    smooth: { width: 1920, height: 1080, frameRate: 60 },
+    ultra: { width: 3840, height: 2160, frameRate: 60 },
+  } as const;
+  if (quality.resolution !== undefined && quality.frameRate !== undefined)
+    return {
+      width: { 480: 854, 720: 1280, 1080: 1920 }[quality.resolution],
+      height: quality.resolution,
+      frameRate: quality.frameRate,
+    };
+  return presets[quality.profile];
+}
 export type ScreenErrorCode =
   'not_authorized' | 'stale' | 'capacity' | 'invalid' | 'throttled' | 'unavailable';
 export type ScreenAck<T> =
@@ -19,7 +44,13 @@ export type ScreenBindRequest = {
   leaseId: string;
   requestId: string;
 };
-export type ScreenBinding = { epoch: string; channelId: string; remainingMs: number };
+export type ScreenIceServer = { urls: string[]; username?: string; credential?: string };
+export type ScreenBinding = {
+  epoch: string;
+  channelId: string;
+  remainingMs: number;
+  iceServers?: ScreenIceServer[];
+};
 export type ScreenPublishRequest = ScreenBoundRequest &
   ScreenQuality & { requestId: string; sourceGeneration: number; sound: ScreenSound };
 export type ScreenShare = ScreenQuality & {
@@ -28,6 +59,7 @@ export type ScreenShare = ScreenQuality & {
   sourceGeneration: number;
   sound: ScreenSound;
 };
+export type ScreenPublishGrant = { share: ScreenShare; remainingMs: number };
 export type ScreenStopRequest = ScreenBoundRequest & { shareId: string };
 export type ScreenSelectRequest = ScreenBoundRequest &
   ScreenQuality & { requestId: string; revision: number; shareId: string | null };
@@ -43,7 +75,12 @@ export type ScreenLink = {
 };
 export type ScreenLinkGrant = { link: ScreenLink; remainingMs: number };
 export type ScreenRenewRequest = ScreenBoundRequest & { requestId: string; revision: number };
-export type ScreenRenewal = { remainingMs: number; links: ScreenLinkGrant[] };
+export type ScreenRenewal = {
+  iceServers?: ScreenIceServer[];
+  remainingMs: number;
+  links: ScreenLinkGrant[];
+  publication: ScreenPublishGrant | null;
+};
 export type ScreenLinkRequest = ScreenBoundRequest & { linkId: string };
 export type ScreenIce = {
   candidate: string;
@@ -76,7 +113,7 @@ export interface ScreenClientEvents {
   'screen:bind': (data: ScreenBindRequest, ack: (result: ScreenAck<ScreenBinding>) => void) => void;
   'screen:publish': (
     data: ScreenPublishRequest,
-    ack: (result: ScreenAck<ScreenShare>) => void,
+    ack: (result: ScreenAck<ScreenPublishGrant>) => void,
   ) => void;
   'screen:stop': (
     data: ScreenStopRequest,

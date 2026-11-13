@@ -4,6 +4,7 @@ import { ScreenPeer, type ScreenRtcPeer, type ScreenPeerLifecycle } from './scre
 import type { ScreenAck, ScreenSignal, ScreenSound } from '@tricord/shared';
 import { signal as serverSignal } from '../../api/src/screen/signaling';
 import { screenSdp, screenIce } from '../../api/src/screen/signaling-fixture';
+import { publicScreenIceServers } from './screen-ice';
 
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (error: unknown) => void;
@@ -101,6 +102,35 @@ const flush = async () => {
   for (let i = 0; i < 80; i++) await Promise.resolve();
 };
 const ack = (): ScreenAck<{ delivered: true }> => ({ ok: true, data: { delivered: true } });
+it('applies selected initial video ceilings before an offer can send media', () => {
+  const quality = { profile: 'smooth', resolution: 720, frameRate: 60, videoBitrate: 4000000 };
+  const f = fixture('publisher', 'none', (options) => {
+    options.initialVideoQuality = {
+      revision: 1,
+      publisher: quality,
+      viewer: { ...quality, frameRate: 30, videoBitrate: 2000000 },
+    };
+  });
+  expect(f.rtc.addTransceiver).toHaveBeenCalledWith(f.video.media, {
+    direction: 'sendonly',
+    sendEncodings: [{ maxBitrate: 2000000, maxFramerate: 30, scaleResolutionDownBy: 1.5 }],
+  });
+});
+it('uses only the explicitly supplied screen STUN policy and validates native readback', () => {
+  const f = fixture('viewer', 'none', (options) => {
+    options.iceServers = publicScreenIceServers;
+  });
+  expect(f.rtc.config.iceServers).toEqual([{ urls: ['stun:stun.cloudflare.com:3478'] }]);
+  expect(f.rtc.config.iceTransportPolicy).toBe('all');
+  const create = vi.fn();
+  expect(() =>
+    fixture('viewer', 'none', (options) => {
+      options.iceServers = [{ urls: 'turn:relay.example:3478' }];
+      options.createPeer = create;
+    }),
+  ).toThrow('credentials');
+  expect(create).not.toHaveBeenCalled();
+});
 function fixture(
   role: 'publisher' | 'viewer' = 'publisher',
   sound: ScreenSound = 'none',
@@ -448,7 +478,7 @@ it('bounds 128 remote candidates and pending work while RTC delivery is stalled'
 });
 
 it.each([
-  'relay',
+  'invalid-type',
   'oversize',
   'wrong-ufrag',
   'wrong-mid',
@@ -461,10 +491,13 @@ it.each([
   const f = fixture();
   await f.peer.offer();
   const value = f.message({ type: 'answer', sdp: screenSdp('answer', false) });
-  if (mutation === 'relay')
+  if (mutation === 'invalid-type')
     value.payload = {
       type: 'ice',
-      candidate: { ...screenIce, candidate: screenIce.candidate.replace('typ host', 'typ relay') },
+      candidate: {
+        ...screenIce,
+        candidate: screenIce.candidate.replace('typ host', 'typ invalid'),
+      },
     };
   else if (mutation === 'oversize') value.payload = { type: 'answer', sdp: 'x'.repeat(12289) };
   else if (mutation === 'cross-link') value.linkId = randomUUID();
@@ -658,7 +691,7 @@ it('rejects a local relay-bearing description and remote answer with different m
     type: 'offer',
     sdp: screenSdp('offer', false).replace(
       'a=mid:0',
-      'a=mid:0\r\na=' + screenIce.candidate.replace('typ host', 'typ relay'),
+      'a=mid:0\r\na=' + screenIce.candidate.replace('typ host', 'typ invalid'),
     ),
   });
   await expect(f.peer.offer()).rejects.toThrow();

@@ -1,4 +1,5 @@
 import type { ScreenPeerLifecycle } from './screen-peer';
+import { adoptScreenRenewal, type ScreenRenewalPermit } from './screen-renewal';
 
 export type ScreenPlaybackElement = Pick<
   HTMLVideoElement,
@@ -81,6 +82,7 @@ const failure = (code: Code, message: string, cause?: unknown) =>
 export class ScreenPlaybackOwner {
   private readonly generation: object;
   private deadline: number;
+  private renewalRevision = 0;
   private expiry?: ReturnType<typeof setTimeout>;
   private readonly now: () => number;
   private readonly timeout: number;
@@ -195,6 +197,16 @@ export class ScreenPlaybackOwner {
         throw cause;
       });
     }
+  }
+  adoptRenewal(permit: ScreenRenewalPermit) {
+    this.check();
+    adoptScreenRenewal(permit, this.generation, this.deadline, this.renewalRevision, this.now());
+    const current = this.options.lifecycle.inspect();
+    if (!current || current.generation !== this.generation || current.deadline < permit.deadline)
+      throw failure('lifecycle-lost', 'Playback renewal lifecycle mismatch.');
+    this.deadline = permit.deadline;
+    this.renewalRevision = permit.revision;
+    this.check();
   }
   private update(patch: Partial<ScreenPlaybackState>) {
     this.state = Object.freeze({ ...this.state, ...patch, pendingNative: !!this.native });

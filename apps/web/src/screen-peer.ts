@@ -20,6 +20,8 @@ import {
   type ScreenVideoApplied,
   type ScreenVideoSender,
 } from './screen-quality';
+import { screenIceServers, sameScreenIceServers } from './screen-ice';
+import { adoptScreenRenewal, type ScreenRenewalPermit } from './screen-renewal';
 
 // A local revocation/deadline seam, never a bearer grant. The signaling transport must
 // authenticate and freshly authorize both endpoints on the server for every delivery.
@@ -61,6 +63,7 @@ export class ScreenPeer {
   private readonly generation: object;
   private readonly now: () => number;
   private deadline: number;
+  private renewalRevision = 0;
   private expiry?: ReturnType<typeof setTimeout>;
   private negotiation?: ReturnType<typeof setTimeout>;
   private closed?: Error;
@@ -97,6 +100,8 @@ export class ScreenPeer {
       onTrack(track: MediaStreamTrack): void;
       onError(error: Error): void;
       now?: () => number;
+      iceServers?: readonly RTCIceServer[];
+      initialVideoQuality?: unknown;
     },
   ) {
     options = this.options = {
@@ -147,8 +152,17 @@ export class ScreenPeer {
         if (track.readyState !== 'live' || !track.enabled) throw failure('source ended.');
       });
     } else if (options.source) throw failure('viewer cannot send capture.');
+    const initialVideo =
+      options.initialVideoQuality === undefined
+        ? undefined
+        : this.source
+          ? screenVideoPlan(options.initialVideoQuality, this.source.video.getSettings())
+          : (() => {
+              throw failure('only a publisher can set initial video quality.');
+            })();
+    const iceServers = screenIceServers(options.iceServers);
     this.peer = options.createPeer({
-      iceServers: [],
+      iceServers: structuredClone(iceServers),
       iceTransportPolicy: 'all',
       bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
@@ -159,11 +173,11 @@ export class ScreenPeer {
     try {
       const config = this.peer.getConfiguration();
       if (
-        config.iceServers?.length ||
+        !sameScreenIceServers(config.iceServers ?? [], iceServers) ||
         config.iceTransportPolicy === 'relay' ||
         config.iceCandidatePoolSize
       )
-        throw failure('external ICE/relay configuration is unavailable.');
+        throw failure('unexpected ICE/relay configuration.');
       if (this.peer.connectionState !== 'new' || this.peer.getTransceivers().length)
         throw failure('a fresh empty peer is required.');
       this.listen(this.peer, 'icecandidate', (event) =>
@@ -182,7 +196,12 @@ export class ScreenPeer {
       });
       for (const track of this.sourceTracks()) {
         this.listen(track, 'ended', () => this.close(failure('source ended.')));
-        const transceiver = this.peer.addTransceiver(track, { direction: 'sendonly' });
+        const transceiver = this.peer.addTransceiver(track, {
+          direction: 'sendonly',
+          ...(track === this.source?.video && initialVideo
+            ? { sendEncodings: [initialVideo.encoding] }
+            : {}),
+        });
         if (track === this.source?.video) this.videoSender = transceiver?.sender;
       }
       const unsubscribe = options.lifecycle.onInvalidated(() =>
@@ -623,6 +642,16 @@ export class ScreenPeer {
       }
     }
     return Object.freeze({ phase: this.phase, revision: this.revision });
+  }
+  adoptRenewal(permit: ScreenRenewalPermit) {
+    this.check();
+    adoptScreenRenewal(permit, this.generation, this.deadline, this.renewalRevision, this.now());
+    const current = this.options.lifecycle.inspect();
+    if (!current || current.generation !== this.generation || current.deadline < permit.deadline)
+      throw failure('renewal lifecycle mismatch.');
+    this.deadline = permit.deadline;
+    this.renewalRevision = permit.revision;
+    this.check();
   }
   private report(error: Error) {
     try {

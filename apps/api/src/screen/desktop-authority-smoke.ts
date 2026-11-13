@@ -32,6 +32,7 @@ try {
   let server: ReturnType<typeof createApp> | undefined;
   let userId = '',
     index = 0;
+  let screenEpoch = '';
   type Gate = {
     stage: 'before' | 'after';
     entered: boolean;
@@ -160,6 +161,51 @@ try {
     }
     if (action === 'state') return { consumes };
     const lease = server.voice!.leases.get(userId);
+    if (action === 'bind-screen') {
+      assert.ok(lease);
+      const ownedServer = server;
+      const binding = await server.screen!.bind(
+        {
+          token: lease.token,
+          transportId: 'native-authority-fixture-' + index,
+          isConnected: () => server === ownedServer,
+        },
+        { version: 2, leaseId: lease.id, requestId: randomUUID() },
+      );
+      screenEpoch = binding.epoch;
+      return binding;
+    }
+    if (action === 'publish-screen') {
+      assert.ok(lease && screenEpoch);
+      const ownedServer = server;
+      return server.screen!.publish(
+        {
+          token: lease.token,
+          transportId: 'native-authority-fixture-' + index,
+          isConnected: () => server === ownedServer,
+        },
+        {
+          epoch: screenEpoch,
+          requestId: randomUUID(),
+          sourceGeneration: 1,
+          sound: 'none',
+          profile: 'smooth',
+          resolution: 720,
+          frameRate: 60,
+          videoBitrate: 4000000,
+        },
+      );
+    }
+    if (action === 'preview-lease') {
+      assert.ok(lease);
+      lease.expires = Date.now() + 5000;
+      return {};
+    }
+    if (action === 'renew-voice') {
+      assert.ok(lease);
+      await server.voice!.heartbeat(lease.token, { leaseId: lease.id });
+      return {};
+    }
     if (action === 'csrf') {
       await database.database.pool.query('UPDATE sessions SET csrf_token=$1 WHERE user_id=$2', [
         randomUUID().replaceAll('-', '').repeat(2),

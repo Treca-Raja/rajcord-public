@@ -4,10 +4,21 @@ import { useAuth } from './Auth';
 import { useCall, type VoiceControls } from './CallProvider';
 import { concreteDevices, type VoiceChannel } from './voice-controller';
 import './voice.css';
-export function VoicePanel() {
+import { ScreenLauncher } from './ScreenPanel';
+export function VoicePanel({
+  onChannels,
+  requestedChannel,
+}: {
+  onChannels?: (channels: VoiceChannel[]) => void;
+  requestedChannel?: { id: string; version: number } | null;
+}) {
   const { request, state: auth } = useAuth();
   const ref = useRef(request);
   ref.current = request;
+  const notifyChannels = useRef(onChannels);
+  notifyChannels.current = onChannels;
+  const loaded = useRef(false),
+    handledReference = useRef(0);
   const call = useCall();
   const controlsRef = useRef(call?.controls);
   controlsRef.current = call?.controls;
@@ -22,7 +33,11 @@ export function VoicePanel() {
     const reload = async () => {
       try {
         const data = await ref.current<{ channels: VoiceChannel[] }>('/voice/channels');
-        if (live) setChannels(data.channels);
+        if (live) {
+          loaded.current = true;
+          setChannels(data.channels);
+          notifyChannels.current?.(data.channels);
+        }
       } catch (error) {
         if (live) setError((error as Error).message);
       }
@@ -34,6 +49,32 @@ export function VoicePanel() {
       clearInterval(timer);
     };
   }, []);
+  useEffect(() => {
+    if (
+      !requestedChannel ||
+      !loaded.current ||
+      handledReference.current === requestedChannel.version
+    )
+      return;
+    handledReference.current = requestedChannel.version;
+    if (!channels.some((channel) => channel.id === requestedChannel.id)) {
+      setError('That voice channel is no longer available.');
+      return;
+    }
+    setExpanded(true);
+    requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLButtonElement>(
+        '.voice-panel [data-voice-channel-id="' + requestedChannel.id + '"]',
+      );
+      target?.scrollIntoView({
+        block: 'nearest',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ? 'instant'
+          : 'smooth',
+      });
+      target?.focus({ preventScroll: true });
+    });
+  }, [requestedChannel, channels]);
   async function action(work: (controller: VoiceControls) => Promise<unknown>) {
     const controller = call?.controls;
     if (!controller) return;
@@ -62,9 +103,9 @@ export function VoicePanel() {
               const name = window.prompt('Voice channel name');
               if (!name) return;
               await ref.current('/voice/channels', 'POST', { name });
-              setChannels(
-                (await ref.current<{ channels: VoiceChannel[] }>('/voice/channels')).channels,
-              );
+              const data = await ref.current<{ channels: VoiceChannel[] }>('/voice/channels');
+              setChannels(data.channels);
+              notifyChannels.current?.(data.channels);
             })
           }
         >
@@ -75,7 +116,12 @@ export function VoicePanel() {
         {channels.map((channel) => (
           <button
             key={channel.id}
-            className={voice?.channelId === channel.id ? 'selected' : ''}
+            data-voice-channel-id={channel.id}
+            className={
+              voice?.channelId === channel.id || requestedChannel?.id === channel.id
+                ? 'selected'
+                : ''
+            }
             onClick={() => {
               setExpanded(true);
             }}
@@ -89,6 +135,7 @@ export function VoicePanel() {
       <button className="voice-settings-toggle" onClick={() => setExpanded(!expanded)}>
         {voice?.status === 'idle' ? 'Set up voice' : (voice?.status ?? 'Voice')} · Audio controls
       </button>
+      <ScreenLauncher />
       {expanded && voice && (
         <div className="voice-controls">
           <p className="voice-help">Choose your devices. You join muted.</p>

@@ -16,6 +16,7 @@ for (const file of [
   '/dist/native-capture.js',
   '/dist/capture-authority.js',
   '/dist/capture-authority-http.js',
+  '/dist/screen-ipc.js',
   '/dist/picker/picker.html',
   '/dist/picker/picker.css',
   '/dist/picker/picker.js',

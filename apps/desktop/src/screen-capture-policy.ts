@@ -47,7 +47,7 @@ type Dependencies<T extends CaptureSource> = {
       | 'callback_failed'
       | 'context_failed',
   ) => void;
-  systemAudio?: 'unqualified' | 'qualified-windows-loopback';
+  systemAudio?: 'unqualified' | 'qualified-windows-loopback' | 'consented-windows-loopback';
   timeoutMs?: number;
   now?: () => number;
 };
@@ -115,7 +115,9 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
       !Number.isSafeInteger(this.timeout) ||
       this.timeout < 1 ||
       this.timeout > 2147483647 ||
-      !['unqualified', 'qualified-windows-loopback'].includes(deps.systemAudio ?? 'unqualified')
+      !['unqualified', 'qualified-windows-loopback', 'consented-windows-loopback'].includes(
+        deps.systemAudio ?? 'unqualified',
+      )
     )
       throw new Error('Invalid desktop capture policy.');
   }
@@ -217,7 +219,9 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
   private sounds(p: Pending<T>, source: T): ('none' | 'system')[] {
     return p.audio &&
       source.id.startsWith('screen:') &&
-      this.deps.systemAudio === 'qualified-windows-loopback'
+      ['qualified-windows-loopback', 'consented-windows-loopback'].includes(
+        this.deps.systemAudio ?? 'unqualified',
+      )
       ? ['none', 'system']
       : ['none'];
   }

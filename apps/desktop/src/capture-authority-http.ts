@@ -79,7 +79,17 @@ export function sessionCaptureTransport(
     throw new Error('Invalid capture authority origin.');
   let csrf: string | undefined;
   return async (operation, body, signal) => {
-    if (!['prepare', 'check', 'consume', 'cancel'].includes(operation))
+    if (
+      ![
+        'prepare',
+        'check',
+        'consume',
+        'cancel',
+        'handoff',
+        'publication-check',
+        'publication-cancel',
+      ].includes(operation)
+    )
       throw new Error('Invalid capture authority operation.');
     if (operation === 'prepare') {
       csrf = undefined;
@@ -156,6 +166,8 @@ export function createSessionCaptureAuthority(options: {
   shutdown?.on('will-quit', dispose);
   return Object.freeze({
     prepare: authority.prepare.bind(authority),
+    handoff: authority.handoff.bind(authority),
+    inspectPublication: authority.inspectPublication.bind(authority),
     inspect: authority.inspect.bind(authority),
     verify: authority.verify.bind(authority),
     onInvalidated: authority.onInvalidated.bind(authority),

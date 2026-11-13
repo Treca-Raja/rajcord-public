@@ -173,6 +173,7 @@ try {
     remember: true,
   });
   assert.equal(login.status, 200);
+  const pendingState = await login.json();
   const cookie = login.headers.get('set-cookie') ?? '';
   assert.ok(/; Secure/i.test(cookie), 'Expected Secure session cookie');
   assert.ok(/; HttpOnly/i.test(cookie), 'Expected HttpOnly session cookie');
@@ -206,6 +207,16 @@ try {
     'Content-Type': 'application/json',
     'x-csrf-token': ownerState.csrfToken,
   };
+  assert.equal(
+    (
+      await fetch(origin + '/api/admin/accounts/' + pendingState.user.id, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'approve' }),
+      })
+    ).status,
+    200,
+  );
   const channels = await (await fetch(origin + '/api/voice/channels', { headers })).json();
   const joined = await fetch(origin + '/api/voice/join', {
     method: 'POST',
@@ -237,7 +248,10 @@ try {
   const sentText = await fetch(origin + '/api/conversations/' + textId + '/messages', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ body: 'Disposable read progress', clientId: crypto.randomUUID() }),
+    body: JSON.stringify({
+      body: 'Disposable read progress @image_test',
+      clientId: crypto.randomUUID(),
+    }),
   });
   assert.equal(sentText.status, 200);
   const textMessage = (await sentText.json()).message;
@@ -248,6 +262,65 @@ try {
   });
   assert.equal(markedRead.status, 200);
   assert.equal((await markedRead.json()).lastReadSeq, textMessage.seq);
+  const replied = await fetch(origin + '/api/conversations/' + textId + '/messages', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      body: 'Disposable reply',
+      clientId: crypto.randomUUID(),
+      replyToId: textMessage.id,
+    }),
+  });
+  assert.equal(replied.status, 200);
+  assert.equal((await replied.json()).message.threadRoot.id, textMessage.id);
+  for (let retry = 0; retry < 2; retry++) {
+    assert.equal(
+      (
+        await fetch(
+          origin + '/api/conversations/' + textId + '/messages/' + textMessage.id + '/pin',
+          {
+            method: 'PUT',
+            headers,
+            body: '{}',
+          },
+        )
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await fetch(
+          origin + '/api/conversations/' + textId + '/messages/' + textMessage.id + '/reactions',
+          {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({ emoji: '\u{1f44d}' }),
+          },
+        )
+      ).status,
+      200,
+    );
+  }
+  assert.equal(
+    (
+      await fetch(origin + '/api/conversations/' + textId + '/notification-preference', {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ mode: 'all' }),
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await fetch(origin + '/api/sender-alert-preferences/' + pendingState.user.id, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ muted: true, priority: true }),
+      })
+    ).status,
+    200,
+  );
   const sql = (database, query) =>
     docker(['exec', name + '-db', 'psql', '-U', 'tricord', '-d', database, '-Atc', query])
       .toString()
@@ -284,8 +357,38 @@ try {
     ),
     textMessage.seq,
   );
+  assert.equal(
+    sql(
+      'tricord_restorecheck',
+      "SELECT count(*) FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.name='image-read-progress' AND m.reply_to_id IS NOT NULL AND m.thread_root_id=m.reply_to_id",
+    ),
+    '1',
+  );
+  for (const table of ['message_pins', 'message_reactions', 'message_mentions']) {
+    assert.equal(
+      sql(
+        'tricord_restorecheck',
+        `SELECT count(*) FROM ${table} feature JOIN messages m ON m.id=feature.message_id JOIN conversations c ON c.id=m.conversation_id WHERE c.name='image-read-progress'`,
+      ),
+      '1',
+    );
+  }
+  assert.equal(
+    sql(
+      'tricord_restorecheck',
+      "SELECT p.mode FROM conversation_alert_preferences p JOIN conversations c ON c.id=p.conversation_id JOIN users u ON u.id=p.user_id WHERE c.name='image-read-progress' AND u.username='image_owner'",
+    ),
+    'all',
+  );
+  assert.equal(
+    sql(
+      'tricord_restorecheck',
+      "SELECT count(*) FROM sender_alert_preferences p JOIN users u ON u.id=p.user_id JOIN users s ON s.id=p.sender_id WHERE u.username='image_owner' AND s.username='image_test' AND p.muted AND p.priority",
+    ),
+    '1',
+  );
   console.log(
-    'PASS: non-root production image, migrations twice, web assets, database readiness, registration/login, Secure cookies, pending-account denial, private LiveKit control and backup/restore including read progress.',
+    'PASS: non-root production image, migrations twice, web assets, database readiness, registration/login, Secure cookies, pending-account denial, private LiveKit control and backup/restore including read progress, replies, pins, reactions, mentions and private alert preferences.',
   );
 } catch (error) {
   // Never dump docker inspect/environment output, HTTP cookies or connection strings.

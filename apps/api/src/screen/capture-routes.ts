@@ -28,4 +28,21 @@ export function registerCaptureAuthorization(
   app.post('/api/screen/capture/cancel', options, async (req) =>
     capture!.cancel(req.cookies[SESSION_COOKIE] ?? '', req.body, req.headers['x-csrf-token']),
   );
+  app.post('/api/screen/capture/handoff', options, async (req) =>
+    capture!.handoff(req.cookies[SESSION_COOKIE] ?? '', req.body, req.headers['x-csrf-token']),
+  );
+  app.post('/api/screen/capture/publication-check', options, async (req) =>
+    capture!.checkPublication(
+      req.cookies[SESSION_COOKIE] ?? '',
+      req.body,
+      req.headers['x-csrf-token'],
+    ),
+  );
+  app.post('/api/screen/capture/publication-cancel', options, async (req) =>
+    capture!.cancelPublication(
+      req.cookies[SESSION_COOKIE] ?? '',
+      req.body,
+      req.headers['x-csrf-token'],
+    ),
+  );
 }

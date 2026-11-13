@@ -9,6 +9,7 @@ import {
   type CaptureAuthorityContext,
 } from '../apps/desktop/src/capture-authority.js';
 import { sessionCaptureTransport } from '../apps/desktop/src/capture-authority-http.js';
+import type { ScreenCaller } from '../apps/api/src/screen/service.js';
 
 const origin = 'http://127.0.0.1:5173',
   password = randomUUID() + '-Authority';
@@ -19,6 +20,68 @@ let fixture: Awaited<ReturnType<typeof testDatabase>>,
 type Person = { id: string; token: string; csrf: string };
 let owner: Person, member: Person, other: Person, pending: Person;
 const authorities: ServerCaptureAuthority[] = [];
+it('promotes only consumed capture for the exact live own publication and keeps old cancellation scoped', async () => {
+  await join();
+  const requestId = randomUUID(),
+    epoch = bindings.get(member.id)!;
+  const preview = (await post(member, 'prepare', { requestId, sound: 'none' })).json();
+  const published = await app.screen!.publish(callers.get(member.id)!, {
+    epoch,
+    requestId: randomUUID(),
+    sourceGeneration: 1,
+    profile: 'smooth',
+    resolution: 720,
+    frameRate: 60,
+    videoBitrate: 4000000,
+    sound: 'none',
+  });
+  const handoff = {
+    id: preview.id,
+    epoch,
+    shareId: published.share.id,
+    sourceGeneration: 1,
+    requestId: randomUUID(),
+  };
+  expect((await post(member, 'handoff', handoff)).statusCode).toBe(403);
+  expect((await post(member, 'consume', { id: preview.id })).statusCode).toBe(200);
+  expect((await post(other, 'handoff', handoff)).statusCode).toBe(403);
+  const response = await post(member, 'handoff', handoff);
+  expect(response.statusCode).toBe(200);
+  const publication = response.json();
+  expect(publication.id).not.toBe(preview.id);
+  expect((await post(member, 'handoff', handoff)).json().id).toBe(publication.id);
+  const check = { id: publication.id, requestId: randomUUID(), revision: 1 };
+  expect((await post(member, 'publication-check', check)).statusCode).toBe(200);
+  await post(member, 'cancel', { requestId });
+  expect(
+    (await post(member, 'publication-check', { ...check, requestId: randomUUID(), revision: 2 }))
+      .statusCode,
+  ).toBe(200);
+  await app.screen!.stop(callers.get(member.id)!, { epoch, shareId: published.share.id });
+  expect(
+    (await post(member, 'publication-check', { ...check, requestId: randomUUID(), revision: 3 }))
+      .statusCode,
+  ).toBe(403);
+});
+const bindings = new Map<string, string>();
+const callers = new Map<string, ScreenCaller>();
+async function join(person = member) {
+  const lease = await app.voice!.join(person.token, { channelId: channel });
+  const ownedApp = app;
+  const caller = {
+    token: person.token,
+    transportId: randomUUID(),
+    isConnected: () => app === ownedApp,
+  };
+  callers.set(person.id, caller);
+  const binding = await app.screen!.bind(caller, {
+    version: 2,
+    leaseId: lease.id,
+    requestId: randomUUID(),
+  });
+  bindings.set(person.id, binding.epoch);
+  return lease;
+}
 const login = async (username: string) => {
   const result = await auth.login({ username, password, remember: false }, undefined);
   return { id: result.auth.user.id, token: result.token, csrf: result.auth.csrfToken };
@@ -33,7 +96,10 @@ const post = (person: Person, operation: string, body: unknown, headers = {}) =>
       'x-csrf-token': person.csrf,
       ...headers,
     },
-    payload: body,
+    payload:
+      operation === 'prepare' && body && typeof body === 'object'
+        ? { epoch: bindings.get(person.id) ?? 'b2f73a91-532c-43f8-85ce-e8618afc06be', ...body }
+        : body,
   });
 beforeAll(async () => {
   fixture = await testDatabase();
@@ -46,6 +112,8 @@ beforeAll(async () => {
   }
 });
 beforeEach(async () => {
+  bindings.clear();
+  callers.clear();
   member = await login('capture_member');
   other = await login('capture_other');
   pending = await login('capture_pending');
@@ -79,7 +147,7 @@ it('requires approved current sessions, origin, CSRF and the exact session-owned
   const body = { requestId: randomUUID(), sound: 'none' };
   expect((await post(pending, 'prepare', body)).statusCode).toBe(403);
   expect((await post(member, 'prepare', body)).statusCode).toBe(403);
-  await app.voice!.join(member.token, { channelId: channel });
+  await join();
   expect((await post(member, 'prepare', body, { origin: 'https://evil.example' })).statusCode).toBe(
     403,
   );
@@ -91,7 +159,7 @@ it('requires approved current sessions, origin, CSRF and the exact session-owned
   expect(Object.keys(grant.json()).sort()).toEqual(['id', 'remainingMs']);
 });
 it('consumes once, denies foreign references and never extends voice or duplicate request deadlines', async () => {
-  const lease = await app.voice!.join(member.token, { channelId: channel });
+  const lease = await join();
   const expires = app.voice!.leases.get(member.id)!.expires,
     body = { requestId: randomUUID(), sound: 'none' };
   const grant = (await post(member, 'prepare', body)).json();
@@ -108,7 +176,7 @@ it('consumes once, denies foreign references and never extends voice or duplicat
   );
 });
 it('recovers valid capture admission after an unverified-cookie burst and preserves voice heartbeat', async () => {
-  const lease = await app.voice!.join(member.token, { channelId: channel });
+  const lease = await join();
   const requests = Array.from({ length: 1024 }, (_, index) => {
     const operation = index % 2 === 0 ? 'prepare' : 'check';
     return post(
@@ -138,7 +206,7 @@ it('recovers valid capture admission after an unverified-cookie burst and preser
 it.each(['revocation', 'suspension', 'lease-expiry', 'replacement'] as const)(
   'denies pending grant on real %s',
   async (change) => {
-    await app.voice!.join(member.token, { channelId: channel });
+    await join();
     const grant = (
       await post(member, 'prepare', { requestId: randomUUID(), sound: 'none' })
     ).json();
@@ -151,7 +219,7 @@ it.each(['revocation', 'suspension', 'lease-expiry', 'replacement'] as const)(
     if (change === 'lease-expiry') app.voice!.leases.get(member.id)!.expires = Date.now() - 1;
     if (change === 'replacement') {
       await app.voice!.remove(app.voice!.leases.get(member.id)!);
-      await app.voice!.join(member.token, { channelId: channel });
+      await join();
     }
     expect((await post(member, 'consume', { id: grant.id })).statusCode).toBeGreaterThanOrEqual(
       400,
@@ -159,7 +227,7 @@ it.each(['revocation', 'suspension', 'lease-expiry', 'replacement'] as const)(
   },
 );
 it('feeds the main provider through the fixed Session.fetch adapter against real API authorization', async () => {
-  await app.voice!.join(member.token, { channelId: channel });
+  await join();
   const context = {
     mainFrame: {} as CaptureAuthorityContext['mainFrame'],
     url: origin + '/app',
@@ -192,7 +260,7 @@ it('feeds the main provider through the fixed Session.fetch adapter against real
     onError: () => {},
   });
   authorities.push(authority);
-  const intent = await authority.prepare('none');
+  const intent = await authority.prepare('none', bindings.get(member.id)!);
   expect(await authority.verify(intent)).toBe(true);
   expect(await authority.verify(intent)).toBe(false);
   expect(nativeFetch.mock.calls.some((call) => call[0].endsWith('/consume'))).toBe(true);

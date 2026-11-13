@@ -9,7 +9,7 @@ import type { CaptureIntentSource, TrustedCaptureIntent } from './native-capture
 
 export type CaptureAuthorityTransport = (
   operation: CaptureAuthorityOperation,
-  body: Record<string, string>,
+  body: Record<string, string | number>,
   signal: AbortSignal,
 ) => Promise<unknown>;
 export type CaptureAuthorityContext = {
@@ -24,6 +24,14 @@ type RecordState = {
   intent: TrustedCaptureIntent;
   deadline: number;
   consumed: boolean;
+  epoch: string;
+};
+type PublicationState = {
+  id: string;
+  intent: TrustedCaptureIntent;
+  deadline: number;
+  revision: number;
+  previewRequest: string;
 };
 const validId = (value: unknown): value is string =>
   typeof value === 'string' &&
@@ -43,6 +51,10 @@ function grant(value: unknown): CaptureAuthorization {
 }
 export class ServerCaptureAuthority implements CaptureIntentSource {
   private record?: RecordState;
+  private publication?: PublicationState;
+  private cancelPublicationId?: string;
+  private publicationWatch?: ReturnType<typeof setTimeout>;
+  private publicationExpiry?: ReturnType<typeof setTimeout>;
   private generation = 0;
   private listeners = new Set<() => void>();
   private flight?: {
@@ -100,7 +112,10 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
     }
     return record.intent;
   }
-  private async operation(operation: CaptureAuthorityOperation, body: Record<string, string>) {
+  private async operation(
+    operation: CaptureAuthorityOperation,
+    body: Record<string, string | number>,
+  ) {
     if (this.flight) throw new Error('Capture authority is busy.');
     const abort = new AbortController();
     let ended!: () => void;
@@ -109,7 +124,7 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
       abort.signal.addEventListener('abort', ended, { once: true });
     });
     const timeout = setTimeout(() => {
-      if (operation === 'cancel') abort.abort();
+      if (operation === 'cancel' || operation === 'publication-cancel') abort.abort();
       else {
         this.options.onError('authority_timeout');
         this.invalidate();
@@ -137,6 +152,18 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
     return result;
   }
   private drainCancel() {
+    if (this.cancelPublicationId && !this.flight && !this.verifying && !this.preparing) {
+      const id = this.cancelPublicationId;
+      this.cancelPublicationId = undefined;
+      void this.operation('publication-cancel', { id }).then(
+        (value) => {
+          if (!value || (value as { cancelled?: unknown }).cancelled !== true)
+            this.options.onError('cancel_unavailable');
+        },
+        () => this.options.onError('cancel_unavailable'),
+      );
+      return;
+    }
     if (!this.cancelRequest || this.flight || this.verifying || this.preparing) return;
     const requestId = this.cancelRequest;
     this.cancelRequest = undefined;
@@ -151,7 +178,12 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
   private schedule(record: RecordState) {
     clearTimeout(this.watch);
     clearTimeout(this.expiry);
-    this.expiry = setTimeout(() => this.invalidate(), Math.max(1, record.deadline - this.now()));
+    this.expiry = setTimeout(
+      () => {
+        if (this.record === record) this.invalidate();
+      },
+      Math.max(1, record.deadline - this.now()),
+    );
     this.watch = setTimeout(() => void this.check(record), this.watchMs);
   }
   private async check(record: RecordState) {
@@ -179,10 +211,12 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
       }
     }
   }
-  async prepare(sound: CaptureSoundChoice): Promise<TrustedCaptureIntent> {
+  async prepare(sound: CaptureSoundChoice, epoch: string): Promise<TrustedCaptureIntent> {
     if (
       this.disposed ||
       this.record ||
+      this.publication ||
+      this.cancelPublicationId ||
       this.flight ||
       this.preparing ||
       this.verifying ||
@@ -190,6 +224,7 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
     )
       throw new Error('Capture authority is unavailable or busy.');
     if (sound !== 'none' && sound !== 'system') throw new Error('Invalid capture sound choice.');
+    if (!validId(epoch)) throw new Error('Invalid screen binding reference.');
     const context = this.options.context();
     if (!context?.alive || !Number.isSafeInteger(context.navigation))
       throw new Error('Capture document is unavailable.');
@@ -198,7 +233,7 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
       started = this.now();
     this.preparing = requestId;
     try {
-      const value = grant(await this.operation('prepare', { requestId, sound }));
+      const value = grant(await this.operation('prepare', { requestId, sound, epoch }));
       const intent: TrustedCaptureIntent = Object.freeze({
         intent: {},
         authorization: {},
@@ -222,6 +257,7 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
         intent,
         deadline: intent.expires,
         consumed: false,
+        epoch,
       };
       this.record = record;
       this.schedule(record);
@@ -272,13 +308,130 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
       this.drainCancel();
     }
   }
+  inspectPublication() {
+    const publication = this.publication;
+    if (!publication) return null;
+    if (
+      this.disposed ||
+      !this.sameContext(publication.intent) ||
+      publication.deadline <= this.now()
+    ) {
+      this.invalidate();
+      return null;
+    }
+    return Object.freeze({ remainingMs: publication.deadline - this.now() });
+  }
+  private schedulePublication(publication: PublicationState) {
+    clearTimeout(this.publicationWatch);
+    clearTimeout(this.publicationExpiry);
+    this.publicationExpiry = setTimeout(
+      () => {
+        if (this.publication === publication) this.invalidate();
+      },
+      Math.max(1, publication.deadline - this.now()),
+    );
+    this.publicationWatch = setTimeout(() => void this.checkPublication(publication), this.watchMs);
+  }
+  private async checkPublication(publication: PublicationState) {
+    if (this.publication !== publication || !this.inspectPublication()) return;
+    if (this.flight || this.verifying) {
+      this.publicationWatch = setTimeout(
+        () => void this.checkPublication(publication),
+        this.watchMs,
+      );
+      return;
+    }
+    const started = this.now();
+    try {
+      const value = grant(
+        await this.operation('publication-check', {
+          id: publication.id,
+          requestId: randomUUID(),
+          revision: ++publication.revision,
+        }),
+      );
+      if (this.publication !== publication) return;
+      if (!this.inspectPublication() || value.id !== publication.id)
+        throw new Error('Publication changed.');
+      publication.deadline = started + value.remainingMs;
+      if (publication.deadline <= this.now()) throw new Error('Publication expired.');
+      this.schedulePublication(publication);
+    } catch {
+      if (this.publication === publication) {
+        this.options.onError('publication_unavailable');
+        this.invalidate();
+      }
+    }
+  }
+  async handoff(shareId: string, sourceGeneration: number) {
+    const record = this.record;
+    if (
+      !record ||
+      !record.consumed ||
+      this.verifying ||
+      this.preparing ||
+      this.publication ||
+      this.inspect() !== record.intent ||
+      !validId(shareId) ||
+      !Number.isSafeInteger(sourceGeneration) ||
+      sourceGeneration < 1
+    )
+      throw new Error('Capture publication is unavailable.');
+    let issued: CaptureAuthorization | undefined;
+    try {
+      if (this.flight) await this.flight.result;
+      if (this.record !== record || this.inspect() !== record.intent)
+        throw new Error('Capture ended.');
+      const started = this.now();
+      issued = grant(
+        await this.operation('handoff', {
+          id: record.grantId,
+          epoch: record.epoch,
+          shareId,
+          sourceGeneration,
+          requestId: randomUUID(),
+        }),
+      );
+      if (issued.id === record.grantId)
+        throw new Error('Publication must have its own authority record.');
+      if (
+        this.record !== record ||
+        this.inspect() !== record.intent ||
+        started + issued.remainingMs <= this.now()
+      )
+        throw new Error('Capture ended before publication.');
+      const publication: PublicationState = {
+        id: issued.id,
+        intent: record.intent,
+        deadline: started + issued.remainingMs,
+        revision: 0,
+        previewRequest: record.requestId,
+      };
+      this.record = undefined;
+      clearTimeout(this.watch);
+      clearTimeout(this.expiry);
+      this.publication = publication;
+      this.schedulePublication(publication);
+      return this.inspectPublication()!;
+    } catch (cause) {
+      if (issued) this.cancelPublicationId = issued.id;
+      if (this.record === record) this.invalidate();
+      this.drainCancel();
+      throw cause;
+    }
+  }
   invalidate() {
     this.generation++;
-    const requestId = this.record?.requestId ?? this.preparing;
+    const requestId = this.record?.requestId ?? this.preparing ?? this.publication?.previewRequest;
     this.record = undefined;
+    if (this.publication) this.cancelPublicationId = this.publication.id;
+    this.publication = undefined;
+    clearTimeout(this.publicationWatch);
+    clearTimeout(this.publicationExpiry);
     clearTimeout(this.watch);
     clearTimeout(this.expiry);
-    if (this.flight?.operation !== 'cancel') this.flight?.abort.abort();
+    if (this.flight?.operation !== 'cancel' && this.flight?.operation !== 'publication-cancel')
+      this.flight?.abort.abort();
     if (requestId) this.cancelRequest = requestId;
     for (const listener of this.listeners) listener();
     this.drainCancel();

@@ -1,12 +1,17 @@
+import { screenRelayServers } from './relay.js';
 import { randomUUID } from 'node:crypto';
 import {
   SCREEN_PROTOCOL_VERSION,
   SCREEN_PROFILES,
   SCREEN_VIDEO_BITRATES,
+  SCREEN_RESOLUTIONS,
+  SCREEN_FRAME_RATES,
+  screenQualityCeiling,
   type ScreenBinding,
   type ScreenErrorCode,
   type ScreenQuality,
   type ScreenShare,
+  type ScreenPublishGrant,
   type ScreenLink,
   type ScreenLinkGrant,
   type ScreenRenewal,
@@ -20,7 +25,10 @@ import { description, signal, type Description } from './signaling.js';
 
 // Supplied by the authenticated server transport, never accepted from a client payload.
 export type ScreenCaller = { token: string; transportId: string; isConnected: () => boolean };
-type Voice = Pick<VoiceService, 'leases' | 'authorize' | 'exclusive' | 'onLeaseInvalidated'>;
+type Voice = Pick<
+  VoiceService,
+  'leases' | 'authorize' | 'exclusive' | 'onLeaseInvalidated' | 'config'
+>;
 type Binding = {
   lease: Lease;
   leaseId: string;
@@ -39,9 +47,13 @@ type Binding = {
   lastPublish?: string;
   lastSelection?: string;
   lastRenewal?: string;
-  renewal?: { expires: number; links: { link: Link; expires: number }[] };
+  renewal?: {
+    expires: number;
+    links: { link: Link; expires: number }[];
+    publication: { share: Share; expires: number } | null;
+  };
 };
-type Share = { value: ScreenShare; publisher: Binding };
+type Share = { value: ScreenShare; publisher: Binding; expires: number; publishExpires: number };
 type Link = {
   value: ScreenLink;
   share: Share;
@@ -77,15 +89,25 @@ function revision(value: unknown) {
   return value;
 }
 function quality(body: Record<string, unknown>): ScreenQuality {
+  const explicit = body.resolution !== undefined || body.frameRate !== undefined;
   if (
     !(SCREEN_PROFILES as readonly unknown[]).includes(body.profile) ||
     (body.videoBitrate !== null &&
-      !(SCREEN_VIDEO_BITRATES as readonly unknown[]).includes(body.videoBitrate))
+      !(SCREEN_VIDEO_BITRATES as readonly unknown[]).includes(body.videoBitrate)) ||
+    (explicit &&
+      (!(SCREEN_RESOLUTIONS as readonly unknown[]).includes(body.resolution) ||
+        !(SCREEN_FRAME_RATES as readonly unknown[]).includes(body.frameRate)))
   )
     throw new ScreenError('invalid', 400, 'Invalid screen quality or video bitrate.');
   return {
     profile: body.profile as ScreenQuality['profile'],
     videoBitrate: body.videoBitrate as ScreenVideoBitrate,
+    ...(explicit
+      ? {
+          resolution: body.resolution as ScreenQuality['resolution'],
+          frameRate: body.frameRate as ScreenQuality['frameRate'],
+        }
+      : {}),
   };
 }
 
@@ -96,6 +118,42 @@ export class ScreenService {
   private disposed = false;
   private unsubscribe: () => void;
   private stateRevision = 1;
+  // Called synchronously inside the caller's existing voice.exclusive section.
+  // The returned identity is retained internally; an epoch is never authority.
+  captureBinding(userId: string, sessionId: string, lease: Lease, epoch: string): object | null {
+    const binding = this.bindings.get(userId);
+    return binding &&
+      binding.lease === lease &&
+      binding.sessionId === sessionId &&
+      binding.channelId === lease.channelId &&
+      binding.epoch === epoch &&
+      this.current(binding)
+      ? binding
+      : null;
+  }
+  capturePublication(
+    userId: string,
+    sessionId: string,
+    lease: Lease,
+    epoch: string,
+    shareId: string,
+    sourceGeneration: number,
+    sound: string,
+  ): { identity: object; expires: number } | null {
+    if (!this.captureBinding(userId, sessionId, lease, epoch)) return null;
+    const share = this.bindings.get(userId)?.share;
+    return share &&
+      share.value.id === shareId &&
+      share.value.sourceGeneration === sourceGeneration &&
+      share.value.sound === sound &&
+      share.expires > this.now()
+      ? { identity: share, expires: Math.min(share.expires, lease.expires) }
+      : null;
+  }
+  private relayConfig(binding: Binding) {
+    const iceServers = screenRelayServers(this.voice.config, binding.userId, this.now());
+    return iceServers ? { iceServers } : {};
+  }
   private listeners = new Set<() => void>();
   onChange(listener: () => void) {
     this.listeners.add(listener);
@@ -179,6 +237,13 @@ export class ScreenService {
   private shareValue(share: Share): ScreenShare {
     return { ...share.value };
   }
+  private publication(share: Share, expires: number): ScreenPublishGrant {
+    if (share.publisher.share !== share || this.shares.get(share.value.id) !== share) throw stale();
+    const remainingMs =
+      Math.min(expires, share.expires, share.publisher.lease.expires) - this.now();
+    if (remainingMs <= 0) throw stale();
+    return { share: this.shareValue(share), remainingMs };
+  }
   private request(binding: Binding, id: string, fingerprint: string, commit = false) {
     const previous = binding.requests.get(id);
     if (previous !== undefined && previous !== fingerprint)
@@ -221,6 +286,8 @@ export class ScreenService {
   private prune() {
     for (const binding of this.bindings.values())
       if (!this.current(binding)) this.dropBinding(binding);
+    for (const share of this.shares.values())
+      if (share.expires <= this.now()) this.dropShare(share);
     for (const link of this.links.values()) if (link.expires <= this.now()) this.dropLink(link);
   }
   private checkLink(link: Link) {
@@ -230,6 +297,7 @@ export class ScreenService {
       link.expires,
       link.viewer.lease.expires,
       link.share.publisher.lease.expires,
+      link.share.expires,
     );
     if (
       this.links.get(link.value.id) !== link ||
@@ -297,16 +365,19 @@ export class ScreenService {
         epoch: binding.epoch,
         channelId: binding.channelId,
         remainingMs: lease.expires - this.now(),
+        ...this.relayConfig(binding),
       };
     });
   }
-  publish(caller: ScreenCaller, value: unknown): Promise<ScreenShare> {
+  publish(caller: ScreenCaller, value: unknown): Promise<ScreenPublishGrant> {
     const body = input(value, [
       'epoch',
       'requestId',
       'sourceGeneration',
       'profile',
       'videoBitrate',
+      'resolution',
+      'frameRate',
       'sound',
     ]);
     const requestId = uuid(body.requestId),
@@ -323,7 +394,7 @@ export class ScreenService {
         binding.lastPublish === fingerprint &&
         binding.share
       )
-        return this.shareValue(binding.share);
+        return this.publication(binding.share, binding.share.publishExpires);
       if (generation <= binding.sourceGeneration) throw stale();
       if (binding.share)
         throw new ScreenError(
@@ -332,6 +403,8 @@ export class ScreenService {
           'Stop the current share before choosing another source.',
         );
       const share: Share = {
+        expires: binding.lease.expires,
+        publishExpires: binding.lease.expires,
         publisher: binding,
         value: {
           id: randomUUID(),
@@ -347,7 +420,7 @@ export class ScreenService {
       this.shares.set(share.value.id, share);
       this.changed();
       this.request(binding, requestId, fingerprint, true);
-      return this.shareValue(share);
+      return this.publication(share, share.publishExpires);
     });
   }
   stop(caller: ScreenCaller, value: unknown): Promise<{ stopped: true }> {
@@ -372,6 +445,8 @@ export class ScreenService {
       'shareId',
       'profile',
       'videoBitrate',
+      'resolution',
+      'frameRate',
     ]);
     const requestId = uuid(body.requestId),
       next = revision(body.revision),
@@ -407,8 +482,12 @@ export class ScreenService {
       if (share) {
         await this.pair(viewer, share.publisher);
         if (share.publisher.share !== share) throw stale();
+        const requested = screenQualityCeiling(selected),
+          offered = screenQualityCeiling(share.value);
         if (
-          SCREEN_PROFILES.indexOf(selected.profile) > SCREEN_PROFILES.indexOf(share.value.profile)
+          requested.width > offered.width ||
+          requested.height > offered.height ||
+          requested.frameRate > offered.frameRate
         )
           throw new ScreenError('invalid', 400, 'Requested quality exceeds the publisher ceiling.');
       }
@@ -423,7 +502,7 @@ export class ScreenService {
       const link: Link = {
         share,
         viewer,
-        expires: Math.min(viewer.lease.expires, share.publisher.lease.expires),
+        expires: Math.min(viewer.lease.expires, share.publisher.lease.expires, share.expires),
         value: {
           id: randomUUID(),
           shareId: share.value.id,
@@ -588,6 +667,7 @@ export class ScreenService {
       )
         throw stale();
       const replay = next === binding.renewalRevision;
+      const own = replay ? binding.renewal!.publication?.share : binding.share;
       const links = replay
         ? binding.renewal!.links.map((item) => item.link)
         : [...this.links.values()].filter(
@@ -598,13 +678,26 @@ export class ScreenService {
         this.checkLink(link);
       }
       this.check(binding);
+      if (
+        own &&
+        (binding.share !== own ||
+          this.shares.get(own.value.id) !== own ||
+          own.expires <= this.now())
+      )
+        throw stale();
       for (const link of links) this.checkLink(link);
       if (!replay) {
+        if (own) own.expires = binding.lease.expires;
         for (const link of links)
-          link.expires = Math.min(link.viewer.lease.expires, link.share.publisher.lease.expires);
+          link.expires = Math.min(
+            link.viewer.lease.expires,
+            link.share.publisher.lease.expires,
+            link.share.expires,
+          );
         binding.renewal = {
           expires: binding.lease.expires,
           links: links.map((link) => ({ link, expires: link.expires })),
+          publication: own ? { share: own, expires: own.expires } : null,
         };
         binding.renewalRevision = next;
         binding.lastRenewal = fingerprint;
@@ -612,11 +705,18 @@ export class ScreenService {
         this.changed();
       }
       const result: ScreenRenewal = {
+        ...this.relayConfig(binding),
         remainingMs: Math.max(
           0,
           Math.min(binding.renewal!.expires, binding.lease.expires) - this.now(),
         ),
         links: binding.renewal!.links.map((item) => this.grant(item.link, item.expires)),
+        publication: binding.renewal!.publication
+          ? this.publication(
+              binding.renewal!.publication.share,
+              binding.renewal!.publication.expires,
+            )
+          : null,
       };
       deliver?.(result);
       return result;

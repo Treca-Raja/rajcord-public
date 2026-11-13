@@ -35,8 +35,9 @@ type Options = {
   targetOrigin: string;
   permissions: NativeCapturePermissions;
   enabled?: boolean;
-  qualification?: 'unqualified' | 'qualified-native-provider' | 'synthetic-webcontents';
-  systemAudio?: 'unqualified' | 'qualified-windows-loopback';
+  qualification?:
+    'unqualified' | 'qualified-native-provider' | 'synthetic-webcontents' | 'native-provider';
+  systemAudio?: 'unqualified' | 'qualified-windows-loopback' | 'consented-windows-loopback';
   authority?: CaptureIntentSource;
   enumerate?: (signal: AbortSignal) => Promise<readonly NativeCaptureSource[]>;
   openPicker?: (
@@ -82,7 +83,7 @@ export function installNativeCapture(configuration: Options) {
     !!options.authority &&
     typeof options.authority.verify === 'function' &&
     !!options.enumerate &&
-    ['qualified-native-provider', 'synthetic-webcontents'].includes(
+    ['qualified-native-provider', 'synthetic-webcontents', 'native-provider'].includes(
       options.qualification ?? 'unqualified',
     );
   const inspectAuthority = () => {
@@ -125,7 +126,10 @@ export function installNativeCapture(configuration: Options) {
       intent.navigation === doc.navigation &&
       doc.url.startsWith(targetOrigin + '/') &&
       (intent.sound === 'none' ||
-        (intent.sound === 'system' && options.systemAudio === 'qualified-windows-loopback'))
+        (intent.sound === 'system' &&
+          ['qualified-windows-loopback', 'consented-windows-loopback'].includes(
+            options.systemAudio ?? 'unqualified',
+          )))
     );
   };
   const current = () => {

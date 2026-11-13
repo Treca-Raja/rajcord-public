@@ -9,6 +9,156 @@ import { screenSdp, screenIce } from './signaling-fixture.js';
 import { selectionFixture } from './selection-fixture.js';
 
 const active: ScreenService[] = [];
+it('issues a finite publication proof and renews only the current own share with replay-safe deadlines', async () => {
+  const f = fixture(),
+    publisher = f.user(),
+    binding = await f.bind(publisher);
+  const request = {
+    epoch: binding.epoch,
+    requestId: randomUUID(),
+    sourceGeneration: 1,
+    profile: 'smooth',
+    videoBitrate: 8000000,
+    sound: 'none',
+    resolution: 720,
+    frameRate: 60,
+  };
+  const grant = await f.screen.publish(publisher.caller, request);
+  expect(Object.keys(grant).sort()).toEqual(['remainingMs', 'share']);
+  expect(grant.remainingMs).toBe(45000);
+  f.setTime(101000);
+  publisher.lease.expires = 146000;
+  expect((await f.screen.publish(publisher.caller, request)).remainingMs).toBe(44000);
+  const renew = { epoch: binding.epoch, requestId: randomUUID(), revision: 1 };
+  const renewal = await f.screen.renew(publisher.caller, renew);
+  expect(renewal.publication).toEqual({ share: grant.share, remainingMs: 45000 });
+  expect(renewal.links).toEqual([]);
+  f.setTime(102000);
+  publisher.lease.expires = 147000;
+  expect((await f.screen.renew(publisher.caller, renew)).publication?.remainingMs).toBe(44000);
+  expect((await f.screen.publish(publisher.caller, request)).remainingMs).toBe(43000);
+  expect(publisher.lease.expires).toBe(147000);
+  await f.screen.stop(publisher.caller, { epoch: binding.epoch, shareId: grant.share.id });
+  await expect(f.screen.renew(publisher.caller, renew)).rejects.toMatchObject({ code: 'stale' });
+});
+it('never revives an expired publication through voice heartbeat alone', async () => {
+  const f = fixture(),
+    publisher = f.user(),
+    binding = await f.bind(publisher);
+  await f.publish(publisher.caller, binding.epoch);
+  publisher.lease.expires += 45000;
+  f.setTime(145000);
+  const renewal = await f.screen.renew(publisher.caller, {
+    epoch: binding.epoch,
+    requestId: randomUUID(),
+    revision: 1,
+  });
+  expect(renewal.publication).toBeNull();
+  const snapshot = await f.screen.snapshot(publisher.caller, { epoch: binding.epoch }, () => {});
+  expect(snapshot.shares).toEqual([]);
+});
+it('correlates main capture to the exact current S1 binding under the existing lock', async () => {
+  const f = fixture(),
+    user = f.user(),
+    binding = await f.bind(user);
+  const match = () =>
+    f.screen.captureBinding(user.lease.userId, user.lease.sessionId, user.lease, binding.epoch);
+  const identity = await f.voice.exclusive(async () => match());
+  expect(identity).not.toBeNull();
+  expect(
+    f.screen.captureBinding(user.lease.userId, randomUUID(), user.lease, binding.epoch),
+  ).toBeNull();
+  expect(
+    f.screen.captureBinding(
+      user.lease.userId,
+      user.lease.sessionId,
+      { ...user.lease },
+      binding.epoch,
+    ),
+  ).toBeNull();
+  user.connected = false;
+  expect(match()).toBeNull();
+  user.connected = true;
+  f.screen.disconnect(user.caller.transportId, binding.epoch);
+  expect(match()).toBeNull();
+  const replacement = await f.bind(user);
+  expect(replacement.epoch).not.toBe(binding.epoch);
+  expect(match()).toBeNull();
+});
+
+it('preserves independent resolution/fps choices and enforces each publisher ceiling', async () => {
+  const f = fixture(),
+    publisher = f.user(),
+    viewer = f.user();
+  const p = await f.bind(publisher),
+    v = await f.bind(viewer);
+  const { share } = await f.screen.publish(publisher.caller, {
+    epoch: p.epoch,
+    requestId: randomUUID(),
+    sourceGeneration: 1,
+    sound: 'none',
+    profile: 'smooth',
+    videoBitrate: 8000000,
+    resolution: 720,
+    frameRate: 60,
+  });
+  expect(share).toMatchObject({ resolution: 720, frameRate: 60 });
+  const request = {
+    ...selection(v.epoch, share.id),
+    resolution: 480,
+    frameRate: 60,
+  };
+  const grant = await f.screen.select(viewer.caller, request);
+  expect(grant?.link.quality).toMatchObject({ resolution: 480, frameRate: 60 });
+  await expect(
+    f.screen.select(viewer.caller, {
+      ...request,
+      requestId: randomUUID(),
+      revision: 2,
+      resolution: 1080,
+    }),
+  ).rejects.toMatchObject({ code: 'invalid' });
+  const snapshot = await f.screen.authorizeLink(viewer.caller, {
+    epoch: v.epoch,
+    linkId: grant!.link.id,
+  });
+  expect(snapshot.link.id).toBe(grant!.link.id);
+});
+it('rejects the old screen protocol explicitly', async () => {
+  const f = fixture(),
+    person = f.user();
+  await expect(async () =>
+    f.screen.bind(person.caller, {
+      version: 1,
+      leaseId: person.lease.id,
+      requestId: randomUUID(),
+    }),
+  ).rejects.toMatchObject({ code: 'invalid' });
+});
+it.each([
+  { resolution: 720 },
+  { frameRate: 30 },
+  { resolution: 2160, frameRate: 60 },
+  { resolution: 720, frameRate: 120 },
+  { resolution: '720', frameRate: 30 },
+])('rejects unsupported or partial resolution/fps %j before allocating a share', async (choice) => {
+  const f = fixture(),
+    person = f.user(),
+    binding = await f.bind(person);
+  await expect(async () =>
+    f.screen.publish(person.caller, {
+      epoch: binding.epoch,
+      requestId: randomUUID(),
+      sourceGeneration: 1,
+      profile: 'smooth',
+      videoBitrate: 8000000,
+      sound: 'none',
+      ...choice,
+    }),
+  ).rejects.toMatchObject({ code: 'invalid' });
+  const share = await f.publish(person.caller, binding.epoch);
+  expect(share.sourceGeneration).toBe(1);
+});
 
 async function signalingFixture() {
   const f = fixture(),
@@ -275,16 +425,18 @@ function fixture() {
     return person;
   };
   const bind = async (person: ReturnType<typeof user>) =>
-    screen.bind(person.caller, { version: 1, leaseId: person.lease.id, requestId: randomUUID() });
+    screen.bind(person.caller, { version: 2, leaseId: person.lease.id, requestId: randomUUID() });
   const publish = (caller: ScreenCaller, epoch: string, sourceGeneration = 1) =>
-    screen.publish(caller, {
-      epoch,
-      requestId: randomUUID(),
-      sourceGeneration,
-      profile: 'smooth',
-      videoBitrate: 8000000,
-      sound: 'tab',
-    });
+    screen
+      .publish(caller, {
+        epoch,
+        requestId: randomUUID(),
+        sourceGeneration,
+        profile: 'smooth',
+        videoBitrate: 8000000,
+        sound: 'tab',
+      })
+      .then((grant) => grant.share);
   return {
     voice,
     screen,
@@ -586,12 +738,12 @@ describe('ephemeral screen authorization', () => {
     await expect(
       f.screen.bind(
         { ...person.caller, transportId: randomUUID() },
-        { version: 1, leaseId: person.lease.id, requestId: randomUUID() },
+        { version: 2, leaseId: person.lease.id, requestId: randomUUID() },
       ),
     ).rejects.toMatchObject({ code: 'capacity' });
     expect(() =>
       f.screen.bind(person.caller, {
-        version: 2,
+        version: 3,
         leaseId: person.lease.id,
         requestId: randomUUID(),
       }),
@@ -610,8 +762,8 @@ describe('ephemeral screen authorization', () => {
       videoBitrate: 8000000,
       sound: 'tab',
     };
-    const first = await f.screen.publish(person.caller, request);
-    expect(await f.screen.publish(person.caller, request)).toEqual(first);
+    const { share: first } = await f.screen.publish(person.caller, request);
+    expect((await f.screen.publish(person.caller, request)).share).toEqual(first);
     await expect(f.publish(person.caller, b.epoch, 2)).rejects.toMatchObject({ code: 'capacity' });
     await f.screen.stop(person.caller, { epoch: b.epoch, shareId: first.id });
     const second = await f.publish(person.caller, b.epoch, 2);
@@ -753,6 +905,11 @@ describe('ephemeral screen authorization', () => {
     const f = fixture(),
       peers = await linked(f);
     peers.publisher.lease.expires += 45000;
+    await f.screen.renew(peers.publisher.caller, {
+      epoch: peers.p.epoch,
+      requestId: randomUUID(),
+      revision: 1,
+    });
     peers.viewer.lease.expires += 45000;
     f.setTime(145000);
     await expect(
@@ -959,4 +1116,28 @@ describe('ephemeral screen authorization', () => {
     f.screen.dispose();
     await expect(f.bind(person)).rejects.toMatchObject({ code: 'unavailable' });
   });
+});
+
+it('issues screen-only relay credentials only to an authorized current binding and refreshes them on renewal', async () => {
+  const f = fixture();
+  f.voice.config.screenTurnHost = 'turn.rajcord.com';
+  const user = f.user(),
+    binding = await f.bind(user);
+  expect(binding.iceServers?.[1]).toMatchObject({
+    urls: ['turn:turn.rajcord.com:3478?transport=udp', 'turns:turn.rajcord.com:5349?transport=tcp'],
+  });
+  const initial = binding.iceServers![1]!.credential;
+  expect(initial).not.toContain(f.voice.config.secret);
+  f.setTime(f.time() + 1000);
+  user.lease.expires += 1000;
+  const renewed = await f.screen.renew(user.caller, {
+    epoch: binding.epoch,
+    requestId: randomUUID(),
+    revision: 1,
+  });
+  expect(renewed.iceServers![1]!.credential).not.toBe(initial);
+  user.lease.revoked = true;
+  await expect(
+    f.screen.renew(user.caller, { epoch: binding.epoch, requestId: randomUUID(), revision: 2 }),
+  ).rejects.toMatchObject({ code: 'stale' });
 });

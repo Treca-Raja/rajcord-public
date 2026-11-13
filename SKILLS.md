@@ -6,6 +6,7 @@ Optional discovery index, not a startup checklist. Use the existing skill metada
 - [Ticket](.agents/skills/rajcord-ticket/SKILL.md): ticket drafts, creation or substantial rewrites.
 - [Document](.agents/skills/rajcord-document-change/SKILL.md): changed features, commands or decisions.
 - [Verify](.agents/skills/rajcord-verify/SKILL.md): choose/run relevant checks or diagnose failures.
+- [UI](.agents/skills/rajcord-ui/SKILL.md): compact layouts, quick smooth motion, accessible interaction and perceived performance.
 - [Database](.agents/skills/rajcord-database/SKILL.md): persistence, migrations and recovery.
 - [Voice](.agents/skills/rajcord-voice/SKILL.md): LiveKit, devices, permissions and capacity.
 - [Hosting](.agents/skills/rajcord-hosting/SKILL.md): packaging, CI/release and authorized operations.

@@ -32,6 +32,7 @@ it.each([
   'dist/picker-preload.js',
   'dist/screen-picker.js',
   'dist/native-capture.js',
+  'dist/screen-ipc.js',
   'dist/picker/picker.js',
   'dist/external-links.js',
   'dist/update-policy.js',

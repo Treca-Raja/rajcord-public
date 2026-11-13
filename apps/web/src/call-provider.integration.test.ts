@@ -4,6 +4,131 @@ import { fileURLToPath } from 'node:url';
 import { launch } from '../../api/src/voice/browser-harness';
 import { previewFixture } from './call-preview-fixture.integration';
 
+const runtimeFixture = previewFixture
+  .replace(
+    'const injected=true, factoryFailure=false;',
+    `
+import { ScreenRuntime } from '/src/screen-runtime.ts';
+import { ScreenBindingOwner } from '/src/screen-binding.ts';
+const injected=false, factoryFailure=false, optionalScreenFailure=false;`,
+  )
+  .replace(
+    'const originalLeave=VoiceController.prototype.leave;',
+    `
+f.screenWork=[];f.attachments=[];f.screenErrors=[];
+const runtime=new ScreenRuntime({onError:error=>f.screenErrors.push(error.message),binding:{
+ onError:error=>f.screenErrors.push(error.message),
+ create(own){const raw=deferred(),retired=deferred();const retire=()=>retired.promise;own(retire);f.screenWork.push({raw,retired});return {bind:()=>raw.promise,retire}}
+}});
+const attach=runtime.attach.bind(runtime);
+runtime.attach=(session)=>{
+ if(optionalScreenFailure)throw Error('Synthetic screen attachment failure');
+ const attachment=attach(session),owner=new ScreenBindingOwner(attachment.bindingDependency);let active=true;
+ const wrapped={...attachment,connectVoice(voice){attachment.connectVoice({
+  // Only the lease delegate is synthetic; AuthRoot/session/provider/runtime are mounted code.
+  bindScreens:({signal}={})=>owner.bind({id:'954fc1bb-e5be-4a85-bd86-004cc5553b29',channelId:'90d27181-8af8-4ea4-b3a9-e32805758484'},()=>active&&session.current,signal),
+  onLeaseInvalidated:voice.onLeaseInvalidated.bind(voice)
+ })},release(){active=false;attachment.release();owner.dispose()}};
+ f.attachments.push(wrapped);return wrapped;
+};
+f.runtime=runtime;f.screenReply={epoch:'94650863-245d-43c4-a927-40384325eb1e',channelId:'90d27181-8af8-4ea4-b3a9-e32805758484',remainingMs:45000};
+f.drainScreens=()=>{runtime.dispose();for(const work of f.screenWork){work.raw.resolve(f.screenReply);work.retired.resolve()}};
+const originalLeave=VoiceController.prototype.leave;`,
+  )
+  .replace('session:owned,preview:', 'session:owned,screens:runtime,preview:');
+
+it('retains one document runtime across StrictMode/provider/session replacement and unresolved binding retirement', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait(
+        '!!window.fixture?.call && fixture.active===1 && fixture.attachments.length>=2',
+      );
+      expect(await browser.js('fixture.runtime.inspect().disposed')).toBe(false);
+      await browser.js(
+        "fixture.oldAttachment=fixture.attachments.at(-1);fixture.observe(fixture.oldAttachment.bind(),'oldScreen')",
+      );
+      await browser.wait('fixture.screenWork.length===1');
+      await browser.js('fixture.replace()');
+      await browser.wait("fixture.oldScreen==='Screen attachment stopped.' && fixture.active===1");
+      await browser.js("fixture.observe(fixture.attachments.at(-1).bind(),'blockedScreen')");
+      await browser.wait(
+        "fixture.blockedScreen==='Screen runtime still owns unresolved binding work.'",
+      );
+      expect(await browser.js('fixture.screenWork.length')).toBe(1);
+      await browser.js('fixture.screenWork[0].raw.resolve(fixture.screenReply)');
+      await browser.js('(async()=>{for(let i=0;i<24;i++)await Promise.resolve()})()');
+      expect(await browser.js('fixture.runtime.inspect().bindingBusy')).toBe(true);
+      await browser.js('fixture.screenWork[0].retired.resolve()');
+      await browser.wait('!fixture.runtime.inspect().bindingBusy');
+      await browser.js(
+        'fixture.currentScreen=fixture.attachments.at(-1).bind();fixture.screenWork[1].raw.resolve(fixture.screenReply);fixture.currentScreen.then(value=>fixture.screenHandle=value)',
+      );
+      await browser.wait('!!fixture.screenHandle?.inspect()');
+      await browser.js(
+        'fixture.oldAttachment.stop();fixture.oldAttachment.release();fixture.toggle();fixture.rerender()',
+      );
+      expect(
+        await browser.js(
+          '!!fixture.screenHandle.inspect() && fixture.active===1 && !fixture.runtime.inspect().disposed',
+        ),
+      ).toBe(true);
+      await browser.js('fixture.logout()');
+      expect(await browser.js('fixture.screenHandle.inspect()')).toBeNull();
+      await browser.js('fixture.screenWork[1].retired.resolve()');
+      await browser.wait('!fixture.runtime.inspect().bindingBusy');
+      expect(await browser.js('fixture.errors')).toEqual([]);
+      expect(await browser.js('fixture.screenErrors')).toEqual([]);
+    },
+    'approved',
+    runtimeFixture,
+  );
+});
+it('keeps mounted voice available when optional screen ownership fails', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call && fixture.active===1');
+      expect(
+        await browser.js(
+          "fixture.call.voice.status==='idle' && fixture.screenErrors.every(error=>error==='Synthetic screen attachment failure') && fixture.screenErrors.length>0",
+        ),
+      ).toBe(true);
+      await browser.js(
+        "fixture.call.controls.selectInput('synthetic-mic');fixture.call.controls.selectOutput('synthetic-output');fixture.observe(fixture.call.controls.join('room'),'voiceResult')",
+      );
+      await browser.wait("fixture.joins.length===1 && fixture.call.voice.status==='joining'");
+      expect(await browser.js('fixture.screenWork.length')).toBe(0);
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    runtimeFixture.replace('optionalScreenFailure=false', 'optionalScreenFailure=true'),
+  );
+});
+it('delivers every voice transition to synchronous subscribers despite React batching and fences stale subscriptions', async () => {
+  await mountedFixture(async (browser) => {
+    await browser.wait('!!window.fixture?.call && fixture.active===1');
+    await browser.js(`fixture.voiceStates=[];fixture.oldSubscribe=fixture.call.subscribeVoice;
+      fixture.unsubscribeVoice=fixture.call.subscribeVoice(voice=>fixture.voiceStates.push(voice));
+      fixture.call.controls.selectInput('first-fixture-mic');fixture.call.controls.selectInput('second-fixture-mic')`);
+    expect(await browser.js('fixture.voiceStates.map(voice=>voice.input)')).toEqual([
+      '',
+      'first-fixture-mic',
+      'second-fixture-mic',
+    ]);
+    expect(
+      await browser.js(
+        'fixture.voiceStates.every(voice=>Object.isFrozen(voice)&&Object.isFrozen(voice.participants))',
+      ),
+    ).toBe(true);
+    await browser.js("fixture.server=fixture.state('b');fixture.auth.refresh()");
+    await browser.wait("fixture.auth.state.csrfToken==='b' && !!fixture.call");
+    await browser.js(
+      "fixture.oldSubscribe(()=>fixture.errors.push('Obsolete subscription'));fixture.call.controls.selectInput('replacement-fixture-mic')",
+    );
+    expect(await browser.js('fixture.voiceStates.length')).toBe(3);
+    expect(await browser.js('fixture.errors')).toEqual([]);
+  });
+});
+
 it('lease invalidation stops preview immediately while voice recovery stays independent', async () => {
   await mountedFixture(
     async (browser) => {
@@ -89,6 +214,7 @@ it('default provider path constructs no preview and exposes audio context only',
       expect(await browser.js('Object.keys(fixture.call).sort()')).toEqual([
         'controls',
         'devices',
+        'subscribeVoice',
         'voice',
       ]);
       await browser.js('fixture.join()');
@@ -125,6 +251,7 @@ it('one injected preview survives view remount, same-session refresh and depende
       expect(await browser.js('Object.keys(fixture.call).sort()')).toEqual([
         'controls',
         'devices',
+        'subscribeVoice',
         'voice',
       ]);
     },
@@ -450,6 +577,7 @@ async function mountedFixture(
           f.captures.forEach(capture=>f.finishCapture(capture));
           f.enumerations.forEach(enumeration=>enumeration.resolve([]));
           f.drainPreview?.();
+          f.drainScreens?.();
           for(let i=0;i<8;i++)await Promise.resolve();})()`,
           )
           .catch(() => {});

@@ -8,7 +8,7 @@ import type {
   ScreenLinkNotice,
   ScreenClosed,
   ScreenRenewal,
-  ScreenShare,
+  ScreenPublishGrant,
   ScreenSignal,
   ScreenSignalNotice,
 } from '@tricord/shared';
@@ -212,7 +212,7 @@ export function createScreenPeerFixture(
       });
       const started = Date.now();
       binding = await command<ScreenBinding>('screen:bind', {
-        version: 1,
+        version: 2,
         leaseId,
         requestId: crypto.randomUUID(),
       });
@@ -264,14 +264,14 @@ export function createScreenPeerFixture(
       }
     },
     async publish() {
-      return command<ScreenShare>('screen:publish', {
+      return command<ScreenPublishGrant>('screen:publish', {
         epoch: binding.epoch,
         requestId: crypto.randomUUID(),
         sourceGeneration: 1,
         profile: 'smooth',
         videoBitrate: 8000000,
         sound: 'tab',
-      });
+      }).then((grant) => grant.share);
     },
     async select(shareId: string) {
       const started = Date.now();

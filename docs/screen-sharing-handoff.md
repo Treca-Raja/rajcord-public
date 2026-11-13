@@ -1,122 +1,70 @@
 # Screen-sharing contributor and GPT handoff
 
-Prepared 2026-11-02 for continuing `feature/screen-share-design`. Screen sharing is **not available in the app**. The branch contains tested server/headless components and isolated runtime fixtures; production capture remains disabled. Continue one bounded slice at a time with **GPT-6.1 Sol, high thinking, in Codex on the checkout**.
+Updated 2026-11-13. Screen sharing is implemented locally on `feature/screen-sharing-completion`, continuing the pushed `feature/screen-share-design` checkpoint. It is not a production deployment, signed release, or physical/WAN performance qualification. This document supersedes the old slice-1 continuation prompt; dated evidence remains in [verification.md](verification.md).
 
-## Start here
+## Current continuation - 2026-11-13
 
-1. Read [AGENTS.md](../AGENTS.md), then inspect `git status --short --branch` and `git worktree list`. Preserve staged, uncommitted and unrelated work.
-2. Read the [current production specification](screen-sharing-design.md#production-authority-and-capture-handoff-specification), [ordered Sol packet](screen-sharing-design.md#dependency-ordered-sol-packet) and [canonical next prompt](screen-sharing-design.md#sol-handoff-next-prompt). The [SVG concept](screen-sharing-concept.svg) describes intended interaction, not implemented UI.
-3. Consult only the relevant dated sections of [verification.md](verification.md), especially the receiving-lane fixture and production authority specification near the end. Older sections describe earlier checkpoints; their “next task” statements are historical.
-4. Inspect the affected source/tests before editing. Do not restart the architecture investigation, repeat S0 benchmarks, or interpret a design proposal as an implemented grant.
+The source branch was `a30525f`; fetched `develop` was `05bb0ca`. Both remote tips were rechecked unchanged during completion. The original 69 completion files (51 tracked modifications plus 18 new files) and staged upstream integration were snapshotted before continuation. The integration includes current `origin/develop` at `05bb0ca`. The user has now authorized a feature-branch commit/push and PR to `develop` after validation. Shared-branch merge, deployment and desktop rollout remain separately gated.
 
-### Branch and upstream state
+The user's current requirements are internet P2P, independently selectable resolution and frame rate, separate video bitrate, and sharing in the main window. The initial choices are 480p/720p/1080p, 15/30/60 fps and 2/4/6/8/12/20 Mb/s per viewer. These are ceilings, not measured delivery. Ultra/4K remains deferred.
 
-Preparation began at `264fcc7409c8f776819ba70abb60bfe877434a96`, with an empty index and the screen-sharing work still uncommitted. No remote `feature/screen-share-design` existed when checked. The handoff becomes transferable only after its source, tests, fixtures, contracts and documentation have been committed and pushed together; pushing the old base alone would transfer none of that work.
+The dedicated screen policy keeps Cloudflare STUN and prefers direct ICE. Optional `SCREEN_TURN_HOST=turn.rajcord.com` reuses the pinned LiveKit 1.13.10 TURN service on its existing UDP 3478/TLS 5349 listeners. The API issues separate 60-second TURN allocation credentials after exact screen-binding authorization and refreshes them on renewal; no LiveKit room JWT/API secret enters the renderer. Credentials stay in memory. The setting is off until explicitly configured. Existing LiveKit relay destination/quota policy still applies; forced relay media, especially two peers using the same VPS relay, remains a manual acceptance gate. No additional VPS service/port is proposed.
 
-On 2026-11-02, fetching `develop` found `origin/develop` at `05bb0ca60277eb642ae6069a25cd53e64b8c3025`, **21 commits ahead of this branch's base**. Those changes include application sounds, presence, chat and delivery work, with overlapping edits in Auth, VoicePanel, voice-controller, Electron main, API app and shared contracts. No upstream merge/rebase was performed. Recheck the remote: these are dated tips, not permanent destinations. Integrate upstream in a separate scoped task with regression checks before considering this feature ready for a PR against `develop`; do not silently overwrite either side or rewrite applied migrations. Historical green results do not qualify the merged result.
+## Implemented composition
 
-For a fresh machine, clone the feature branch after it has been pushed, using the repository linked in [README](../README.md). If already cloned, inspect local work before fetching/checking out; never reset to make the branch match. Verify the remote destination and outgoing range before publishing. Feature PRs target `develop`; no push, merge or deployment is implied by the GPT prompt below.
+- `VoiceController.bindScreens` privately delegates the exact current lease. Copied/frozen replies, request-start deadlines, lease/generation fences and retained raw bind/retirement admission prevent stale adoption. No lease/Room/JWT getter or binding control enters VoiceControls.
+- One bootstrap-owned `ScreenRuntime` retains the capture adapter, incoming lane and binding admission across React StrictMode, session/provider replacement and suspension. A failed optional screen owner does not prevent microphone voice.
+- One dedicated cookie/CSRF-authenticated screen socket belongs to the approved session/exact binding. It does not reconnect or share AuthRoot's chat socket. Screen protocol 2 rejects older versions explicitly.
+- C1 capture preparation requires the same session, exact lease and connected S1 binding. Main derives native frame/navigation identity and independently authenticates Session.fetch with HttpOnly cookies. Renderer correlation tags and epochs confer no authority.
+- C2 publish returns a finite `{share, remainingMs}` proof; renew asserts the exact live own publication. Main promotes consumed preview authority into a distinct publication record and checks it independently. Replays retain absolute deadlines; voice heartbeats alone cannot revive publication.
+- CaptureSession atomically changes preview supervision to publication while retaining the adapter/result/tracks. Explicit branded renewal is adopted by binding, source, peer, incoming and playback owners before the old deadline. Source/session/lease loss remains a root stop; old preview callbacks cannot stop a promoted source.
+- The actual main-window UI supports preparation, fresh-gesture source choice, silent local preview, explicit Start, independent outgoing and watching quality, source-sound consent, watching, screen mute/volume, exact selected output, hide/resume and reachable Stop. Publisher video ceilings are installed before an offer and confirmed after negotiation. At zero viewers there is no outgoing screen peer/RTP.
+- Source sound is video-only by default. Edge selected-tab sound and Windows desktop system loopback require explicit selection; system sound is labelled as potentially including every application. Source-sound failure never silently becomes video-only. These consent paths do not certify physical routing, intelligibility, feedback isolation or sync.
+- Hiding/minimizing closes incoming delivery and conditionally unselects its exact old revision. Returning selects afresh with the same viewer limits only if source/binding identity is still current. Outgoing sharing continues. Screen Stop is available in the sidebar/panel and native menu/tray.
+- Application sounds observe synchronous immutable call transitions so React batching and panel remount do not lose join/leave cues. Screen failures do not disconnect microphone voice.
 
-## What exists and what does not
+## Stop limitation and acceptance gaps
 
-| Area                     | Current implementation/evidence                                                                                                                                                                                                                            |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S1 API                   | Ephemeral screen state, exact session/channel/voice-lease authorization, synchronous lease invalidation, bounded authenticated signaling, private directory/link delivery and server capture-authorization routes. Unit/disposable API fixtures exist.     |
-| S2 capture               | Web adapter, desktop consent policy, isolated picker, default-disabled native boundary, main/server authority and headless preview ownership. An actual Electron Session.fetch + HttpOnly cookie + disposable API + test-owned WebContents fixture exists. |
-| Auth and voice ownership | Verified approved-session call owner, persistent call across panel remount, stale logout/session fencing and delayed revocation-cookie fixes. Existing microphone-only LiveKit voice remains separate.                                                     |
-| S3 media components      | Headless ScreenPeer, experimental per-link quality/manual video bitrate policy, ScreenPlaybackOwner and receive lane. Construction/replacement/deadline/cleanup races have focused coverage.                                                               |
-| Native receiving fixture | Real browser peers, generated video/audio, authenticated API signaling and actual receive-lane composition. Video inspection is silent; independently decoded Opus proves received encoded audio, not audible speaker playback. Output elements are fakes. |
-| Production handoff       | **Proposed only.** Private exact-lease delegation, document-owned runtime/admission, C1 capture-binding correlation, C2 publication proof/renewal and atomic CaptureSession supervision still need implementation.                                         |
-| App feature              | No screen UI, production preparation trigger/opt-in, capture-owner/publishing/receiving wiring or reachable screen Stop indicator yet. Do not advertise a working app feature.                                                                             |
+The user explicitly chose the main-window architecture after the independent-stop tradeoff was explained. Accepted capture and peers remain call-renderer-owned. Main can invalidate pending/native authority and notify Stop; that alone does not prove cessation if this renderer is frozen or suspended. Do not silently destroy the shared voice window as a screen-only fallback or claim an independent hard cutoff.
 
-Latest pre-handoff evidence records **746 portable tests across 46 files** and **63 browser cases across three files**, with workspace typecheck/lint/build passing. These are dated results from the previous implementation checkpoint, not proof that tests ran on your machine. The handoff preparation checks are recorded separately in [verification.md](verification.md#screen-sharing-contributor-handoff---2026-11-02).
+Remaining manual qualification covers real picker/source identity, Windows system/Edge tab sound, physical output routing and digital feedback, normal autoplay/permissions, A/V sync, sustained rendered 1080p60, approved hardware/resource budgets, active voice plus fan-out, actual hidden-window packet cessation and consented cross-network/STUN behavior. Synthetic media, fake devices, native parameter readback and loopback peers do not close those gates. No signed-install/update acceptance is claimed.
 
-During handoff preparation, all **746 portable tests**, workspace typecheck, lint and build passed again. Full `pnpm format:check` reports **101 unchanged files with checkout CRLF endings**: every warning was verified against its formatted LF `HEAD` content. Do not reformat that unrelated work as part of the next feature slice; preserve `.gitattributes` and distinguish local checkout normalization from a source change. Browser/database/Electron/voice runtime suites were not rerun for this documentation-only handoff.
+## Reproduce relevant checks
 
-### Constraints to preserve
-
-- Prioritize working **1080p60**, a **separately selectable video bitrate**, and **explicitly consented source sound**. Ultra is later work.
-- Screens use direct WebRTC; LiveKit remains microphone-only. Do not borrow its tokens, rooms or TURN settings for screens.
-- Hidden/minimized must stop incoming delivery; outgoing sharing and reachable Stop must continue. Local element detachment or cleanup completion does not prove remote acknowledgement or zero incoming packets.
-- Account IDs, renderer booleans, lease/link/epoch references and local deadlines are not authorization. Reauthorize fresh sessions and exact leases server-side; derive native frame/gesture identity in main.
-- Logical Stop/cancellation/timeout must act promptly, while unresolved native/HTTP/RTC/cleanup work retains admission until actual settlement. Recreating an owner/wrapper must not bypass limits. Old work cannot stop a replacement.
-- Preview expiry remains a hard stop. Do not extend existing deadlines from heartbeat/local snapshots, cast tab sound into system sound, fabricate grants, or transfer only tracks and then dispose their owning adapter.
-- Keep production capture disabled and source/audio policies unqualified. Use synthetic media and disposable accounts/databases/profiles/rooms only. No private desktop, microphone, speaker, real account data, resets or volume removal.
-
-Physical picker/source identity, Windows system/Edge tab sound, native audible output/routing, feedback/sync, sustained **rendered** 1080p60, hardware/approved budgets, active voice plus fan-out, actual bitrate wire effects, hidden packet cessation and consented WAN/STUN remain gates. Requested/read-back ceilings and decoded FPS do not qualify them. Main currently fences pending native requests; it does not establish independent stopping of already-issued renderer tracks when that renderer is suspended/unresponsive.
-
-## Exact next development slice
-
-The S3 Astra packet's tasks 1–4 are complete. **Do not rerun “Astra task 4.”** The next implementation task is **production packet slice 1: private exact-lease screen-binding delegation**, as specified in the canonical prompt. It is not a production adapter.
-
-Affected files: [voice-controller.ts](../apps/web/src/voice-controller.ts), a new `apps/web/src/voice-screen-binding.test.ts`, relevant [lease lifecycle tests](../apps/web/src/voice-lease-lifecycle.test.ts), and the existing design/checkpoint/evidence sections. Reuse shared ScreenBindRequest/ScreenBinding contracts. Keep the injected factory absent in production and do not expose the method through VoiceControls.
-
-Critical detail: VoiceController can recover to a different private lease **without changing its call generation**. Fence both exact lease object identity and generation, plus wanted/disposed state, before allocation and after every await. Register retirement immediately on allocation, strictly validate/copy/freeze the binding reply, and calculate its conservative deadline from request-start time. Use the specified five-second prototype logical bound without freeing the unresolved raw bind/retirement slot. Test late and reentrant outcomes and explicitly drain fixtures.
-
-After that comes the persistent injected runtime shell. **GPT-6 Astra high review is highly recommended before implementing C1/C2's new authentication/native permission/publication/renewal contracts**, using the focused prompt in the specification. It need not interrupt the first two isolated injected slices. Independent active-screen stop enforcement must also be resolved before qualification/enablement. Do not use a general review as a substitute for physical/runtime evidence.
-
-## Setup and checks
-
-Use Node **24+** and pnpm **11.25.0**, matching [package.json](../package.json). In a fresh clone:
+Use Node 24+ and pnpm 11.25.0. Preserve existing credentials, schemas and volumes. Restore dependencies only if missing; build shared packages before source fixtures. Runtime suites require the documented loopback PostgreSQL/LiveKit services and disposable test data/profiles.
 
 ```powershell
-pnpm install --frozen-lockfile
-pnpm build:packages
-```
-
-The next injected delegate slice needs no database, LiveKit, Electron runtime or physical devices. Start with the relevant synthetic tests, then workspace checks:
-
-```powershell
-pnpm exec vitest run apps/web/src/voice-screen-binding.test.ts apps/web/src/voice-lease-lifecycle.test.ts apps/web/src/voice-session.test.ts apps/web/src/call-preview.test.ts
-pnpm test --no-file-parallelism
+pnpm exec vitest run --no-file-parallelism
 pnpm typecheck
 pnpm lint
 pnpm build
-pnpm format:check
-git diff --check
-```
-
-`voice-screen-binding.test.ts` is the intended new regression file; it does not exist at this checkpoint. Write it as part of the slice before running that selector. Keep full portable tests separate from browser/service fixtures when investigating startup failures; the prior receiving-lane checkpoint records an intermittent startup/reload failure and its successful unchanged standalone rerun. Do not remove assertions or increase limits to hide it.
-
-For later integration work, follow [README setup](../README.md#setup-and-first-owner) and the [verification skill](../.agents/skills/rajcord-verify/SKILL.md). Generate your own ignored local configuration; never copy another developer's `.env`, cookies, database, profiles or `.local` tool directory. PostgreSQL/LiveKit fixtures require loopback services and an appropriately scoped local test role. Keep existing credentials/data intact; no new owner is needed merely to run synthetic tests.
-
-After required setup/build, available commands include:
-
-```powershell
 pnpm test:db
 pnpm exec vitest run --config vitest.browser.config.ts
-pnpm test:desktop:picker
+pnpm --filter @tricord/api test:browser
+pnpm --filter @tricord/api test:voice
+pnpm --filter @tricord/api test:voice:load
+pnpm --filter @tricord/api test:desktop
 pnpm test:desktop:capture
 pnpm test:desktop:authority
+pnpm desktop:package
+pnpm desktop:audit
 ```
 
-Use only checks applicable to the change. The browser config includes the mounted owner, cookie race and native receiving-lane fixtures; the native screen fixture needs local PostgreSQL/LiveKit and Edge. Electron fixtures need `pnpm setup:desktop`; the authority fixture also needs the disposable API services. Fixture ports and detailed prerequisites are in README/distribution/verification. None of these commands qualifies physical sound/display capture. Do not run `pnpm test:screen` (S0 probes) without a relevant media change. Report unavailable prerequisites honestly and explicitly settle/drain fixture-owned work before teardown.
+The actual app screen fixture uses port 3012, two or four disposable accounts, generated canvas video/PCM source sound and fake voice devices. It verifies preview consent, independent quality, direct candidate types, source/audio delivery, live viewer FPS changes, renewal beyond the original deadline, hide/resume limits and Stop preserving voice. It does not capture a private desktop or certify physical playback. The three-viewer case verifies independently received video and cleanup for all viewers while one hides/resumes. Use `pnpm exec vitest run --config vitest.browser.config.ts apps/web/src/screen-call.browser.integration.test.ts` after building to select it.
 
-## Copy-paste prompt for your GPT
+Inspect current source and [latest verification](verification.md#screen-sharing-continuation-and-production-restore-verification---2026-11-13) before continuing. The remaining work is acceptance/review and the normal separately authorized delivery flow; do not restart the old architecture investigation or implement a duplicate lease delegate/runtime. Follow AGENTS.md, preserve existing work, and keep local/synthetic, native-fixture, physical and WAN evidence distinct.
 
-```text
-Continue Rajcord screen sharing on feature/screen-share-design in this checkout.
-Use GPT-6.1 Sol high in Codex. Read AGENTS.md and docs/screen-sharing-handoff.md.
-Inspect branch/worktree/status and source drift first; preserve all existing work.
-Note the recorded upstream develop drift; do not silently merge/rebase/reset it.
-Read only the current production specification, ordered packet, canonical next prompt
-in docs/screen-sharing-design.md, relevant verification evidence and affected source/tests.
+## Manual acceptance and production promotion
 
-Execute only production packet slice 1: private exact-lease screen-binding delegation
-inside VoiceController with a trusted lazy injected bind/retire transport. Follow the
-canonical prompt's acceptance criteria. Fence exact private lease identity as well as
-call generation/wanted/disposed state; recovery can change the lease without generation.
-Admit before native/transport allocation, register cleanup immediately, validate/copy/freeze
-the response, and retain one unresolved raw bind/retirement through logical timeout,
-cancellation, leave/disposal and late results. Do not expose lease/Room/token internals.
+Do not mark these gates passed from synthetic fixtures:
 
-Add deterministic synthetic/deferred/fake-clock regressions, drain all fixture work,
-run appropriate focused/portable/type/lint/build checks, and record actual results.
-Update the existing checkpoint: persistent injected runtime shell is next. Keep C1/C2
-as proposed contracts pending focused review. No production factory or VoiceControls
-injection, real screen sockets, provider/UI/IPC wiring, capture, opt-in, publishing,
-peers, physical devices, S0 probes, Ultra work, tickets, commits, pushes, merges or deploys.
-Preserve microphone-only LiveKit voice, source-sound consent and all open media gates.
-If current source has moved beyond this checkpoint, identify the concrete delta before
-selecting work; do not implement a duplicate delegate or restart the whole investigation.
-```
+- Use matched API/web/Windows desktop candidates with two different home networks, then one publisher and three viewers. Check real received video at each supported resolution/FPS, changing watching limits, readable motion/text, upload, CPU/GPU, temperature and voice continuity. Record achieved values rather than requested settings.
+- Test actual monitor/window capture in Electron and supported browser tab/window/screen capture. Cancel the chooser, deny permission, close the selected source, Stop during preview/start/active sharing, switch voice channels, disconnect/reconnect, logout and revoke a session. Verify all old tracks/peers end and replacement sharing needs consent.
+- Test video-only, Edge selected-tab sound, Windows whole-system loopback, missing requested audio, selected speaker disappearance, normal autoplay prompts, mute/volume/deafen, A/V sync and digital feedback from voice playback. Unsupported combinations must fail clearly without substituting microphone/default devices.
+- After approved TURN configuration, verify real selected candidate-pair stats: direct first; relay under blocked direct UDP; TLS 5349 where UDP is unavailable; both peers on restrictive networks. Check two peers needing the same VPS relay against LiveKit's destination/quota rules. No TURN/TLS-on-443 compatibility is claimed.
+- Hide/minimize and inspect actual network delivery cessation for incoming media, then authorized resume. Keep outgoing Stop visible. Test renderer unresponsiveness separately; independent hard Stop remains outside the accepted main-window architecture.
+- Attempt viewing from a different voice channel, unapproved account, revoked session and stale selection. Confirm denied signaling/no new media. Viewers can record received content; P2P exposes peer IPs; the app/signaling server remains trusted.
+
+The user-approved isolated production restore verification completed on 2026-11-13: latest encrypted off-server backup restored/schema checked using temporary corrected operator files and network-none/tmpfs PostgreSQL. Existing health checks passed; all four live container identities/start times/restart counts were unchanged. Only the successful restore timestamp changed and temporary fixtures were removed. The installed release's old restore script was not overwritten; the permanent TCP-readiness fix is part of this reviewed change and must reach scheduled operations through an approved release/maintenance action.
+
+Before production: pass required feature PR CI/review, merge to develop only when separately authorized, prepare a develop-to-main release PR, verify the tested immutable image and rollback compatibility, refresh backup/restore evidence, approve deployment, deploy the matched API/web image, and perform the checklist with a small test group. Desktop distribution/update rollout requires explicit approval.

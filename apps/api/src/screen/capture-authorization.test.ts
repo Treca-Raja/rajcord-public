@@ -7,6 +7,59 @@ import { HttpError } from '../auth/validation.js';
 import { CaptureAuthorizationService } from './capture-authorization.js';
 
 const services: CaptureAuthorizationService[] = [];
+it('denies absent correlation and a foreign or obsolete screen epoch', async () => {
+  const f = fixture(),
+    user = f.user(),
+    other = f.user();
+  await expect(user.prepare({ ...user.request, epoch: other.epoch })).rejects.toMatchObject({
+    statusCode: 403,
+  });
+  const missing = new CaptureAuthorizationService(f.voice, f.time, f.authenticate);
+  services.push(missing);
+  await expect(
+    missing.prepare(user.token, user.request, user.auth.csrfToken),
+  ).rejects.toMatchObject({ statusCode: 403 });
+  await expect(async () =>
+    f.service.prepare(user.token, { requestId: randomUUID(), sound: 'none' }, user.auth.csrfToken),
+  ).rejects.toMatchObject({ statusCode: 400 });
+});
+it.each(['disconnect', 'rebind', 'session', 'lease'] as const)(
+  'invalidates capture on screen binding %s even while the old voice lease is still live',
+  async (change) => {
+    const f = fixture(),
+      user = f.user(),
+      grant = await user.prepare();
+    const binding = f.bindings.get(user.auth.user.id)!;
+    if (change === 'disconnect') f.bindings.delete(user.auth.user.id);
+    if (change === 'rebind') f.bindings.set(user.auth.user.id, { ...binding, identity: {} });
+    if (change === 'session') binding.sessionId = randomUUID();
+    if (change === 'lease') binding.lease = { ...binding.lease };
+    await expect(user.verify(grant.id, true)).rejects.toMatchObject({ statusCode: 403 });
+    expect(user.lease.revoked).toBe(false);
+  },
+);
+it('fences binding replacement during delayed authorization and does not extend the voice lock', async () => {
+  const f = fixture(),
+    user = f.user(),
+    grant = await user.prepare();
+  let release!: () => void;
+  const gate = new Promise<void>((yes) => {
+    release = yes;
+  });
+  const authorize = vi.mocked(f.voice.authorize).getMockImplementation()!;
+  vi.mocked(f.voice.authorize).mockImplementationOnce(async (...args) => {
+    await gate;
+    return authorize(...args);
+  });
+  const result = user.verify(grant.id, true).then(
+    () => 'allowed',
+    (error: HttpError) => error.statusCode,
+  );
+  await new Promise<void>((yes) => setImmediate(yes));
+  f.bindings.get(user.auth.user.id)!.identity = {};
+  release();
+  expect(await result).toBe(403);
+});
 afterEach(() => {
   services.splice(0).forEach((s) => s.dispose());
   vi.restoreAllMocks();
@@ -38,7 +91,17 @@ function fixture() {
       throw new HttpError(401, 'Unavailable');
     return lease;
   });
-  const service = new CaptureAuthorizationService(voice, () => now, authenticate);
+  const bindings = new Map<
+    string,
+    { epoch: string; lease: Lease; sessionId: string; identity: object }
+  >();
+  const match = vi.fn((userId: string, sessionId: string, lease: Lease, epoch: string) => {
+    const binding = bindings.get(userId);
+    return binding?.lease === lease && binding.sessionId === sessionId && binding.epoch === epoch
+      ? binding.identity
+      : null;
+  });
+  const service = new CaptureAuthorizationService(voice, () => now, authenticate, match);
   services.push(service);
   const user = () => {
     const token = randomBytes(32).toString('hex');
@@ -69,15 +132,18 @@ function fixture() {
     };
     auths.set(token, auth);
     voice.leases.set(auth.user.id, lease);
+    const epoch = randomUUID();
+    bindings.set(auth.user.id, { epoch, lease, sessionId: auth.sessionId, identity: {} });
     return {
       token,
       auth,
       lease,
-      request: { requestId: randomUUID(), sound: 'none' },
+      epoch,
+      request: { requestId: randomUUID(), sound: 'none', epoch },
       prepare: (request?: unknown) =>
         service.prepare(
           token,
-          request ?? { requestId: randomUUID(), sound: 'none' },
+          request ?? { requestId: randomUUID(), sound: 'none', epoch },
           auth.csrfToken,
         ),
       verify: (id: string, consume = false) =>
@@ -90,6 +156,8 @@ function fixture() {
     user,
     auths,
     authenticate,
+    bindings,
+    match,
     time: () => now,
     setTime: (value: number) => {
       now = value;
@@ -209,6 +277,7 @@ it('keeps slow unauthenticated work outside the shared voice queue', async () =>
       randomBytes(32).toString('hex'),
       {
         requestId: randomUUID(),
+        epoch: randomUUID(),
         sound: 'none',
       },
       'invalid',
@@ -251,6 +320,7 @@ it('does not let invalid or rejected cookies exhaust admission state for a valid
               i.toString(16).padStart(64, '0'),
               {
                 requestId: randomUUID(),
+                epoch: randomUUID(),
                 sound: 'none',
               },
               'invalid',

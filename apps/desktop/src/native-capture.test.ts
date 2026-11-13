@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import type { BrowserWindow, Session, WebContents, WebFrameMain } from 'electron';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
@@ -393,7 +394,7 @@ it.each(['resolve', 'reject'] as const)(
       onError: vi.fn(),
     });
     const f: ReturnType<typeof fixture> = fixture({ authority });
-    await authority.prepare('none');
+    await authority.prepare('none', randomUUID());
     const callback = f.native();
     await flush();
     try {
@@ -402,7 +403,7 @@ it.each(['resolve', 'reject'] as const)(
       await vi.advanceTimersByTimeAsync(5000);
       expect(callback).toHaveBeenCalledExactlyOnceWith(null);
       expect(authority.inspect()).toBeNull();
-      await expect(authority.prepare('none')).rejects.toThrow(/busy/);
+      await expect(authority.prepare('none', randomUUID())).rejects.toThrow(/busy/);
     } finally {
       if (late === 'resolve') resolve({ id, remainingMs: 10000 });
       else reject(new Error('Synthetic late consume failure'));

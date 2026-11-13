@@ -8,6 +8,61 @@ import {
   sessionCaptureTransport,
 } from './capture-authority-http.js';
 
+const screenEpoch = 'b2f73a91-532c-43f8-85ce-e8618afc06be';
+it('replaces preview supervision with a distinct checked publication and ignores old preview expiry', async () => {
+  const f = fixture(),
+    publicationId = randomUUID();
+  f.transport.mockImplementation(async (operation) =>
+    operation === 'cancel' || operation === 'publication-cancel'
+      ? { cancelled: true }
+      : {
+          id: operation === 'handoff' || operation === 'publication-check' ? publicationId : f.id,
+          remainingMs: operation === 'prepare' || operation === 'consume' ? 1500 : 10000,
+        },
+  );
+  const intent = await f.authority.prepare('none', screenEpoch);
+  expect(await f.authority.verify(intent)).toBe(true);
+  const invalidated = vi.fn();
+  f.authority.onInvalidated(invalidated);
+  const status = await f.authority.handoff(randomUUID(), 1);
+  expect(status.remainingMs).toBe(10000);
+  expect(f.authority.inspect()).toBeNull();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.authority.inspectPublication()).not.toBeNull();
+  expect(invalidated).not.toHaveBeenCalled();
+  expect(f.transport.mock.calls.some(([operation]) => operation === 'publication-check')).toBe(
+    true,
+  );
+  f.context.alive = false;
+  expect(f.authority.inspectPublication()).toBeNull();
+  expect(invalidated).toHaveBeenCalledTimes(1);
+  await flush();
+  expect(
+    f.transport.mock.calls.some(
+      ([operation, body]) => operation === 'publication-cancel' && body.id === publicationId,
+    ),
+  ).toBe(true);
+});
+it('does not treat a reused preview grant ID as publication authority', async () => {
+  const f = fixture(),
+    intent = await f.authority.prepare('none', screenEpoch);
+  await f.authority.verify(intent);
+  await expect(f.authority.handoff(randomUUID(), 1)).rejects.toThrow('own authority');
+  expect(f.authority.inspectPublication()).toBeNull();
+});
+it('sends the binding correlation but derives frame identity independently and rejects missing epochs', async () => {
+  const f = fixture();
+  await expect(f.authority.prepare('none', '')).rejects.toThrow('binding');
+  expect(f.transport).not.toHaveBeenCalled();
+  const intent = await f.authority.prepare('none', screenEpoch);
+  expect(f.transport.mock.calls[0]![1]).toEqual({
+    requestId: expect.any(String),
+    sound: 'none',
+    epoch: screenEpoch,
+  });
+  expect(intent.frame).toBe(f.context.mainFrame);
+  expect(Object.keys(intent)).not.toContain('epoch');
+});
 const sources: { dispose(): Promise<void> }[] = [];
 const flush = async () => {
   for (let i = 0; i < 12; i++) await Promise.resolve();
@@ -44,7 +99,7 @@ it('binds only main context, conservatively subtracts full RTT and consumes once
     vi.setSystemTime(100500);
     return { id: f.id, remainingMs: 10000 };
   });
-  const intent = await f.authority.prepare('none');
+  const intent = await f.authority.prepare('none', screenEpoch);
   expect(intent.expires).toBe(110000);
   expect(intent.frame).toBe(f.context.mainFrame);
   expect(Object.isFrozen(intent)).toBe(true);
@@ -56,7 +111,7 @@ it.each(['navigation', 'frame', 'url', 'expiry'] as const)(
   'invalidates on %s and emits before any remote cleanup',
   async (change) => {
     const f = fixture(),
-      intent = await f.authority.prepare('none'),
+      intent = await f.authority.prepare('none', screenEpoch),
       invalidated = vi.fn();
     f.authority.onInvalidated(invalidated);
     if (change === 'navigation') f.context.navigation++;
@@ -78,10 +133,10 @@ it('rejects stale prepare completion and keeps a single ignored-abort operation 
         resolve = yes;
       }),
   );
-  const pending = f.authority.prepare('none');
+  const pending = f.authority.prepare('none', screenEpoch);
   await flush();
   f.authority.invalidate();
-  await expect(f.authority.prepare('none')).rejects.toThrow(/busy/);
+  await expect(f.authority.prepare('none', screenEpoch)).rejects.toThrow(/busy/);
   resolve({ id: f.id, remainingMs: 10000 });
   await expect(pending).rejects.toThrow(/ended/);
   await flush();
@@ -90,7 +145,7 @@ it('rejects stale prepare completion and keeps a single ignored-abort operation 
 });
 it('rejects delayed consume completion after logout and does not revive the intent', async () => {
   const f = fixture(),
-    intent = await f.authority.prepare('none');
+    intent = await f.authority.prepare('none', screenEpoch);
   let resolve!: (value: unknown) => void;
   f.transport.mockImplementationOnce(
     () =>
@@ -114,7 +169,7 @@ it('rejects a late response after network timeout even when the transport ignore
         resolve = yes;
       }),
   );
-  const pending = f.authority.prepare('none');
+  const pending = f.authority.prepare('none', screenEpoch);
   await flush();
   const rejected = expect(pending).rejects.toThrow(/ended/);
   await vi.advanceTimersByTimeAsync(5000);
@@ -126,7 +181,7 @@ it('rejects a late response after network timeout even when the transport ignore
 });
 it('watches revocation without extending deadlines and fails closed on outages', async () => {
   const f = fixture(),
-    intent = await f.authority.prepare('none');
+    intent = await f.authority.prepare('none', screenEpoch);
   await vi.advanceTimersByTimeAsync(1000);
   expect(f.authority.inspect()?.expires).toBe(intent.expires);
   f.transport.mockRejectedValueOnce(new Error('Synthetic authority outage'));
@@ -136,7 +191,7 @@ it('watches revocation without extending deadlines and fails closed on outages',
 });
 it('queues at most one final verification behind a slow check, without overlapping HTTP work', async () => {
   const f = fixture(),
-    intent = await f.authority.prepare('none');
+    intent = await f.authority.prepare('none', screenEpoch);
   let resolve!: (value: unknown) => void;
   f.transport.mockImplementationOnce(
     () =>
@@ -154,7 +209,7 @@ it('queues at most one final verification behind a slow check, without overlappi
 });
 it('invalidates at the logical deadline while an ignored-abort check still owns the native slot', async () => {
   const f = fixture(),
-    intent = await f.authority.prepare('none');
+    intent = await f.authority.prepare('none', screenEpoch);
   let resolve!: (value: unknown) => void;
   f.transport.mockImplementationOnce(
     () =>
@@ -172,7 +227,7 @@ it('invalidates at the logical deadline while an ignored-abort check still owns 
     expect(f.transport.mock.calls[1]![2].aborted).toBe(true);
     expect(f.authority.inspect()).toBeNull();
     expect(verified).toBe(false);
-    await expect(f.authority.prepare('none')).rejects.toThrow(/busy/);
+    await expect(f.authority.prepare('none', screenEpoch)).rejects.toThrow(/busy/);
     expect(f.transport).toHaveBeenCalledTimes(2);
   } finally {
     resolve({ id: f.id, remainingMs: 4000 });
@@ -191,7 +246,7 @@ it('settles local disposal and prepare without waiting for ignored native abort'
   );
   let ended = false,
     disposed = false;
-  const pending = f.authority.prepare('none').catch(() => {
+  const pending = f.authority.prepare('none', screenEpoch).catch(() => {
     ended = true;
   });
   await flush();
@@ -244,7 +299,8 @@ it.each(
   'fences $operation on $interruption before late $late',
   async ({ operation, interruption, late }) => {
     const f = fixture();
-    const intent = operation === 'prepare' ? undefined : await f.authority.prepare('none');
+    const intent =
+      operation === 'prepare' ? undefined : await f.authority.prepare('none', screenEpoch);
     let resolve!: (value: unknown) => void, reject!: (error: Error) => void;
     f.transport.mockImplementationOnce(
       () =>
@@ -256,7 +312,7 @@ it.each(
     let ended = false;
     let pending: Promise<unknown> | undefined;
     if (operation === 'prepare')
-      pending = f.authority.prepare('none').catch(() => {
+      pending = f.authority.prepare('none', screenEpoch).catch(() => {
         ended = true;
       });
     if (operation === 'consume')
@@ -275,7 +331,7 @@ it.each(
       expect(f.authority.inspect()).toBeNull();
       if (pending) expect(ended).toBe(true);
       expect(f.transport.mock.calls.at(-1)![2].aborted).toBe(true);
-      await expect(f.authority.prepare('none')).rejects.toThrow(/busy/);
+      await expect(f.authority.prepare('none', screenEpoch)).rejects.toThrow(/busy/);
       expect(f.transport).toHaveBeenCalledTimes(calls);
     } finally {
       if (late === 'resolve') resolve({ id: f.id, remainingMs: 10000 });
@@ -287,7 +343,7 @@ it.each(
     expect(f.transport.mock.calls.filter((call) => call[0] === 'cancel')).toHaveLength(1);
     await flush();
     if (interruption !== 'dispose') {
-      const replacement = await f.authority.prepare('none');
+      const replacement = await f.authority.prepare('none', screenEpoch);
       expect(replacement).not.toBe(intent);
       expect(await f.authority.verify(replacement)).toBe(true);
     }
@@ -297,7 +353,7 @@ it.each(['resolve', 'reject'] as const)(
   'bounds background cancellation and observes its late %s',
   async (late) => {
     const f = fixture();
-    await f.authority.prepare('none');
+    await f.authority.prepare('none', screenEpoch);
     let resolve!: (value: unknown) => void, reject!: (error: Error) => void;
     f.transport.mockImplementationOnce(
       () =>
@@ -312,7 +368,7 @@ it.each(['resolve', 'reject'] as const)(
       await vi.advanceTimersByTimeAsync(5000);
       expect(f.onError).toHaveBeenCalledWith('cancel_unavailable');
       expect(f.transport.mock.calls.at(-1)![2].aborted).toBe(true);
-      await expect(f.authority.prepare('none')).rejects.toThrow(/busy/);
+      await expect(f.authority.prepare('none', screenEpoch)).rejects.toThrow(/busy/);
       await f.authority.dispose();
       expect(f.transport).toHaveBeenCalledTimes(2);
     } finally {
@@ -325,7 +381,7 @@ it.each(['resolve', 'reject'] as const)(
 );
 it('does not dispatch obsolete prepare work after same-stack disposal', async () => {
   const f = fixture();
-  const pending = f.authority.prepare('none');
+  const pending = f.authority.prepare('none', screenEpoch);
   const rejected = expect(pending).rejects.toThrow(/ended/);
   await f.authority.dispose();
   await rejected;
@@ -352,7 +408,7 @@ it.each(['reject', 'hang'] as const)(
     const transport = sessionCaptureTransport({ fetch } as never, 'https://fixture.example');
     f.transport.mockImplementationOnce((op, body, signal) => transport(op, body, signal));
     let ended = false;
-    const pending = f.authority.prepare('none').catch(() => {
+    const pending = f.authority.prepare('none', screenEpoch).catch(() => {
       ended = true;
     });
     await flush();
@@ -361,7 +417,7 @@ it.each(['reject', 'hang'] as const)(
       if (outcome === 'hang') {
         await vi.advanceTimersByTimeAsync(5000);
         expect(ended).toBe(true);
-        await expect(f.authority.prepare('none')).rejects.toThrow(/busy/);
+        await expect(f.authority.prepare('none', screenEpoch)).rejects.toThrow(/busy/);
         expect(f.transport).toHaveBeenCalledTimes(1);
       } else {
         await pending;
@@ -386,7 +442,7 @@ it('cancels a stalled JSON reader on abort and makes no later POST', async () =>
   const fetch = vi.fn(async () => response);
   const transport = sessionCaptureTransport({ fetch } as never, 'https://fixture.example');
   f.transport.mockImplementationOnce((op, body, signal) => transport(op, body, signal));
-  const pending = f.authority.prepare('none');
+  const pending = f.authority.prepare('none', screenEpoch);
   const rejected = expect(pending).rejects.toThrow(/ended/);
   await flush();
   await vi.advanceTimersByTimeAsync(5000);
@@ -408,13 +464,13 @@ it('disposes late headers after abort without parsing authority or making anothe
   );
   const transport = sessionCaptureTransport({ fetch } as never, 'https://fixture.example');
   f.transport.mockImplementationOnce((op, body, signal) => transport(op, body, signal));
-  const pending = f.authority.prepare('none');
+  const pending = f.authority.prepare('none', screenEpoch);
   const rejected = expect(pending).rejects.toThrow(/ended/);
   await flush();
   try {
     await vi.advanceTimersByTimeAsync(5000);
     await rejected;
-    await expect(f.authority.prepare('none')).rejects.toThrow(/busy/);
+    await expect(f.authority.prepare('none', screenEpoch)).rejects.toThrow(/busy/);
   } finally {
     const response = new Response(new ReadableStream<Uint8Array>({ cancel }), {
       headers: { 'content-type': 'application/json' },
@@ -488,7 +544,7 @@ it.each([
 ])('rejects malformed authority response %#', async (mutation) => {
   const f = fixture();
   f.transport.mockResolvedValueOnce({ id: f.id, remainingMs: 10000, ...mutation });
-  await expect(f.authority.prepare('none')).rejects.toThrow();
+  await expect(f.authority.prepare('none', screenEpoch)).rejects.toThrow();
   expect(f.authority.inspect()).toBeNull();
 });
 it('uses only fixed session fetch routes, keeps CSRF in main and rejects redirects/oversized responses', async () => {
@@ -567,7 +623,7 @@ it.each(['navigation', 'renderer-loss', 'closed', 'cookie', 'before-quit', 'will
     });
     sources.push(authority);
     expect(session.fetch).not.toHaveBeenCalled();
-    const intent = await authority.prepare('none');
+    const intent = await authority.prepare('none', screenEpoch);
     expect(authority.inspect()).toBe(intent);
     const invalidated = vi.fn();
     authority.onInvalidated(invalidated);

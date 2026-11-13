@@ -63,7 +63,7 @@ export function parseScreenIce(value: unknown, address: ScreenAddress = screenAd
     !/^\d{1,5}$/.test(parts[5] ?? '') ||
     Number(parts[5]) > 65535 ||
     parts[6] !== 'typ' ||
-    !['host', 'srflx', 'prflx'].includes(parts[7]!) ||
+    !['host', 'srflx', 'prflx', 'relay'].includes(parts[7]!) ||
     (parts.length - 8) % 2 !== 0
   )
     throw invalid();

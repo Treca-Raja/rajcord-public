@@ -1,4 +1,5 @@
 import type { Room, LocalAudioTrack, RemoteTrack } from 'livekit-client';
+import { ScreenBindingOwner, type ScreenBindingDependency } from './screen-binding';
 export type VoiceChannel = {
   id: string;
   name: string;
@@ -55,8 +56,14 @@ export class VoiceController {
   private disposed = false;
   private leaseInvalidations = new Set<() => void>();
   private notifyingLease = false;
+  private leaseAuthorized = false;
+  private readonly screens: ScreenBindingOwner;
   onChange: () => void = () => {};
-  constructor(private request: Request) {
+  constructor(
+    private request: Request,
+    screens?: ScreenBindingDependency,
+  ) {
+    this.screens = new ScreenBindingOwner(screens);
     navigator.mediaDevices?.addEventListener('devicechange', this.devicesChanged);
   }
   // Revocation only: no lease IDs, credentials, deadlines or authorization grants escape.
@@ -68,6 +75,8 @@ export class VoiceController {
     };
   }
   private invalidateLease() {
+    this.leaseAuthorized = false;
+    this.screens.invalidate();
     if (this.notifyingLease) return;
     this.notifyingLease = true;
     try {
@@ -84,6 +93,20 @@ export class VoiceController {
     } finally {
       this.notifyingLease = false;
     }
+  }
+  bindScreens(options: { signal?: AbortSignal } = {}) {
+    const lease = this.lease,
+      generation = this.generation;
+    const current = () =>
+      !this.disposed &&
+      this.wanted &&
+      this.leaseAuthorized &&
+      this.lease === lease &&
+      this.generation === generation &&
+      (this.state.status === 'connected' || this.state.status === 'reconnecting');
+    if (!lease || !current())
+      return Promise.reject(new Error('Join voice before binding screens.'));
+    return this.screens.bind(lease, current, options.signal);
   }
   update(values: Partial<VoiceState>) {
     this.state = { ...this.state, ...values };
@@ -216,6 +239,7 @@ export class VoiceController {
         return;
       }
       this.lease = lease;
+      this.leaseAuthorized = true;
       this.heartbeat = setInterval(() => void this.pulse(), 10000);
       await this.connect(generation);
     } catch (error) {
@@ -232,6 +256,8 @@ export class VoiceController {
       previous = this.lease;
     try {
       await this.request('/voice/heartbeat', 'POST', { leaseId: previous.id });
+      if (this.wanted && generation === this.generation && this.lease === previous)
+        this.leaseAuthorized = true;
     } catch (error) {
       if (!this.wanted || generation !== this.generation || this.lease !== previous) return;
       this.invalidateLease();
@@ -247,6 +273,7 @@ export class VoiceController {
             return;
           }
           this.lease = next;
+          this.leaseAuthorized = true;
           const room = this.room;
           this.room = undefined;
           room?.removeAllListeners();
@@ -281,8 +308,15 @@ export class VoiceController {
     });
     this.room = room;
     const current = () => this.wanted && this.generation === generation && this.room === room;
+    let participantUpdatePending = false;
     const participants = () => {
-      if (current()) this.updateParticipants();
+      if (!current() || participantUpdatePending) return;
+      participantUpdatePending = true;
+      // The SDK can clear peers before emitting its reconnect state in the same turn.
+      queueMicrotask(() => {
+        participantUpdatePending = false;
+        if (current()) this.updateParticipants();
+      });
     };
     room
       .on(RoomEvent.ParticipantConnected, participants)
@@ -315,10 +349,12 @@ export class VoiceController {
     room.on(RoomEvent.Reconnecting, () => {
       if (current()) this.update({ status: 'reconnecting' });
     });
+    room.on(RoomEvent.SignalReconnecting, () => {
+      if (current()) this.update({ status: 'reconnecting' });
+    });
     room.on(RoomEvent.Reconnected, () => {
       if (current()) {
-        this.update({ status: 'connected', error: '' });
-        participants();
+        this.updateParticipants({ status: 'connected', error: '' });
       }
     });
     room.on(RoomEvent.Disconnected, () => {
@@ -347,8 +383,7 @@ export class VoiceController {
         return;
       }
       this.retryCount = 0;
-      this.update({ status: 'connected', error: '' });
-      this.updateParticipants();
+      this.updateParticipants({ status: 'connected', error: '' });
       if (!this.state.inputMissing)
         try {
           await this.capture(generation);
@@ -482,11 +517,12 @@ export class VoiceController {
         this.update({ error: 'Audio output needs attention: ' + (error as Error).message });
     }
   }
-  private updateParticipants() {
+  private updateParticipants(values: Partial<VoiceState> = {}) {
     const room = this.room;
     if (!room) return;
     const list = [room.localParticipant, ...room.remoteParticipants.values()];
     this.update({
+      ...values,
       participants: list.map((p) => ({
         id: p.identity,
         name: p.name || p.identity,
@@ -537,6 +573,7 @@ export class VoiceController {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.screens.dispose();
     navigator.mediaDevices?.removeEventListener('devicechange', this.devicesChanged);
     this.onChange = () => {};
     void this.leave();

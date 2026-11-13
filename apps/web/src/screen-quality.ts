@@ -1,4 +1,11 @@
-import { SCREEN_PROFILES, SCREEN_VIDEO_BITRATES, type ScreenQuality } from '@tricord/shared';
+import {
+  SCREEN_PROFILES,
+  SCREEN_VIDEO_BITRATES,
+  SCREEN_RESOLUTIONS,
+  SCREEN_FRAME_RATES,
+  screenQualityCeiling,
+  type ScreenQuality,
+} from '@tricord/shared';
 
 export class ScreenVideoQualityError extends Error {
   constructor(
@@ -30,11 +37,6 @@ export type ScreenVideoPlan = Readonly<{
 export type ScreenVideoApplied = Readonly<{ plan: ScreenVideoPlan; encoding: ScreenVideoEncoding }>;
 export type ScreenVideoSender = Pick<RTCRtpSender, 'track' | 'getParameters' | 'setParameters'>;
 
-const profiles = {
-  low: { width: 854, height: 480, frameRate: 15 },
-  high: { width: 1920, height: 1080, frameRate: 30 },
-  smooth: { width: 1920, height: 1080, frameRate: 60 },
-} as const;
 function object(value: unknown, fields: string[]): Record<string, unknown> {
   if (
     !value ||
@@ -46,7 +48,7 @@ function object(value: unknown, fields: string[]): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 function quality(value: unknown): Readonly<ScreenQuality> {
-  const data = object(value, ['profile', 'videoBitrate']);
+  const data = object(value, ['profile', 'videoBitrate', 'resolution', 'frameRate']);
   if (!(SCREEN_PROFILES as readonly unknown[]).includes(data.profile))
     throw new ScreenVideoQualityError('invalid', 'Invalid video profile.');
   if (data.profile === 'auto' || data.profile === 'ultra' || data.videoBitrate === null)
@@ -56,9 +58,22 @@ function quality(value: unknown): Readonly<ScreenQuality> {
     );
   if (!(SCREEN_VIDEO_BITRATES as readonly unknown[]).includes(data.videoBitrate))
     throw new ScreenVideoQualityError('invalid', 'Invalid manual video bitrate.');
+  const explicit = data.resolution !== undefined || data.frameRate !== undefined;
+  if (
+    explicit &&
+    (!(SCREEN_RESOLUTIONS as readonly unknown[]).includes(data.resolution) ||
+      !(SCREEN_FRAME_RATES as readonly unknown[]).includes(data.frameRate))
+  )
+    throw new ScreenVideoQualityError('invalid', 'Choose a supported resolution and frame rate.');
   return Object.freeze({
     profile: data.profile as ScreenQuality['profile'],
     videoBitrate: data.videoBitrate as ScreenQuality['videoBitrate'],
+    ...(explicit
+      ? {
+          resolution: data.resolution as ScreenQuality['resolution'],
+          frameRate: data.frameRate as ScreenQuality['frameRate'],
+        }
+      : {}),
   });
 }
 export function screenVideoRequest(value: unknown): ScreenVideoRequest {
@@ -93,8 +108,8 @@ export function screenVideoSource(settings: MediaTrackSettings): ScreenVideoSour
 export function screenVideoPlan(value: unknown, settings: MediaTrackSettings): ScreenVideoPlan {
   const request = screenVideoRequest(value),
     source = screenVideoSource(settings);
-  const publisher = profiles[request.publisher.profile as keyof typeof profiles],
-    viewer = profiles[request.viewer.profile as keyof typeof profiles];
+  const publisher = screenQualityCeiling(request.publisher),
+    viewer = screenQualityCeiling(request.viewer);
   const ceiling = Object.freeze({
     width: Math.min(publisher.width, viewer.width),
     height: Math.min(publisher.height, viewer.height),

@@ -22,12 +22,14 @@ printf 'POSTGRES_USER=tricord\nPOSTGRES_DB=tricord_restorecheck\nPOSTGRES_PASSWO
 docker run -d --name "$name" --network none --tmpfs /var/lib/postgresql/data --env-file "$work/postgres.env" "$pg_image" >/dev/null
 ready=false
 for ((attempt=0; attempt<60; attempt++)); do
-  if docker exec "$name" pg_isready -U tricord -d tricord_restorecheck >/dev/null 2>&1; then ready=true; break; fi
+  # The image initialization server accepts Unix sockets before it shuts down.
+  # TCP becomes available only on the final server.
+  if docker exec "$name" pg_isready -h 127.0.0.1 -U tricord -d tricord_restorecheck >/dev/null 2>&1; then ready=true; break; fi
   sleep 1
 done
 [[ $ready == true ]] || fail 'Disposable restore database did not start.'
-docker exec -i "$name" pg_restore -U tricord -d tricord_restorecheck --exit-on-error --no-owner --no-privileges <"$work/database.dump"
-result=$(docker exec "$name" psql -U tricord -d tricord_restorecheck -At -v ON_ERROR_STOP=1 -c "SELECT count(*) > 0 FROM drizzle.__drizzle_migrations; SELECT to_regclass('public.users') IS NOT NULL AND to_regclass('public.messages') IS NOT NULL AND to_regclass('public.conversation_reads') IS NOT NULL;")
+docker exec -i "$name" pg_restore -h 127.0.0.1 -U tricord -d tricord_restorecheck --exit-on-error --no-owner --no-privileges <"$work/database.dump"
+result=$(docker exec "$name" psql -h 127.0.0.1 -U tricord -d tricord_restorecheck -At -v ON_ERROR_STOP=1 -c "SELECT count(*) > 0 FROM drizzle.__drizzle_migrations; SELECT to_regclass('public.users') IS NOT NULL AND to_regclass('public.messages') IS NOT NULL AND to_regclass('public.conversation_reads') IS NOT NULL;")
 [[ $result == $'t\nt' ]] || fail 'Restored application schema is incomplete.'
 date -u +%s >"$TRICORD_CONFIG_DIR/last-restore-check"
 printf 'Off-server backup restored and schema checked in an isolated tmpfs container.\n'

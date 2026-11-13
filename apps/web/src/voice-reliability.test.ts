@@ -37,6 +37,7 @@ vi.mock('livekit-client', () => ({
       'TrackSubscribed',
       'TrackUnsubscribed',
       'Reconnecting',
+      'SignalReconnecting',
       'Reconnected',
       'Disconnected',
     ].map((k) => [k, k]),
@@ -240,6 +241,57 @@ it('device enumeration failure is reported without an unhandled rejection or fal
   media.dispatchEvent(new Event('devicechange'));
   await vi.waitFor(() => expect(controller.state.error).toContain('Cannot check audio devices'));
   expect(media.getUserMedia).not.toHaveBeenCalled();
+});
+
+it('connection and reconnect recovery publish one authoritative roster with connected state', async () => {
+  setup();
+  const snapshots: { status: string; ids: string[] }[] = [];
+  controller.onChange = () =>
+    snapshots.push({
+      status: controller.state.status,
+      ids: controller.state.participants.map((p) => p.id),
+    });
+  await controller.join('room');
+  expect(snapshots.filter((s) => s.status === 'connected').every((s) => s.ids.includes('me'))).toBe(
+    true,
+  );
+  const room = sdk.rooms[0]!;
+  room.emit('Reconnecting');
+  room.remoteParticipants.set('new', {
+    identity: 'new',
+    name: 'New peer',
+    isSpeaking: false,
+    isMicrophoneEnabled: false,
+  });
+  snapshots.length = 0;
+  room.emit('Reconnected');
+  expect(snapshots).toEqual([{ status: 'connected', ids: ['me', 'new'] }]);
+});
+
+it('SDK peer cleanup before reconnect cannot publish a false connected roster', async () => {
+  setup();
+  await controller.join('room');
+  const room = sdk.rooms[0]!;
+  room.remoteParticipants.set('friend', {
+    identity: 'friend',
+    name: 'Friend',
+    isSpeaking: false,
+    isMicrophoneEnabled: false,
+  });
+  room.emit('ParticipantConnected');
+  await Promise.resolve();
+  const snapshots: { status: string; peers: number }[] = [];
+  controller.onChange = () =>
+    snapshots.push({
+      status: controller.state.status,
+      peers: controller.state.participants.length,
+    });
+  room.remoteParticipants.clear();
+  room.emit('ParticipantDisconnected');
+  room.emit('SignalReconnecting');
+  await Promise.resolve();
+  expect(snapshots.every((s) => s.status === 'reconnecting')).toBe(true);
+  expect(snapshots.at(-1)?.peers).toBe(1);
 });
 
 it('unmute waits for publication so the SDK can signal the assigned track SID', async () => {

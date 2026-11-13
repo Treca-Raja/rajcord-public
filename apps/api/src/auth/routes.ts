@@ -53,7 +53,9 @@ export function registerAuth(
       remember: auth.remember,
     };
   });
-  app.get('/api/auth/me', async (req) => {
+  // Ten clients can exhaust the shared API burst while loading chat. Session
+  // verification must keep its own bounded budget so call authorization survives.
+  app.get('/api/auth/me', { config: authLimit(120) }, async (req) => {
     const auth = await current(req);
     return {
       user: auth.user,
@@ -120,7 +122,7 @@ export function registerAuth(
     disconnect(auth.user.id);
     return { ok: true };
   });
-  app.get('/api/members', async (req) => {
+  app.get('/api/members', { config: authLimit(120) }, async (req) => {
     approved(await current(req));
     const { rows } = await pool.query(
       "SELECT u.*,EXISTS(SELECT 1 FROM platform WHERE owner_id=u.id) is_owner FROM users u WHERE status='approved' ORDER BY username",

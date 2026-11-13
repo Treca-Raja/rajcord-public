@@ -6,6 +6,7 @@ export type VoiceConfig = {
   key: string;
   secret: string;
   prefix?: string;
+  screenTurnHost?: string;
   useServerIceServers?: boolean;
 };
 export function voiceConfig(): VoiceConfig | undefined {
@@ -28,5 +29,19 @@ export function parseVoiceConfig(env: Record<string, string | undefined>): Voice
     throw new Error(
       'LiveKit control must use an exact loopback HTTP origin or the private livekit Docker service in production.',
     );
-  return { url, key, secret, useServerIceServers: hosted };
+  const screenTurnHost = env.SCREEN_TURN_HOST;
+  if (
+    screenTurnHost &&
+    (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(screenTurnHost) ||
+      screenTurnHost.includes('..') ||
+      screenTurnHost.length > 253)
+  )
+    throw new Error('SCREEN_TURN_HOST must be a bare hostname.');
+  return {
+    url,
+    key,
+    secret,
+    useServerIceServers: hosted,
+    ...(screenTurnHost ? { screenTurnHost } : {}),
+  };
 }

@@ -77,7 +77,15 @@ async function fixture(kind: string) {
   const trace: { path: string; status?: number }[] = [];
   const allowed = new Set([
     '/api/auth/me',
-    ...['prepare', 'check', 'consume', 'cancel'].map((action) => '/api/screen/capture/' + action),
+    ...[
+      'prepare',
+      'check',
+      'consume',
+      'cancel',
+      'handoff',
+      'publication-check',
+      'publication-cancel',
+    ].map((action) => '/api/screen/capture/' + action),
   ]);
   let holdCancellation = false;
   const cancellation = deferred(),
@@ -240,6 +248,7 @@ async function fixture(kind: string) {
     return { status: response.status, value: value as { csrfToken: string; id: string } };
   }
   let csrf = '';
+  let screenEpoch: string = randomUUID();
   async function login() {
     const response = await request('/api/auth/login', {
       username: config.username,
@@ -256,6 +265,7 @@ async function fixture(kind: string) {
   async function join() {
     const response = await request('/api/voice/join', { channelId: config.channelId }, csrf);
     assert.equal(response.status, 200);
+    screenEpoch = (await rpc<{ epoch: string }>('bind-screen')).epoch;
   }
   async function choose() {
     await wait(
@@ -295,6 +305,7 @@ async function fixture(kind: string) {
     choose,
     drain,
     csrf: () => csrf,
+    epoch: () => screenEpoch,
     start: (gesture = true) => js(capture, gesture),
     denied: () =>
       wait(
@@ -383,8 +394,8 @@ async function run() {
         await f.isolated.cookies.remove(f.config.origin, 'tricord_session');
         await f.login();
       }
-      if (kind === 'disabled') await f.authority.prepare('none');
-      else await assert.rejects(f.authority.prepare('none'));
+      if (kind === 'disabled') await f.authority.prepare('none', f.epoch());
+      else await assert.rejects(f.authority.prepare('none', f.epoch()));
       if (kind === 'no-session')
         check(
           f.trace.some((item) => item.status === 401),
@@ -395,7 +406,7 @@ async function run() {
           (
             await f.request(
               '/api/screen/capture/prepare',
-              { requestId: randomUUID(), sound: 'none' },
+              { requestId: randomUUID(), sound: 'none', epoch: randomUUID() },
               f.csrf(),
             )
           ).status === 403,
@@ -427,7 +438,7 @@ async function run() {
       (
         await happy.request(
           '/api/screen/capture/prepare',
-          { requestId: randomUUID(), sound: 'none' },
+          { requestId: randomUUID(), sound: 'none', epoch: randomUUID() },
           'invalid',
         )
       ).status === 403,
@@ -436,13 +447,13 @@ async function run() {
     await assert.rejects(
       happy.request(
         '/api/screen/capture/prepare',
-        { requestId: randomUUID(), sound: 'none' },
+        { requestId: randomUUID(), sound: 'none', epoch: randomUUID() },
         happy.csrf(),
         'https://foreign.example',
       ),
     );
     check(true, 'real native HTTP boundary rejects foreign origin');
-    await happy.authority.prepare('none');
+    await happy.authority.prepare('none', happy.epoch());
     happy.probePermissions();
     await happy.start(false);
     await happy.denied();
@@ -525,7 +536,7 @@ async function run() {
       await f.login();
       await f.join();
       if (kind === 'grant-expiry') await rpc('short-lease');
-      await f.authority.prepare('none');
+      await f.authority.prepare('none', f.epoch());
       await rpc('hold', { stage: kind === 'late-response' ? 'after' : 'before' });
       await f.start();
       await f.choose();
@@ -596,7 +607,7 @@ async function run() {
   try {
     await watchedLogout.login();
     await watchedLogout.join();
-    await watchedLogout.authority.prepare('none');
+    await watchedLogout.authority.prepare('none', watchedLogout.epoch());
     check(
       (await watchedLogout.request('/api/auth/logout', {}, watchedLogout.csrf())).status === 200,
       'logout watch starts from a successfully revoked native session',
@@ -625,13 +636,13 @@ async function run() {
     await rpc('reject-next');
     body.holdCancellation();
     let ended = false;
-    const prepare = body.authority.prepare('none').catch(() => {
+    const prepare = body.authority.prepare('none', body.epoch()).catch(() => {
       ended = true;
     });
     await body.cancellationStarted;
     await wait(() => ended, 'logical failure during held body cleanup');
     const count = body.trace.length;
-    await assert.rejects(body.authority.prepare('none'), /busy/);
+    await assert.rejects(body.authority.prepare('none', body.epoch()), /busy/);
     check(
       body.trace.length === count,
       'actual native response cancellation retains admission through controlled cleanup delay',
@@ -648,6 +659,39 @@ async function run() {
     );
   } finally {
     await body.close();
+  }
+  const publishing = await fixture('publication');
+  try {
+    await publishing.login();
+    await publishing.join();
+    await rpc('preview-lease');
+    await publishing.authority.prepare('none', publishing.epoch());
+    await rpc('renew-voice');
+    await publishing.start();
+    await publishing.choose();
+    await publishing.live();
+    const grant = await rpc<{ share: { id: string; sourceGeneration: number } }>('publish-screen');
+    const status = await publishing.authority.handoff(grant.share.id, grant.share.sourceGeneration);
+    check(
+      status.remainingMs > 5000,
+      'real native/API handoff creates independent publication authority',
+    );
+    await delay(5500);
+    check(
+      !!publishing.authority.inspectPublication() &&
+        (await publishing.js("window.fixtureStream.getVideoTracks()[0].readyState==='live'")),
+      'old preview expiry cannot stop the promoted test-owned capture',
+    );
+    await rpc('revoke');
+    await wait(() => publishing.authority.inspectPublication() === null, 'publication revocation');
+    check(
+      publishing.trace.some(
+        (item) => item.path.endsWith('/publication-check') && item.status === 401,
+      ),
+      'real main Session.fetch reauthorizes publication against revoked cookies',
+    );
+  } finally {
+    await publishing.close();
   }
   check(BrowserWindow.getAllWindows().length === 0, 'all owned windows and listeners are disposed');
   console.log(

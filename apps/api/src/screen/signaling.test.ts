@@ -85,12 +85,15 @@ describe('strict direct-screen envelopes', () => {
     (s: string) => s.replace('a=ice-ufrag:test', 'a=ice-ufrag:x'),
     (s: string) => s.replace('a=mid:0', 'a=mid:0\nBAD'),
     (s: string) =>
-      s.replace('a=mid:0', 'a=mid:0\r\na=' + screenIce.candidate.replace('typ host', 'typ relay')),
+      s.replace(
+        'a=mid:0',
+        'a=mid:0\r\na=' + screenIce.candidate.replace('typ host', 'typ invalid'),
+      ),
   ])('rejects unsafe or oversized SDP %s', (change) => {
     expect(() => description(change(screenSdp('offer')), 'offer')).toThrow();
   });
   it.each([
-    { ...screenIce, candidate: screenIce.candidate.replace('typ host', 'typ relay') },
+    { ...screenIce, candidate: screenIce.candidate.replace('typ host', 'typ invalid') },
     { ...screenIce, candidate: screenIce.candidate + '\r\na=sendrecv' },
     { ...screenIce, candidate: screenIce.candidate + ' turn:server 1' },
     { ...screenIce, candidate: 'x'.repeat(2049) },
@@ -164,4 +167,9 @@ describe('screen work admission', () => {
     for (let i = 0; i < 10; i++) bytes.acquire('a' + i, 'signal', 524288)();
     expect(() => bytes.acquire('new', 'signal', 1)).toThrow(/budget/);
   });
+});
+
+it('accepts a bounded TURN relay candidate while preserving the strict candidate envelope', () => {
+  const relay = { ...screenIce, candidate: screenIce.candidate.replace('typ host', 'typ relay') };
+  expect(ice(relay)).toEqual(relay);
 });

@@ -2,6 +2,48 @@ import { expect, it, vi } from 'vitest';
 import { applyScreenVideoPlan, screenVideoPlan, screenVideoRequest } from './screen-quality';
 
 const settings = { width: 1920, height: 1080, frameRate: 60 };
+it.each(
+  [480, 720, 1080].flatMap((resolution) =>
+    [15, 30, 60].map((frameRate) => ({ resolution, frameRate })),
+  ),
+)(
+  'selects $resolution p at $frameRate fps independently from bitrate and legacy profile',
+  (choice) => {
+    const quality = { profile: 'smooth', videoBitrate: 8000000, ...choice };
+    const plan = screenVideoPlan({ revision: 1, publisher: quality, viewer: quality }, settings);
+    expect(plan.ceiling.height).toBe(choice.resolution);
+    expect(plan.encoding.maxFramerate).toBe(choice.frameRate);
+    expect(plan.encoding.maxBitrate).toBe(8000000);
+    expect(plan.encoding.scaleResolutionDownBy).toBeCloseTo(1080 / choice.resolution);
+  },
+);
+it('clamps independently to both endpoints and keeps selected dimensions on the immutable request', () => {
+  const publisher = { profile: 'smooth', videoBitrate: 8000000, resolution: 1080, frameRate: 30 };
+  const viewer = { profile: 'smooth', videoBitrate: 2000000, resolution: 720, frameRate: 60 };
+  const plan = screenVideoPlan({ revision: 1, publisher, viewer }, settings);
+  viewer.resolution = 480;
+  expect(plan.ceiling).toEqual({ width: 1280, height: 720, frameRate: 30 });
+  expect(plan.encoding).toEqual({
+    maxBitrate: 2000000,
+    maxFramerate: 30,
+    scaleResolutionDownBy: 1.5,
+  });
+  expect(plan.request.viewer.resolution).toBe(720);
+});
+it.each([
+  { resolution: 720 },
+  { frameRate: 60 },
+  { resolution: 0, frameRate: 30 },
+  { resolution: 2160, frameRate: 60 },
+  { resolution: 720, frameRate: 120 },
+  { resolution: '720', frameRate: 30 },
+  { resolution: 720, frameRate: NaN },
+])('rejects incomplete or unsupported explicit video controls %j', (choice) => {
+  const quality = { profile: 'smooth', videoBitrate: 8000000, ...choice };
+  expect(() =>
+    screenVideoPlan({ revision: 1, publisher: quality, viewer: quality }, settings),
+  ).toThrow();
+});
 const request = (
   revision = 1,
   publisher = 'smooth',

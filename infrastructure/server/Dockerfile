@@ -5,6 +5,7 @@ RUN npm install --global pnpm@11.25.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY scripts/copy-picker-assets.mjs ./scripts/copy-picker-assets.mjs
 RUN pnpm install --frozen-lockfile
 RUN pnpm build
 RUN pnpm --filter @tricord/api --prod deploy --legacy /runtime

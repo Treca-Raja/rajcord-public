@@ -1,5 +1,7 @@
 import { parseScreenReference, type ScreenLinkRequest, type ScreenSound } from '@tricord/shared';
 import { ScreenPeer, type ScreenPeerLifecycle, type ScreenRtcPeer } from './screen-peer';
+import { screenIceServers } from './screen-ice';
+import { adoptScreenRenewal, type ScreenRenewalPermit } from './screen-renewal';
 import {
   ScreenPlaybackOwner,
   type ScreenPlaybackElement,
@@ -28,6 +30,7 @@ type Endpoint = ScreenLinkRequest & { role: 'viewer'; sound: ScreenSound };
 type PeerOptions = ConstructorParameters<typeof ScreenPeer>[0];
 export type ScreenReceiveOptions = {
   // Already verified by the caller's authorization boundary; references are not grants.
+  iceServers?: readonly RTCIceServer[];
   endpoint: Endpoint;
   lifecycle: ScreenPeerLifecycle;
   send: PeerOptions['send'];
@@ -52,6 +55,7 @@ export type ScreenReceiveState = Readonly<{
 }>;
 type Slot = 'rtc' | 'playback' | 'signal' | 'cleanup';
 type LaneOptions = {
+  iceServers?: readonly RTCIceServer[];
   createRtc(configuration: RTCConfiguration): ScreenRtcPeer;
   createElement(): ScreenPlaybackElement;
   createStream(tracks: readonly MediaStreamTrack[]): MediaStream;
@@ -83,8 +87,10 @@ class ReceiveLane {
   readonly trackTimeout: number;
   readonly cleanupTimeout: number;
   readonly playbackTimeout: number;
+  readonly iceServers: readonly RTCIceServer[];
   constructor(private readonly options: LaneOptions) {
     this.options = { ...options };
+    this.iceServers = screenIceServers(options.iceServers);
     this.now = options.now ?? Date.now;
     this.trackTimeout = timeout(options.trackTimeoutMs ?? 10000);
     this.cleanupTimeout = timeout(options.cleanupTimeoutMs ?? 5000);
@@ -105,6 +111,7 @@ class ReceiveLane {
     const reference = parseScreenReference({ epoch: endpoint.epoch, linkId: endpoint.linkId });
     const fixed = {
       ...options,
+      iceServers: screenIceServers(options.iceServers ?? this.iceServers),
       endpoint: Object.freeze({ ...reference, role: 'viewer' as const, sound: endpoint.sound }),
       lifecycle: {
         inspect: options.lifecycle.inspect.bind(options.lifecycle),
@@ -259,6 +266,7 @@ class ReceiveLink {
   private closed = false;
   private generation?: object;
   private deadline = 0;
+  private renewalRevision = 0;
   private expiry?: ReturnType<typeof setTimeout>;
   private trackTimer?: ReturnType<typeof setTimeout>;
   private cleanups: (() => void)[] = [];
@@ -308,6 +316,7 @@ class ReceiveLink {
     this.check();
     this.trackTimer = setTimeout(() => this.end('tracks-timeout'), this.lane.trackTimeout);
     const peer = new ScreenPeer({
+      iceServers: this.options.iceServers,
       endpoint: this.options.endpoint,
       lifecycle: this.lifecycle,
       now: this.lane.now,
@@ -360,6 +369,29 @@ class ReceiveLink {
   }
   private check() {
     if (!this.current()) throw error('closed', 'Receive link has ended.');
+  }
+  adoptRenewal(permit: ScreenRenewalPermit) {
+    this.check();
+    adoptScreenRenewal(
+      permit,
+      this.generation!,
+      this.deadline,
+      this.renewalRevision,
+      this.lane.now(),
+    );
+    const current = this.options.lifecycle.inspect();
+    if (!current || current.generation !== this.generation || current.deadline < permit.deadline)
+      throw error('closed', 'Receive renewal lifecycle mismatch.');
+    this.deadline = permit.deadline;
+    this.renewalRevision = permit.revision;
+    try {
+      this.peer?.adoptRenewal(permit);
+      this.playback?.adoptRenewal(permit);
+      this.check();
+    } catch (cause) {
+      this.fail(cause);
+      throw cause;
+    }
   }
   private update(patch: Partial<ScreenReceiveState>) {
     this.state = Object.freeze({ ...this.state, ...patch });
@@ -562,6 +594,7 @@ export type ScreenReceiveHandle = Pick<
   | 'stop'
   | 'hide'
   | 'dispose'
+  | 'adoptRenewal'
 >;
 export type ScreenReceiveLane = Readonly<Pick<ReceiveLane, 'open' | 'inspect' | 'dispose'>>;
 export function createScreenReceiveLane(options: LaneOptions): ScreenReceiveLane {

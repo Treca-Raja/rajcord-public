@@ -517,6 +517,42 @@ describe('authentication on real PostgreSQL', () => {
     expect((await get('/api/auth/me', auth)).statusCode).toBe(200);
     expect((await identity(fixture.database.pool, raw))?.user.id).toBe(auth.user.id);
   });
+  it('keeps authenticated bootstrap reads available with independent bounded quotas under shared API load', async () => {
+    const limited = createApp({ databaseUrl: fixture.url });
+    const headers = { cookie: owner.cookie };
+    try {
+      for (let index = 0; index < 120; index++)
+        expect(
+          (await limited.app.inject({ url: '/api/account/sessions', headers })).statusCode,
+        ).toBe(200);
+      expect((await limited.app.inject({ url: '/api/account/sessions', headers })).statusCode).toBe(
+        429,
+      );
+      const conversations = (await get('/api/conversations', owner)).json().conversations;
+      for (const url of [
+        '/api/auth/me',
+        '/api/members',
+        '/api/channel-categories',
+        '/api/conversations',
+        '/api/invitations',
+        '/api/conversations/' + conversations[0].id + '/messages',
+      ]) {
+        for (let index = 0; index < 120; index++)
+          expect((await limited.app.inject({ url, headers })).statusCode, url).toBe(200);
+        expect((await limited.app.inject({ url, headers })).statusCode, url).toBe(429);
+        expect(
+          (await limited.app.inject({ url, remoteAddress: '192.0.2.123' })).statusCode,
+          url,
+        ).toBe(401);
+      }
+      expect(
+        (await limited.app.inject({ url: '/api/auth/me', remoteAddress: '192.0.2.123' }))
+          .statusCode,
+      ).toBe(401);
+    } finally {
+      await limited.app.close();
+    }
+  });
   it('rate-limits registration and login requests', async () => {
     const limited = createApp({ databaseUrl: fixture.url });
     try {

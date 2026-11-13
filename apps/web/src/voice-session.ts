@@ -1,4 +1,5 @@
 import type { AuthState } from '@tricord/shared';
+import type { ScreenBindingDependency } from './screen-binding';
 
 export type VoiceRequest = <T>(path: string, method?: string, body?: unknown) => Promise<T>;
 
@@ -6,7 +7,17 @@ export type VoiceRequest = <T>(path: string, method?: string, body?: unknown) =>
 export class ApprovedVoiceSession {
   private active = true;
   private listeners = new Set<() => void>();
-  constructor(private currentRequest: VoiceRequest) {}
+  constructor(
+    private currentRequest: VoiceRequest,
+    private screenFactory?: ScreenBindingDependency['create'],
+  ) {}
+  openScreens: ScreenBindingDependency['create'] = (own) => {
+    if (!this.active || !this.screenFactory) throw new Error('Screen session ended.');
+    return this.screenFactory(own);
+  };
+  updateScreenFactory(factory?: ScreenBindingDependency['create']) {
+    this.screenFactory = factory;
+  }
 
   get current() {
     return this.active;
@@ -36,7 +47,11 @@ export class VerifiedVoiceSessions {
   private identity?: { account: string; csrf: string };
   private expiry?: ReturnType<typeof setTimeout>;
 
-  acceptVerified(state: AuthState | null, request: VoiceRequest) {
+  acceptVerified(
+    state: AuthState | null,
+    request: VoiceRequest,
+    screenFactory?: ScreenBindingDependency['create'],
+  ) {
     const expiresAt = state ? Date.parse(state.expiresAt) : 0;
     const remaining = expiresAt - Date.now();
     if (
@@ -55,8 +70,11 @@ export class VerifiedVoiceSessions {
     ) {
       this.invalidate();
       this.identity = { account: state.user.id, csrf: state.csrfToken };
-      this.session = new ApprovedVoiceSession(request);
-    } else this.session.updateRequest(request);
+      this.session = new ApprovedVoiceSession(request, screenFactory);
+    } else {
+      this.session.updateRequest(request);
+      this.session.updateScreenFactory(screenFactory);
+    }
     clearTimeout(this.expiry);
     const session = this.session;
     // Browser timers clamp delays above a signed 32-bit integer (remembered sessions last 30 days).

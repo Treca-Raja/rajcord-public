@@ -3,9 +3,11 @@ import { createApp } from './app.js';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { parseTrustProxyHops } from './proxy-config.js';
+import { gifSearchConfig } from './chat/gif-search.js';
 const root = fileURLToPath(new URL('../../web/dist/', import.meta.url));
 const { app } = createApp({
   logger: true,
+  gifSearch: { config: gifSearchConfig(process.env) },
   voiceConfig: voiceConfig(),
   databaseUrl: process.env.DATABASE_URL,
   allowedOrigins: (

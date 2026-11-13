@@ -84,6 +84,27 @@ afterEach(() => {
   expect(vi.getTimerCount()).toBe(0);
   vi.useRealTimers();
 });
+it('invokes the native chooser on the gesture stack with independently selected dimensions and fps', async () => {
+  const f = fixture(),
+    stream = new Stream();
+  const work = f.adapter.start({ sound: 'none', resolution: 720, frameRate: 60 });
+  expect(f.devices.getDisplayMedia).toHaveBeenCalledWith(
+    expect.objectContaining({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60, max: 60 } },
+      audio: false,
+    }),
+  );
+  f.resolve(stream);
+  const capture = await work;
+  capture.dispose();
+});
+it('rejects incomplete video choices before invoking native capture', async () => {
+  const f = fixture();
+  await expect(f.adapter.start({ sound: 'none', resolution: 720 })).rejects.toMatchObject({
+    code: 'invalid',
+  });
+  expect(f.devices.getDisplayMedia).not.toHaveBeenCalled();
+});
 
 describe('local display capture contract', () => {
   it('does not capture on construction; preserves the gesture stack and requests 1080p60 independently of bitrate', async () => {

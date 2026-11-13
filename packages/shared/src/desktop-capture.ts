@@ -26,3 +26,26 @@ export interface DesktopCapturePickerBridge {
   select(choice: DesktopCaptureChoice): Promise<DesktopPickerAck<{ selected: true }>>;
   cancel(request: DesktopCaptureCancel): Promise<DesktopPickerAck<{ cancelled: true }>>;
 }
+export type DesktopScreenPreparation = {
+  clientIntentRef: string;
+  epoch: string;
+  sound: 'none' | 'system';
+};
+export type DesktopScreenStatus = {
+  clientIntentRef: string;
+  ready: boolean;
+  remainingMs: number;
+  error?: string;
+};
+export interface DesktopScreenBridge {
+  capabilities(): Promise<{ version: 1; systemSound: boolean }>;
+  prepare(request: DesktopScreenPreparation): Promise<DesktopScreenStatus>;
+  handoff(request: {
+    clientIntentRef: string;
+    shareId: string;
+    sourceGeneration: number;
+  }): Promise<DesktopScreenStatus>;
+  cancel(request: { clientIntentRef: string }): Promise<void>;
+  onStop(listener: (clientIntentRef: string) => void): () => void;
+  onVisibility(listener: (visible: boolean) => void): () => void;
+}

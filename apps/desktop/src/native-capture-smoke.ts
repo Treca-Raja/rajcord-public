@@ -157,7 +157,7 @@ async function fixture(
   const context = boundary.context()!;
   const issue = async () => {
     if (serverAuthority) {
-      await serverAuthority.prepare('none');
+      await serverAuthority.prepare('none', randomUUID());
       return;
     }
     intent = {

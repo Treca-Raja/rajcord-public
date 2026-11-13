@@ -149,7 +149,12 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
         await delay(100);
       }
       throw new Error(
-        'Voice browser timeout: ' + expression + '; UI: ' + (await js('document.body.innerText')),
+        'Voice browser timeout: ' +
+          expression +
+          '; HTTP errors: ' +
+          JSON.stringify(httpErrors) +
+          '; UI: ' +
+          (await js('document.body.innerText')),
       );
     };
     const click = async (label: string) =>

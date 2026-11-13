@@ -1,20 +1,24 @@
 # Screen sharing: implementation design
 
-Status: proposed implementation, not a shipped feature or performance certification. Prepared 2026-10-29 against `develop` at `264fcc7`. Local branch: `feature/screen-share-design`. [Source ticket](https://trello.com/c/FGdnrVhK) remains the epic; it was read, not edited. [Visual concept](screen-sharing-concept.svg) uses fictional participants and illustrative status values.
+Status: implemented locally on `feature/screen-sharing-completion`, not deployed or performance-certified. The original design was prepared 2026-10-29 against `develop` at `264fcc7` on `feature/screen-share-design`. [Source ticket](https://trello.com/c/FGdnrVhK) remains the epic; it was read, not edited. [Visual concept](screen-sharing-concept.svg) uses fictional participants and illustrative status values.
 
-For a new contributor or GPT session, use the [handoff entry point](screen-sharing-handoff.md). It identifies the current next slice, dated evidence and upstream drift; older checkpoint instructions below remain historical.
+For a new contributor or GPT session, use the [handoff entry point](screen-sharing-handoff.md). It identifies the implemented composition, remaining acceptance and dated evidence; older checkpoint instructions below remain historical.
 
 ## Outcome and latest direction
 
 Build direct, encrypted WebRTC screen video and source sound between approved participants in the same current voice channel. Keep voice on LiveKit. One captured source per account, up to ten publishers, one selected remote share per viewer, and up to nine viewers per publisher. Sharing and watching are independent.
 
-The user's latest direction takes precedence over the ticket's delivery order: **working 1920 × 1080 at 60 fps and selectable bitrate are the first priority**. Deliver and qualify that milestone before spending time optimizing Ultra. Retain Low 480p/15, Auto starting at 720p/30, High 1080p/30, and add Smooth 1080p/60. Ultra 3840 × 2160/60 remains later work required to close the original epic; shipping the first milestone does not satisfy its AC12.
+The user's 2026-11-12 direction is **internet P2P with resolution and frame rate selected independently**, with video bitrate remaining separate. The implemented explicit ceilings are 480p/720p/1080p and 15/30/60 fps; choosing 720p must not force 30 fps, for example. Working 1920 × 1080 at 60 fps remains a qualification target, not a fixed setting or a passing performance claim. Earlier profile presets remain compatible internal fixture inputs. Ultra 3840 × 2160/60 stays deferred; this milestone does not satisfy the original epic's AC12.
+
+The [current continuation](screen-sharing-handoff.md#current-continuation---2026-11-13) supersedes historical next-slice prompts below. Exact-lease delegation, document-retained runtime admission, C1 binding correlation, C2 publication transfer/renewal, native consent and the main-window UI are implemented. The user explicitly chose the main window: accepted capture and peers share the call renderer, so independent Stop during a frozen renderer is not guaranteed. Current checks and remaining physical/WAN acceptance are recorded in [verification](verification.md#screen-sharing-completion---2026-11-13).
 
 Confirmed visibility behavior: hiding/minimizing Rajcord stops incoming screen delivery, including its sound, while outgoing sharing continues. Returning restores the previously selected share only if its identity and authorization are still current. Outgoing sharing retains an indicator and Stop action, including the installed app's tray menu. Voice keeps its current behavior.
 
-No server screen forwarding, TURN relay, recording, cameras, remote control, new database tables, purchases, public infrastructure changes or deployment in this design. The [server fallback ticket](https://trello.com/c/e7PiHdfg) remains separate. Do not introduce a general media framework or rewrite voice.
+The continuation adds opt-in reuse of the existing TURN relay; it does not add an SFU screen publication, recording, cameras, remote control, new database tables, purchases or automatic deployment. The [server fallback ticket](https://trello.com/c/e7PiHdfg) remains separate. Do not introduce a general media framework or rewrite voice.
 
-## Evidence and integration boundaries
+## Original evidence and integration boundaries
+
+This table records the original design baseline; the current composition is in the [handoff](screen-sharing-handoff.md#implemented-composition).
 
 | Current source                                                                                                                                  | Verified behavior                                                                                                   | Required seam                                                                                         |
 | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -99,7 +103,7 @@ The publisher is the only offerer. A server-created link has an epoch and monoto
 
 At most ten selected directed links exist channel-wide because each of ten people watches at most one other share; a publisher has at most nine outgoing and one incoming connection. This is not a 90-stream full mesh. Nevertheless one-to-nine fan-out can require nine encoders and nine copies of the media. Shared capture does not prove encoder reuse.
 
-Use a separate screen ICE configuration, never copy LiveKit TURN servers. Empty ICE server configuration is suitable for local feasibility tests only. WAN needs an operator-approved STUN endpoint/policy; no third-party hostname is silently installed. Reject TURN URLs and relay candidates in supported clients and signaling validation; inspect the selected candidate pair to prove direct delivery. Private/local host candidates must remain usable for LAN tests. Do not persist raw candidates or SDP: they contain network/device information. Server authentication protects signaling, but a modified peer can still lie about its media or routing.
+Screen ICE stays separate from microphone voice. Default discovery uses public STUN; optional `SCREEN_TURN_HOST` enables fresh screen-only allocation credentials using the pinned LiveKit 1.13.10 wire protocol, without copying a room JWT or persisting credentials. Native configuration readback and bounded URL/credential validation remain enforced. Signaling accepts bounded relay candidates with the same endpoint/revision/ufrag/SDP checks. Direct paths remain preferred. LiveKit's TTL applies to initial allocations; existing allocation refreshes can continue beyond that expiry, and its quota/destination restrictions remain in force. Account/session/lease revocation still tears down cooperative screen owners; TURN credentials alone cannot authorize viewing or decrypt DTLS-SRTP. See the [current handoff](screen-sharing-handoff.md) for real-network and forced-relay acceptance. Raw SDP/candidates/credentials must not be persisted in diagnostics.
 
 ## Authorization and signaling contract
 
@@ -137,6 +141,8 @@ These are proposed engineering limits for tests, not approved performance budget
 Prototype per-lease token buckets: control 60/minute with burst 10; signaling 120 events/second with burst 180 plus 256 KiB/second with 512 KiB burst; renewals separate at 12/minute with burst 3. Enforce an aggregate service ceiling and bound pending authorization work as well as bytes, so many individually valid events cannot exhaust database/API work. Measure nine-link ICE bursts and ten clients behind one IP; tune based on evidence, not by disabling limits. Coalesce candidate batches only within the envelope limit. Check budgets before expensive authorization; still recheck authorization for accepted events. A throttled screen link must not disconnect chat or voice.
 
 ## Quality, bitrate and adaptation
+
+Protocol 2 supports explicit `resolution` and `frameRate` together, independently of `videoBitrate`. Both fields are validated; partial/unsupported choices fail before allocation. Capture asks for the selected dimensions/FPS on the gesture stack. Per-viewer sender plans preserve aspect ratio and independently clamp resolution, FPS and video bitrate to publisher/viewer/source limits without upscaling or changing another viewer's shared capture. Requested/read-back limits do not measure delivered resolution, cadence or throughput. The legacy presets below remain internal fixture defaults; the product controls must expose the independent choices.
 
 | Profile | Capture/send ceiling            | Role                                                            |
 | ------- | ------------------------------- | --------------------------------------------------------------- |
@@ -226,7 +232,9 @@ Update README voice/screenshare guidance, desktop distribution behavior and veri
 
 ## Production authority and capture handoff specification
 
-**Status: proposed design, not implemented or runtime-qualified (2026-11-01).** This specifies Astra task 4 after the [native receiving-lane fixture](verification.md#screen-sharing-s3-real-browser-receiving-lane-fixture---2026-11-01). Sol can implement the isolated lease-delegation and runtime-shell slices below. The new capture-binding and renewable publication contracts need a focused **GPT-6 Astra high** review before implementation; this is a design recommendation, not permission to enable capture. No schema migration, credential mechanism, deployment switch or LiveKit media permission is proposed.
+**Historical specification (2026-11-01), implemented locally 2026-11-13.** The following contracts and ordered packet record the design baseline, not outstanding implementation tasks. See the current handoff and verification for implemented behavior and acceptance limits.
+
+Original checkpoint: This specifies Astra task 4 after the [native receiving-lane fixture](verification.md#screen-sharing-s3-real-browser-receiving-lane-fixture---2026-11-01). Sol can implement the isolated lease-delegation and runtime-shell slices below. The new capture-binding and renewable publication contracts need a focused **GPT-6 Astra high** review before implementation; this is a design recommendation, not permission to enable capture. No schema migration, credential mechanism, deployment switch or LiveKit media permission is proposed.
 
 ### Source constraints and ownership decisions
 
@@ -342,6 +350,8 @@ tickets, commits, pushes, merges or deployment. Do not repeat the whole architec
 ```
 
 ## Sol handoff: next prompt
+
+**Historical prompts below are superseded by the [current handoff](screen-sharing-handoff.md).** The lease delegate, runtime, C1/C2, renewal and UI composition now exist; do not implement them again. Remaining work is acceptance and review, followed only by separately authorized delivery.
 
 Use **GPT-6.1 Sol, high thinking, in this repository's Codex environment** for S0 and the authorization/lifecycle slices. Use medium for bounded UI/copy/test follow-ups once contracts are stable; return to high for race, capture-permission or media-performance debugging. This is a task-specific recommendation, consistent with [OpenAI's model-selection guidance](https://developers.openai.com/api/docs/guides/model-selection); it does not claim a particular account quota. The user selects the next-turn model in the app. No model switch or usage-limit change is performed by this document.
 
@@ -669,4 +679,4 @@ S3 authority/handoff specification checkpoint (2026-11-01): [the proposed design
 
 C1 proposes server-verified S1-epoch correspondence for main capture preparation. C2 proposes own-share TTL proof and separate renewable main publication authority; existing finite preview/peer/playback deadlines remain until those contracts are reviewed and implemented. **A focused Astra high review is highly recommended before those new wire/trust contracts**, using the exact review prompt above. The first two purely injected local slices can proceed without that review. See [specification evidence and limits](verification.md#screen-sharing-production-authority-handoff-specification---2026-11-01).
 
-**Next bounded Sol high slice: the private exact-lease bind delegate**, using the prompt above, then the persistent runtime shell. The five ordered slices include affected files, prerequisites, acceptance, checks and non-goals; further C2 implementation/qualification remains a later packet. Source/audio policies, native playout/output routing, production authorization/capture/provider/UI, packet-level hidden-delivery qualification, actual policy wire-rate effects, rendered 1080p60, hardware/budgets, active-voice fan-out, WAN/STUN and Ultra remain open. Production capture stays disabled.
+**Historical next-slice instruction, superseded 2026-11-13: the private exact-lease bind delegate**, using the prompt above, then the persistent runtime shell. The five ordered slices include affected files, prerequisites, acceptance, checks and non-goals; further C2 implementation/qualification remains a later packet. Source/audio policies, native playout/output routing, production authorization/capture/provider/UI, packet-level hidden-delivery qualification, actual policy wire-rate effects, rendered 1080p60, hardware/budgets, active-voice fan-out, WAN/STUN and Ultra remain open. Production capture stays disabled.
