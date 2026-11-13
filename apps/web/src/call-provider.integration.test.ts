@@ -623,10 +623,30 @@ it('opens audio inventory without capture and routes the master level through th
       "(()=>{const slider=document.querySelector('[aria-label=\"Voice output volume\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'2');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}))})()",
     );
     await browser.wait('fixture.call.voice.outputVolume===2');
+    await browser.js(
+      "(async()=>{await fixture.call.controls.selectInput('mic');await fixture.call.controls.selectOutput('speaker');fixture.deviceList=[];navigator.mediaDevices.dispatchEvent(new Event('devicechange'))})()",
+    );
+    await browser.wait('fixture.call.voice.inputMissing && fixture.call.voice.outputMissing');
+    await browser.js(
+      "fixture.deviceList=[{kind:'audioinput',deviceId:'mic',label:'Synthetic mic'},{kind:'audiooutput',deviceId:'speaker',label:'Synthetic speakers'}];navigator.mediaDevices.dispatchEvent(new Event('devicechange'))",
+    );
+    await browser.wait("fixture.call.voice.devicesStatus==='ready'");
+    expect(
+      await browser.js(
+        "[...document.querySelectorAll('.voice-controls select')].slice(0,2).map(select=>select.value)",
+      ),
+    ).toEqual(['', '']);
+    expect(
+      await browser.js('document.querySelector(\'[aria-label="Join voice channel"]\').disabled'),
+    ).toBe(true);
+    await browser.js(
+      "for(const [label,id] of [['Voice microphone','mic'],['Voice speakers','speaker']]){const select=document.querySelector('[aria-label=\"'+label+'\"]');select.value=id;select.dispatchEvent(new Event('change',{bubbles:true}))}",
+    );
+    await browser.wait('!fixture.call.voice.inputMissing && !fixture.call.voice.outputMissing');
     expect(await browser.js('fixture.captureCalls')).toBe(1);
     expect(await browser.js('fixture.joins.length')).toBe(0);
     expect(
-      await browser.js("fixture.call.voice.input==='' && fixture.call.voice.output===''"),
+      await browser.js("fixture.call.voice.input==='mic' && fixture.call.voice.output==='speaker'"),
     ).toBe(true);
     expect(await browser.js('fixture.errors')).toEqual([]);
   });

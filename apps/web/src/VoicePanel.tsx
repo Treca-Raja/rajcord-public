@@ -168,7 +168,7 @@ export function VoicePanel({
             Microphone
             <select
               aria-label="Voice microphone"
-              value={voice.input}
+              value={voice.inputMissing ? '' : voice.input}
               onChange={(e) => void action((c) => c.selectInput(e.target.value))}
             >
               <option value="">Choose microphone</option>
@@ -183,7 +183,7 @@ export function VoicePanel({
             Speakers
             <select
               aria-label="Voice speakers"
-              value={voice.output}
+              value={voice.outputMissing ? '' : voice.output}
               onChange={(e) => void action((c) => c.selectOutput(e.target.value))}
             >
               <option value="">Choose speakers</option>
@@ -213,7 +213,9 @@ export function VoicePanel({
               <select
                 aria-label="Join voice channel"
                 value=""
-                disabled={busy || !voice.input || !voice.output}
+                disabled={
+                  busy || !voice.input || !voice.output || voice.inputMissing || voice.outputMissing
+                }
                 onChange={(e) => void action((c) => c.join(e.target.value))}
               >
                 <option value="">Choose a channel</option>
