@@ -570,23 +570,38 @@ it('rejects malformed, oversized and caller-injected packets without affecting a
   expect(received).toHaveBeenCalledTimes(1);
 });
 
-it.each(['publisher', 'viewer'] as const)(
-  'does not relay after real %s revocation, even with an existing link DTO',
-  async (role) => {
+it.each([
+  ['publisher', false],
+  ['viewer', false],
+  ['publisher', true],
+] as const)(
+  'does not relay after real %s revocation, even with an existing link DTO (disconnect=%s)',
+  async (role, disconnect) => {
     const { p, v, grant } = await socketLinked(),
       received = vi.fn();
     v.socket.on('screen:signal', received);
     await fixture.database.pool.query('UPDATE sessions SET revoked_at=now() WHERE token_hash=$1', [
       digest((role === 'publisher' ? publisher : viewer).token),
     ]);
-    const result = await p.socket.timeout(3000).emitWithAck('screen:signal', {
+    const result = command(p.socket, 'screen:signal', {
       epoch: p.binding.epoch,
       linkId: grant.link.id,
       revision: 1,
       sequence: 1,
       payload: { type: 'offer', sdp: screenSdp('offer') },
     });
-    expect(result.ok).toBe(false);
+    if (disconnect) {
+      p.socket.disconnect();
+      await expect(result).rejects.toThrow(/^socket has been disconnected$/);
+    }
+    await expect(result).rejects.toSatisfy(
+      (cause: unknown) =>
+        cause instanceof Error &&
+        (/^(not_authorized|stale):/.test(cause.message) ||
+          (role === 'publisher' &&
+            cause.message === 'socket has been disconnected' &&
+            !p.socket.connected)),
+    );
     expect(received).not.toHaveBeenCalled();
   },
 );
