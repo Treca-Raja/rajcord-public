@@ -298,7 +298,20 @@ try {
   await server.app.listen({ host: '127.0.0.1', port: 3006 });
   await connected(observer);
   const restartRecoveryMs = await wait(a, ready, 'API restart reconstructs fresh presence');
-  await wait(b, ready);
+  try {
+    await wait(b, ready, 'second browser API restart recovery');
+  } catch (cause) {
+    const state = await b.js(`({
+      presence:document.querySelector('.presence-panel')?.dataset.presenceState,
+      connection:document.querySelector('[data-connection]')?.dataset.connection,
+      signedOut:!!document.querySelector('input[name=username]'),
+      rosterDenied:document.querySelector('.presence-panel')?.textContent.includes('Member list unavailable'),
+      sessionStatus:await fetch('/api/auth/me').then(response=>response.status).catch(()=>0)
+    })`);
+    throw new Error('Second browser did not recover after API restart: ' + JSON.stringify(state), {
+      cause,
+    });
+  }
   const rebuilt = await snapshot(observer);
   assert.notEqual(rebuilt.epoch, oldEpoch, 'A restarted API must use a new presence epoch');
   assert.equal(

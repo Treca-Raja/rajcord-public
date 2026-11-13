@@ -19,6 +19,8 @@ if (
 )
   throw new Error('Owned picker profile required.');
 app.setPath('userData', profile);
+// Hidden screenshots need software compositing here; this fixture measures no GPU performance.
+app.disableHardwareAcceleration();
 app.on('window-all-closed', () => {});
 const timeout = setTimeout(() => {
   console.error('Picker fixture timed out.');
