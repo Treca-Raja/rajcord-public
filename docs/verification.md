@@ -1,3 +1,11 @@
+# Voice output amplification — 2026-11-05
+
+The master Voice output slider defaults to 100% and accepts 0–200%. Participant controls remain 0–100%; microphone capture, notification alerts and join/leave cues receive no boost. The optional gain graph feeds a derived stream into the selected-speaker audio element, never the AudioContext hardware destination. Chromium needs a separate permanently muted source element to keep remote WebRTC samples flowing. Unsubscribe/reconnect releases derived tracks; leave/revocation also closes the owned gain context.
+
+Verification: **494 unit tests in 58 files**, affected ESLint, workspace typecheck, build and changed-file formatting passed. **26 Edge/LiveKit loopback voice checks** passed, including measured received PCM amplification (2.101 amplitude ratio at 200%; 1.001 at 100%), sustained silence at 0%, unchanged microphone capture count, exact speaker routing, participant attenuation, deafen, master-level preservation across API restart and derived-track/context cleanup. The new sidebar control was visually inspected. The full browser suite passed after reusing the existing reload-completion helper at four stale-document waits and replacing a background-tab animation-frame wait with a queued task; notification completion assertions remain intact.
+
+Initial live gain testing exposed silence after detaching the remote stream from its playing source element; the muted feeder above fixes that. These are synthetic Windows browser checks, not physical-device listening, WAN or Electron acceptance. No desktop lifecycle/permission, database, capacity/load, packaging or deployment changes were made; those dedicated suites were not run for this change.
+
 # Production dependency audit fix — 2026-11-01
 
 PR #24's Windows build failed `pnpm audit --prod` on [glob cancellation](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4) and [minimatch pattern amplification](https://github.com/advisories/GHSA-g3hv-75wg-m249). The production path was `@fastify/static -> glob 13.0.6 -> minimatch 10.2.6`; the latest Fastify static 10.x patch still depends on glob 13. A scoped `@fastify/static@10>glob` override now selects glob 14.0.2, and the regenerated lockfile resolves its minimatch dependency to 11.0.3. Other dependency paths and the audit threshold remain unchanged.
