@@ -5,24 +5,10 @@ import { Messages } from './Messages';
 import { DraftStore } from './chat-state';
 import { CategoryManager, ChannelFields, ChannelSettings } from './Channels';
 import { channelCategories, channelFields } from './channel-state';
-import { ApplicationSounds, SoundControls } from './ApplicationSounds';
-import { VoicePanel } from './VoicePanel';
+import { ApplicationSounds } from './ApplicationSounds';
+import { CommunitySidebar } from './CommunitySidebar';
 import { useCallback, useMemo, useEffect, useRef, useState, type FormEvent } from 'react';
-import {
-  Hash,
-  Users,
-  Settings,
-  Plus,
-  MessageCircle,
-  ChevronDown,
-  ShieldCheck,
-  Menu,
-  X,
-  LogOut,
-  FolderPlus,
-  ChevronRight,
-} from 'lucide-react';
-import { Avatar } from '@tricord/ui';
+import { Hash, Users, Settings, MessageCircle, Menu, X } from 'lucide-react';
 import type {
   Conversation,
   Invitation,
@@ -56,7 +42,7 @@ function AccountCommunity() {
   );
 }
 function Community() {
-  const { state, connected, socket, request, openSettings, logout } = useAuth();
+  const { state, connected, socket, request, openSettings } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]),
     [invites, setInvites] = useState<Invitation[]>([]),
     [members, setMembers] = useState<AuthUser[]>([]);
@@ -348,182 +334,20 @@ function Community() {
         <AppearanceToggle />
         <div className="grow" />
       </nav>
-      <aside className="sidebar" id="community-sidebar" aria-label="Community" inert={membersOpen}>
-        <div className="community">
-          <div>
-            <strong>
-              Rajcord<span>.</span>
-            </strong>
-            <small>YOUR LITTLE INTERNET</small>
-          </div>
-          <ChevronDown size={16} />
-        </div>
-        <div className="private-label">
-          <ShieldCheck size={13} /> Our private corner <span aria-hidden="true">✦</span>
-        </div>
-        <div className="section-label">
-          TEXT CHANNELS
-          <div className="channel-management-actions">
-            <button aria-label="Create channel" onClick={() => openDialog('channel')}>
-              <Plus size={15} />
-            </button>
-          </div>
-        </div>
-        <button
-          className="manage-categories-link"
-          aria-label="Manage categories"
-          title="Create or manage categories"
-          onClick={() => openDialog('categories')}
-        >
-          <FolderPlus size={17} aria-hidden="true" />
-          <span>
-            <strong>Categories</strong>
-            <small>Create & manage</small>
-          </span>
-          <ChevronRight className="category-arrow" size={15} aria-hidden="true" />
-        </button>
-        <div className="channels">
-          {[...categories, null].map((category) => (
-            <section
-              key={category?.id ?? 'uncategorized'}
-              className="channel-category"
-              data-category-id={category?.id ?? 'uncategorized'}
-              aria-label={category?.name ?? 'Uncategorized'}
-            >
-              <h2 className="category-heading">{category?.name ?? 'Uncategorized'}</h2>
-              {conversations
-                .filter(
-                  (c) =>
-                    c.kind === 'channel' && (c.category?.id ?? null) === (category?.id ?? null),
-                )
-                .map((c) => (
-                  <button
-                    key={c.id}
-                    className={
-                      (selected === c.id ? 'selected ' : '') + (c.unreadCount ? 'has-unread' : '')
-                    }
-                    data-conversation-id={c.id}
-                    onClick={() => choose(c.id)}
-                  >
-                    <Hash size={18} />
-                    <span className="truncate">
-                      <EmojiText text={c.name} />
-                    </span>
-                    {c.unreadCount > 0 && (
-                      <span
-                        className="unread-badge"
-                        aria-label={c.unreadCount + ' unread messages'}
-                      >
-                        {c.unreadCount > 99 ? '99+' : c.unreadCount}
-                      </span>
-                    )}
-                    {c.mentionCount > 0 && (
-                      <span
-                        className="mention-badge"
-                        aria-label={c.mentionCount + ' unread mentions'}
-                      >
-                        @{c.mentionCount}
-                      </span>
-                    )}
-                    {c.archived && <small>Archived</small>}
-                  </button>
-                ))}
-            </section>
-          ))}
-        </div>
-        <div className="section-label">
-          DIRECT MESSAGES
-          <button aria-label="Create group" onClick={() => openDialog('group')}>
-            <Plus size={15} />
-          </button>
-        </div>
-        <button className="new-dm" onClick={() => openDialog('dm')}>
-          <MessageCircle size={15} /> New direct message
-        </button>
-        <div className="channels">
-          {conversations
-            .filter((c) => c.kind !== 'channel')
-            .map((c) => (
-              <button
-                key={c.id}
-                className={
-                  (selected === c.id ? 'selected ' : '') + (c.unreadCount ? 'has-unread' : '')
-                }
-                data-conversation-id={c.id}
-                onClick={() => choose(c.id)}
-              >
-                {c.kind === 'group' ? <Users size={18} /> : <MessageCircle size={18} />}
-                <span className="truncate">
-                  <EmojiText text={c.name} />
-                </span>
-                {c.unreadCount > 0 && (
-                  <span className="unread-badge" aria-label={c.unreadCount + ' unread messages'}>
-                    {c.unreadCount > 99 ? '99+' : c.unreadCount}
-                  </span>
-                )}
-                {c.mentionCount > 0 && (
-                  <span className="mention-badge" aria-label={c.mentionCount + ' unread mentions'}>
-                    @{c.mentionCount}
-                  </span>
-                )}
-              </button>
-            ))}
-        </div>
-        {invites.length > 0 && (
-          <div className="invite-list">
-            <div className="section-label">INVITATIONS · {invites.length}</div>
-            {invites.map((invite) => (
-              <div className="invite-card" key={invite.id}>
-                <strong>{invite.name}</strong>
-                <small>From {invite.inviter}</small>
-                <p>History starts when you join.</p>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    void action(async () => {
-                      await request('/invitations/' + invite.id, 'POST', { accept: true });
-                      setSelected(invite.conversationId);
-                    })
-                  }
-                >
-                  Accept
-                </button>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    void action(() =>
-                      request('/invitations/' + invite.id, 'POST', { accept: false }),
-                    )
-                  }
-                >
-                  Decline
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <SoundControls />
-        <VoicePanel onChannels={setVoiceChannels} requestedChannel={voiceNavigation} />
-        <div className="grow" />
-        <div className="profile">
-          <Avatar>{state.user.displayName.slice(0, 1)}</Avatar>
-          <div>
-            <strong>{state.user.displayName}</strong>
-            <small>{state.user.isOwner ? 'Platform owner' : 'Member · administrator'}</small>
-          </div>
-          <button aria-label="Sign out" title="Sign out" onClick={() => void logout()}>
-            <LogOut size={16} />
-          </button>
-          <button
-            className="profile-settings"
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => openSettings()}
-          >
-            <Settings size={19} />
-          </button>
-        </div>
-      </aside>
+      <CommunitySidebar
+        membersOpen={membersOpen}
+        categories={categories}
+        conversations={conversations}
+        selected={selected}
+        choose={choose}
+        openDialog={openDialog}
+        invites={invites}
+        busy={busy}
+        action={action}
+        setSelected={setSelected}
+        setVoiceChannels={setVoiceChannels}
+        voiceNavigation={voiceNavigation}
+      />
       <Notifications
         key={state.user.id}
         selected={selected}
