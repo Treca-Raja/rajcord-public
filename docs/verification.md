@@ -1,3 +1,25 @@
+# Message timeline extraction — 2026-11-14
+
+The first slice of the App.tsx modularization ticket moves `Messages` to `apps/web/src/Messages.tsx`. `message-reading.ts` owns read eligibility, authenticated socket/HTTP acknowledgements, retry budgets and listener/timer cleanup; `message-timeline.ts` owns pending-jump settlement, focus and scroll pinning. State and effect lifetimes, context loading, sending, component keys and rendered JSX remain unchanged. The existing flat source layout is retained. `App.tsx` falls from **1,741 to 898 lines**; sidebar and dialog extraction remain separate follow-ups.
+
+**1,289 portable tests in 90 files** passed, including new unit coverage for loading/pending jumps, first-settlement focus, missing anchors, reduced motion, pinned/latest geometry, blocked reading, large sequence cursors, socket acknowledgement/timeout/denial, HTTP retry budgets, in-flight suppression and cleanup. Workspace lint, typecheck, formatting and the web build passed. The existing browser harness passed before and after extraction **without assertion changes**, including quote jumps, unread progress, history reading, composer focus and narrow layouts. Desktop and 390px messaging screenshots were inspected. CSS and timeline JSX are unchanged; the built main JS is 550.55 kB (166.66 kB gzip), compared with 550.06 kB (166.58 kB gzip) before extraction. Existing Vite configuration/chunk-size warnings remain.
+
+**168 database/integration tests in 11 files** also passed against disposable loopback fixtures, including existing unread, membership/access and authenticated delivery coverage. Development database data and volumes were preserved.
+
+These are local Windows synthetic/fixture checks. Screen-reader, physical-device, WAN and human chat/voice acceptance are not established by this refactor. At the time of this isolated Messages slice, sidebar/dialog extraction, review, CI and PR publication remained separate follow-ups.
+
+# Community sidebar extraction — 2026-11-14
+
+This independent slice of the App.tsx modularization ticket moves the community sidebar to `apps/web/src/CommunitySidebar.tsx`: categories/channels, DM/group navigation, invitations, sounds, voice entry and profile controls. `Community` retains state ownership and its existing callbacks; sidebar authentication still uses the same approved-account context. The moved JSX and handler expressions match after formatting normalization, including DOM identifiers, inert state, component keys and invitation request behavior. `Messages` and dialogs are unchanged. On this branch, `App.tsx` falls from **1,741 to 1,565 lines**; the separately prepared Messages slice is not included in these counts.
+
+**1,261 portable tests in 88 files**, workspace lint/typecheck and the web build passed. An initial candidate changed CSS ordering through the new component import; placing that import at the original VoicePanel import position restores a **byte-identical built stylesheet**. Existing Vite configuration/chunk-size warnings remain. No feature-folder convention is introduced.
+
+The existing browser acceptance harness passed before and after extraction **without assertion edits**, covering category/channel management, invitations, conversation switching, unread badges, sounds, voice entry, presence, and drawer keyboard/focus. Desktop and 390px messaging screenshots were inspected. The broader browser integration run passed **70 of 71 cases**; the remaining screen-peer deadline case failed during browser launch with Node fetch's `bad port`, before peer setup. That isolated case then passed in both the preserved pre-sidebar worktree and this worktree, with no test or application fix. The initial full integration invocation therefore remains a failed run, with a successful focused recheck.
+
+All **three actual-app screen/voice browser cases** also passed on the final build, covering video-only and source-audio sharing, renewal, hide/resume and Stop preserving voice. The final main JS is 550.43 kB (166.72 kB gzip), compared with the baseline's 550.06 kB (166.58 kB gzip).
+
+These are local Windows synthetic/fixture results, including disposable databases and synthetic media. Dedicated database, voice-load, Electron, physical-device, WAN and screen-reader suites were not selected for this markup extraction. The Messages worktree and the user's active checkout were preserved. At the time of this isolated Sidebar slice, dialog extraction, review, CI and PR publication remained separate follow-ups.
+
 # Conversation dialog extraction — 2026-11-14
 
 The third independent App.tsx extraction moves the dialog shell and existing management content to `ConversationDialog.tsx`, with new channel, direct-message and group forms in their own component files. `Community` still owns modal state, creation/submission, busy/error handling, category pagination and the unchanged Escape/Tab/focus-return effect. Sidebar and Messages source is unchanged. On this branch, `App.tsx` falls from **1,741 to 1,494 lines**, excluding the two separately prepared slices.
@@ -6,7 +28,7 @@ The third independent App.tsx extraction moves the dialog shell and existing man
 
 The unchanged browser acceptance harness passed before and after extraction without assertion edits. A new focused browser regression, registered in `vitest.browser.config.ts`, passed against both builds. It covers mobile group creation through the UI, self-exclusion, Tab/Shift+Tab trapping, rejected-submit values/checkboxes/focus, successful invitation-only membership, DM selection and focus, channel/category navigation, Escape focus return and zero media captures. Its initial success-focus assumptions did not match the original app; baseline inspection established body focus after group creation and return to the DM trigger after DM creation, which the final regression preserves. Group-error and existing channel-management mobile screenshots were inspected.
 
-These are local Windows synthetic/disposable-fixture checks. Dedicated database, voice/load, Electron, screen-sharing, WAN, physical-device and screen-reader suites were not rerun for this dialog extraction. The Messages/sidebar worktrees and the user's active checkout were preserved. Combined acceptance is recorded separately for the local integration worktree; publication, review and CI remain unperformed.
+These are local Windows synthetic/disposable-fixture checks. Dedicated database, voice/load, Electron, screen-sharing, WAN, physical-device and screen-reader suites were not rerun for this dialog extraction. The Messages/sidebar worktrees and the user's active checkout were preserved. Combined acceptance is recorded separately for the local integration worktree; publication, review and CI were pending at the time of this isolated slice.
 
 # Firefox video-only capture metadata — 2026-11-14
 
