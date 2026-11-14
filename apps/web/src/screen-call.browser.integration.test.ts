@@ -29,6 +29,8 @@ navigator.mediaDevices.getDisplayMedia=async(options)=>{
 it.each(['none', 'tab', 'three'] as const)(
   'shares %s source sound in the actual app with independent quality, renewal, hide/resume and Stop preserving voice',
   async (sound) => {
+    const captureScript =
+      sound === 'none' ? syntheticSource.replace("displaySurface:'browser',", '') : syntheticSource;
     const config = await checkVoiceTestServices(),
       database = await testDatabase();
     const origin = 'http://127.0.0.1:3012',
@@ -79,7 +81,7 @@ it.each(['none', 'tab', 'three'] as const)(
       for (const account of [publisher, viewer]) {
         const browser = await launch();
         browsers.push(browser);
-        await browser.call('Page.addScriptToEvaluateOnNewDocument', { source: syntheticSource });
+        await browser.call('Page.addScriptToEvaluateOnNewDocument', { source: captureScript });
         await setup(browser, account.token, origin);
         await browser.js("document.querySelector('.screen-launcher > button').click()");
         await browser.wait("document.querySelector('#screen-panel')?.dataset.phase==='ready'");

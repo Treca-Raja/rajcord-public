@@ -158,6 +158,43 @@ describe('local display capture contract', () => {
     expect(f.devices.getDisplayMedia).not.toHaveBeenCalled();
     expect(f.devices.getUserMedia).not.toHaveBeenCalled();
   });
+  it('accepts browser video-only capture without optional surface metadata and preserves cleanup', async () => {
+    const f = fixture(),
+      source = new Stream();
+    delete source.tracks[0]!.settings.displaySurface;
+    const pending = f.adapter.start({ sound: 'none' });
+    f.resolve(source);
+    const capture = await pending;
+    expect(capture.displaySurface).toBe('unknown');
+    expect(capture.audio).toBeNull();
+    expect(f.devices.getDisplayMedia.mock.calls[0]![0].audio).toBe(false);
+    expect(f.devices.getUserMedia).not.toHaveBeenCalled();
+    expect(f.devices.enumerateDevices).not.toHaveBeenCalled();
+    source.tracks[0]!.end();
+    expect(await capture.ended).toBe('video-ended');
+    expect(source.tracks[0]!.stop).toHaveBeenCalledOnce();
+  });
+  it.each([
+    { desktop: true, surface: undefined, audio: false },
+    { desktop: false, surface: 'unrecognized', audio: false },
+    { desktop: false, surface: 'unknown', audio: false },
+    { desktop: false, surface: undefined, audio: true },
+  ])(
+    'rejects unverified desktop, malformed metadata or unexpected audio %#',
+    async ({ desktop, surface, audio }) => {
+      const f = fixture({ desktop }),
+        source = new Stream([new Track(), ...(audio ? [new Track('audio')] : [])]);
+      source.tracks[0]!.settings.displaySurface = surface;
+      const pending = f.adapter.start({ sound: 'none' });
+      f.resolve(source);
+      await expect(pending).rejects.toMatchObject({
+        code: audio ? 'invalid_tracks' : 'unsupported',
+      });
+      expect(source.tracks.every((track) => track.stop.mock.calls.length === 1)).toBe(true);
+      expect(f.devices.getDisplayMedia).toHaveBeenCalledOnce();
+      expect(f.devices.getUserMedia).not.toHaveBeenCalled();
+    },
+  );
   it('accepts one consented selected-tab audio track under injected qualification, including legitimate silence', async () => {
     const f = fixture({ tabAudio: 'qualified-selected-tab' }),
       source = new Stream([new Track(), new Track('audio')]);

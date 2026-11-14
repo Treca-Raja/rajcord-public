@@ -35,7 +35,7 @@ export type LocalScreenCapture = Readonly<{
   stream: MediaStream;
   video: MediaStreamTrack;
   audio: MediaStreamTrack | null;
-  displaySurface: 'browser' | 'window' | 'monitor';
+  displaySurface: 'browser' | 'window' | 'monitor' | 'unknown';
   // Private local preview metadata; never put this result into a signaling DTO.
   localLabel: string;
   sound: CaptureSound;
@@ -225,12 +225,15 @@ export class WebScreenCapture {
             );
           const video = videos[0]!,
             audio = audios[0] ?? null;
-          const displaySurface = video.getSettings().displaySurface;
-          if (
-            displaySurface !== 'browser' &&
-            displaySurface !== 'window' &&
-            displaySurface !== 'monitor'
-          )
+          const surface = video.getSettings().displaySurface;
+          let displaySurface: LocalScreenCapture['displaySurface'];
+          if (surface === 'browser' || surface === 'window' || surface === 'monitor')
+            displaySurface = surface;
+          // Some browsers omit this optional setting. No source classification is needed
+          // for an explicitly video-only browser picker result with no audio tracks.
+          else if (surface === undefined && !this.desktop && sound === 'none')
+            displaySurface = 'unknown';
+          else
             throw new ScreenCaptureError(
               'unsupported',
               'The selected display source cannot be verified.',

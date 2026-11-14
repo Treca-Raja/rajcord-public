@@ -1,3 +1,11 @@
+# Firefox video-only capture metadata — 2026-11-14
+
+Investigated the follow-up `The selected display source cannot be verified.` error after the user confirmed that watching works. The capture adapter required `getSettings().displaySurface` even for browser video-only selection. A missing-property regression reproduced that rejection before the fix. Browser video-only results can now retain an explicit `unknown` surface classification when this optional property is absent. They still require exactly one live video track and no audio. Desktop capture, requested source audio, malformed surface metadata, source ownership and cleanup checks retain their existing restrictions; no microphone fallback or second picker is introduced.
+
+**114 focused capture/lifecycle/call/preview tests** and **three real-browser application screen-sharing tests** passed, along with affected ESLint, web typecheck/build, formatting and whitespace checks. The video-only application case now omits surface metadata and still covers authenticated sharing, quality selection, renewal, hide/resume and Stop preserving voice. The first application attempt lacked built web assets and stopped at a local 404; after building, all application cases passed.
+
+A separate isolated native Firefox test passed its generated canvas stream through the patched capture adapter and two actual screen peers. It requested `audio: false`, retained `displaySurface: 'unknown'`, connected both peers, received **1,645 synthetic video bytes**, and reported no errors. That Firefox runtime reported no support for the `displaySurface` constraint. The test injected only the display chooser result; it did not open the operating-system picker or capture a private display/microphone. Actual Firefox picker and friend-to-friend capture acceptance remain manual checks. This evidence was collected on `feature/firefox-screen-capture` before publication.
+
 # Screen ICE completion compatibility — 2026-11-14
 
 Reproduced the reported `Invalid screen signaling envelope.` error with an isolated native Firefox profile and generated canvas video. Its offer and ordinary ICE candidates passed the shared parser; a subsequent native candidate with an empty candidate string failed validation. `ScreenPeer` treated this gathering-complete marker as a candidate to relay and closed the endpoint.
