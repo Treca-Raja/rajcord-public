@@ -120,7 +120,7 @@ export function registerGateway(app: FastifyInstance, voice: VoiceService, origi
       } catch {
         if (!socket.destroyed) socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       }
-    })();
+    })().catch(() => socket.destroy());
   });
   app.get('/media/rtc/validate', { logLevel: 'silent' }, async (_req, reply) =>
     reply.code(401).send('Voice authorization required.'),

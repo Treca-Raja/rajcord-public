@@ -1,14 +1,15 @@
+import './app/styles';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
-import './styles.css';
-import '@fontsource-variable/inter/index.css';
-import './appearance.css';
-import { createScreenApplication } from './screen-application';
+import { App } from './app/App';
+import { FeatureBoundary } from './shared/FeatureBoundary';
+import { createScreenApplication } from './features/screen-sharing/composition';
 const screenApplication = createScreenApplication();
 window.addEventListener('pagehide', () => screenApplication.runtime.suspend());
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App screenApplication={screenApplication} />
+    <FeatureBoundary name="Rajcord">
+      <App screenApplication={screenApplication} />
+    </FeatureBoundary>
   </React.StrictMode>,
 );

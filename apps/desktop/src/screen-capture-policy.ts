@@ -291,7 +291,10 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
     };
     this.pending = p;
     this.working = true;
-    void this.prepare(p);
+    void this.prepare(p).catch(() => {
+      this.deps.onError('picker_failed');
+      this.finish(p);
+    });
     return { ok: true, data: { requestId: p.id } };
   }
   private async prepare(p: Pending<T>) {

@@ -2,6 +2,23 @@ export * from './screen.js';
 export * from './screen-signaling.js';
 export * from './desktop-capture.js';
 export * from './capture-authorization.js';
+export {
+  API_CONTRACTS,
+  API_ERROR_RESPONSE,
+  getApiContract,
+  validateApiRequest,
+  validateApiResponse,
+  InvalidApiRequestError,
+  InvalidApiResponseError,
+} from './api-response.js';
+export type {
+  ApiClientPath,
+  ApiGetPath,
+  ApiMethodForPath,
+  ApiRequestBodyFor,
+  ApiResponseFor,
+} from './api-response.js';
+export { validateClientSocketPacket, invalidClientSocketAck } from './socket-contracts.js';
 import type { ScreenServerEvents, ScreenClientEvents } from './screen.js';
 export type AccountStatus = 'pending' | 'approved' | 'rejected' | 'suspended' | 'removed';
 export interface AuthUser {
