@@ -1,9 +1,9 @@
 import { MemberPanel } from './MemberPanel';
 import { usePresence } from './use-presence';
 import { Notifications } from './Notifications';
+import { ConversationDialog, type ConversationDialogMode } from './ConversationDialog';
 import { Messages } from './Messages';
 import { DraftStore } from './chat-state';
-import { CategoryManager, ChannelFields, ChannelSettings } from './Channels';
 import { channelCategories, channelFields } from './channel-state';
 import { ApplicationSounds } from './ApplicationSounds';
 import { CommunitySidebar } from './CommunitySidebar';
@@ -69,7 +69,7 @@ function Community() {
   const [selected, setSelected] = useState<string | null>(null),
     [mobile, setMobile] = useState(false),
     [error, setError] = useState(''),
-    [modal, setModal] = useState<'channel' | 'dm' | 'group' | 'manage' | 'categories' | null>(null),
+    [modal, setModal] = useState<ConversationDialogMode | null>(null),
     [busy, setBusy] = useState(false);
   const requestRef = useRef(request);
   requestRef.current = request;
@@ -453,269 +453,22 @@ function Community() {
         }}
       />
       {modal && (
-        <div className="modal-backdrop">
-          <section
-            className="account-panel chat-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-label={
-              modal === 'manage'
-                ? 'Manage conversation'
-                : modal === 'categories'
-                  ? 'Manage categories'
-                  : 'New conversation'
-            }
-          >
-            <header>
-              <h2>
-                {modal === 'categories'
-                  ? 'Manage categories'
-                  : modal === 'channel'
-                    ? 'Create a channel'
-                    : modal === 'dm'
-                      ? 'Start a direct message'
-                      : modal === 'group'
-                        ? 'Create a group'
-                        : current?.name}
-              </h2>
-              <button aria-label="Close dialog" onClick={() => setModal(null)}>
-                <X />
-              </button>
-            </header>
-            <div className="account-content">
-              {error && (
-                <p role="alert" className="form-error">
-                  {error}
-                </p>
-              )}
-              {modal === 'categories' ? (
-                <CategoryManager categories={categories} onChanged={reload} />
-              ) : modal !== 'manage' ? (
-                <form onSubmit={(e) => void create(e)}>
-                  {modal === 'channel' ? (
-                    <>
-                      <ChannelFields categories={categories} />
-                      <button
-                        type="button"
-                        className="text-button"
-                        onClick={() => openDialog('categories')}
-                      >
-                        Create or manage categories
-                      </button>
-                    </>
-                  ) : (
-                    modal !== 'dm' && (
-                      <label>
-                        Group name
-                        <input
-                          autoFocus
-                          name="name"
-                          maxLength={80}
-                          required
-                          placeholder="The usual suspects"
-                        />
-                      </label>
-                    )
-                  )}
-                  {modal === 'dm' ? (
-                    <label>
-                      Member
-                      <select name="userId" required>
-                        {members
-                          .filter((m) => m.id !== state.user.id)
-                          .map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.displayName} (@{m.username})
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                  ) : (
-                    modal === 'group' && (
-                      <>
-                        <p>
-                          Invite friends to join. Each person must accept before seeing messages.
-                        </p>
-                        {members
-                          .filter((m) => m.id !== state.user.id)
-                          .map((m) => (
-                            <label className="check-label" key={m.id}>
-                              <input type="checkbox" name="userIds" value={m.id} />
-                              {m.displayName}
-                            </label>
-                          ))}
-                      </>
-                    )
-                  )}
-                  <button className="primary" disabled={busy}>
-                    {modal === 'dm' ? 'Open conversation' : 'Create'}
-                  </button>
-                </form>
-              ) : (
-                current && (
-                  <>
-                    {current.kind === 'channel' && (
-                      <ChannelSettings
-                        key={current.id}
-                        conversation={current}
-                        categories={categories}
-                        onChanged={reload}
-                      />
-                    )}
-                    {current.kind === 'channel' && (
-                      <button className="text-button" onClick={() => openDialog('categories')}>
-                        Create or manage categories
-                      </button>
-                    )}
-                    {current.kind === 'group' && current.managerId === state.user.id && (
-                      <form
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          const name = new FormData(e.currentTarget).get('name');
-                          void action(() =>
-                            request('/conversations/' + current.id, 'PATCH', { name }),
-                          );
-                        }}
-                      >
-                        <label>
-                          Name
-                          <input name="name" defaultValue={current.name} required maxLength={80} />
-                        </label>
-                        <button className="secondary" disabled={busy}>
-                          Rename
-                        </button>
-                      </form>
-                    )}
-                    {current.kind === 'dm' && (
-                      <p>This conversation is private to its two participants.</p>
-                    )}
-                    {current.kind === 'group' && (
-                      <>
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            const userId = new FormData(e.currentTarget).get('userId');
-                            void action(() =>
-                              request('/conversations/' + current.id + '/invitations', 'POST', {
-                                userId,
-                              }),
-                            );
-                          }}
-                        >
-                          <label>
-                            Invite a member
-                            <select name="userId" required>
-                              <option value="">Choose a friend</option>
-                              {members
-                                .filter(
-                                  (m) => !current.members.some((member) => member.id === m.id),
-                                )
-                                .map((m) => (
-                                  <option key={m.id} value={m.id}>
-                                    {m.displayName}
-                                  </option>
-                                ))}
-                            </select>
-                          </label>
-                          <button className="secondary" disabled={busy}>
-                            Send invitation
-                          </button>
-                        </form>
-                        <p>
-                          New members cannot see earlier messages. Returning members can see their
-                          previous membership periods, excluding messages sent while away.
-                        </p>
-                        {current.members.map((member) => (
-                          <div className="account-row" key={member.id}>
-                            <strong>
-                              {member.displayName}
-                              {member.id === current.managerId ? ' · Manager' : ''}
-                            </strong>
-                            {current.managerId === state.user.id && member.id !== state.user.id && (
-                              <div className="account-actions">
-                                <button
-                                  className="secondary"
-                                  disabled={busy || member.status !== 'approved'}
-                                  onClick={() => {
-                                    if (
-                                      window.confirm(
-                                        'Transfer group management to ' + member.displayName + '?',
-                                      )
-                                    )
-                                      void action(() =>
-                                        request(
-                                          '/conversations/' + current.id + '/membership',
-                                          'POST',
-                                          { action: 'transfer', userId: member.id },
-                                        ),
-                                      );
-                                  }}
-                                >
-                                  Make manager
-                                </button>
-                                <button
-                                  className="danger"
-                                  disabled={busy}
-                                  onClick={() => {
-                                    if (
-                                      window.confirm(
-                                        'Remove ' + member.displayName + ' from this group?',
-                                      )
-                                    )
-                                      void action(() =>
-                                        request(
-                                          '/conversations/' + current.id + '/membership',
-                                          'POST',
-                                          { action: 'remove', userId: member.id },
-                                        ),
-                                      );
-                                  }}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        <button
-                          className="danger"
-                          disabled={busy}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                'Leave this group? You need a new invitation to return.',
-                              )
-                            )
-                              void action(async () => {
-                                await request(
-                                  '/conversations/' + current.id + '/membership',
-                                  'POST',
-                                  { action: 'leave' },
-                                );
-                                setModal(null);
-                              });
-                          }}
-                        >
-                          Leave group
-                        </button>
-                      </>
-                    )}
-                  </>
-                )
-              )}
-              {categoryPage.nextAfter &&
-                (modal === 'channel' || modal === 'manage' || modal === 'categories') && (
-                  <button
-                    className="secondary"
-                    disabled={categoriesBusy}
-                    onClick={() => void moreCategories()}
-                  >
-                    {categoriesBusy ? 'Loading categories…' : 'Load more categories'}
-                  </button>
-                )}
-            </div>
-          </section>
-        </div>
+        <ConversationDialog
+          modal={modal}
+          current={current}
+          categories={categories}
+          members={members}
+          error={error}
+          busy={busy}
+          reload={reload}
+          create={create}
+          openDialog={openDialog}
+          setModal={setModal}
+          action={action}
+          nextCategoryPage={categoryPage.nextAfter}
+          categoriesBusy={categoriesBusy}
+          moreCategories={moreCategories}
+        />
       )}
     </div>
   );
