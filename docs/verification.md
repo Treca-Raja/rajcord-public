@@ -1,3 +1,13 @@
+# Conversation dialog extraction — 2026-11-14
+
+The third independent App.tsx extraction moves the dialog shell and existing management content to `ConversationDialog.tsx`, with new channel, direct-message and group forms in their own component files. `Community` still owns modal state, creation/submission, busy/error handling, category pagination and the unchanged Escape/Tab/focus-return effect. Sidebar and Messages source is unchanged. On this branch, `App.tsx` falls from **1,741 to 1,494 lines**, excluding the two separately prepared slices.
+
+**1,261 portable tests in 88 files**, workspace lint/typecheck, the build and formatting passed. Built CSS is byte-identical to the baseline; main JS is 550.91 kB (166.83 kB gzip), compared with 550.06 kB (166.58 kB gzip) before extraction. Existing Vite configuration/chunk-size warnings remain.
+
+The unchanged browser acceptance harness passed before and after extraction without assertion edits. A new focused browser regression, registered in `vitest.browser.config.ts`, passed against both builds. It covers mobile group creation through the UI, self-exclusion, Tab/Shift+Tab trapping, rejected-submit values/checkboxes/focus, successful invitation-only membership, DM selection and focus, channel/category navigation, Escape focus return and zero media captures. Its initial success-focus assumptions did not match the original app; baseline inspection established body focus after group creation and return to the DM trigger after DM creation, which the final regression preserves. Group-error and existing channel-management mobile screenshots were inspected.
+
+These are local Windows synthetic/disposable-fixture checks. Dedicated database, voice/load, Electron, screen-sharing, WAN, physical-device and screen-reader suites were not rerun for this dialog extraction. The Messages/sidebar worktrees and the user's active checkout were preserved. Combined acceptance is recorded separately for the local integration worktree; publication, review and CI remain unperformed.
+
 # Firefox video-only capture metadata — 2026-11-14
 
 Investigated the follow-up `The selected display source cannot be verified.` error after the user confirmed that watching works. The capture adapter required `getSettings().displaySurface` even for browser video-only selection. A missing-property regression reproduced that rejection before the fix. Browser video-only results can now retain an explicit `unknown` surface classification when this optional property is absent. They still require exactly one live video track and no audio. Desktop capture, requested source audio, malformed surface metadata, source ownership and cleanup checks retain their existing restrictions; no microphone fallback or second picker is introduced.

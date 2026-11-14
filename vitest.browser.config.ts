@@ -7,6 +7,7 @@ if (existsSync('apps/api/.env')) loadEnvFile('apps/api/.env');
 export default defineConfig({
   test: {
     include: [
+      'apps/web/src/conversation-dialog.browser.integration.test.ts',
       'apps/web/src/call-provider.integration.test.ts',
       'apps/api/src/auth/cookie-race.browser.integration.test.ts',
       'apps/web/src/screen-peer.browser.integration.test.ts',
