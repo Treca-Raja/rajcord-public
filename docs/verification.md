@@ -1,3 +1,13 @@
+# Message timeline extraction — 2026-11-14
+
+The first slice of the App.tsx modularization ticket moves `Messages` to `apps/web/src/Messages.tsx`. `message-reading.ts` owns read eligibility, authenticated socket/HTTP acknowledgements, retry budgets and listener/timer cleanup; `message-timeline.ts` owns pending-jump settlement, focus and scroll pinning. State and effect lifetimes, context loading, sending, component keys and rendered JSX remain unchanged. The existing flat source layout is retained. `App.tsx` falls from **1,741 to 898 lines**; sidebar and dialog extraction remain separate follow-ups.
+
+**1,289 portable tests in 90 files** passed, including new unit coverage for loading/pending jumps, first-settlement focus, missing anchors, reduced motion, pinned/latest geometry, blocked reading, large sequence cursors, socket acknowledgement/timeout/denial, HTTP retry budgets, in-flight suppression and cleanup. Workspace lint, typecheck, formatting and the web build passed. The existing browser harness passed before and after extraction **without assertion changes**, including quote jumps, unread progress, history reading, composer focus and narrow layouts. Desktop and 390px messaging screenshots were inspected. CSS and timeline JSX are unchanged; the built main JS is 550.55 kB (166.66 kB gzip), compared with 550.06 kB (166.58 kB gzip) before extraction. Existing Vite configuration/chunk-size warnings remain.
+
+**168 database/integration tests in 11 files** also passed against disposable loopback fixtures, including existing unread, membership/access and authenticated delivery coverage. Development database data and volumes were preserved.
+
+These are local Windows synthetic/fixture checks. Screen-reader, physical-device, WAN and human chat/voice acceptance are not established by this refactor. Review, CI, PR publication and the remaining sidebar/dialog slices are separate work.
+
 # Firefox video-only capture metadata — 2026-11-14
 
 Investigated the follow-up `The selected display source cannot be verified.` error after the user confirmed that watching works. The capture adapter required `getSettings().displaySurface` even for browser video-only selection. A missing-property regression reproduced that rejection before the fix. Browser video-only results can now retain an explicit `unknown` surface classification when this optional property is absent. They still require exactly one live video track and no audio. Desktop capture, requested source audio, malformed surface metadata, source ownership and cleanup checks retain their existing restrictions; no microphone fallback or second picker is introduced.
