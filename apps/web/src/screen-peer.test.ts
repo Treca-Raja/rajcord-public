@@ -405,6 +405,41 @@ it('a shorter lifecycle deadline and a hung negotiation stop without waiting for
   await rejected;
 });
 
+it.each(['publisher', 'viewer'] as const)(
+  'ignores empty gathering-complete markers without closing the %s or consuming ICE budget',
+  async (role) => {
+    const f = fixture(role);
+    if (role === 'publisher') await f.peer.offer();
+    else await f.peer.receive(f.message({ type: 'offer', sdp: screenSdp('offer', false) }));
+    f.rtc.emit('icecandidate', { candidate: null });
+    for (let i = 0; i < 129; i++)
+      f.rtc.emit('icecandidate', { candidate: { ...screenIce, candidate: '' } });
+    f.rtc.emit('icecandidate', { candidate: screenIce });
+    await flush();
+    expect(f.options.onError).not.toHaveBeenCalled();
+    expect(f.rtc.close).not.toHaveBeenCalled();
+    expect(f.sent.map((signal) => signal.payload.type)).toEqual([
+      role === 'publisher' ? 'offer' : 'answer',
+      'ice',
+    ]);
+    expect(f.sent.map((signal) => signal.sequence)).toEqual([1, 2]);
+  },
+);
+
+it('still rejects malformed nonempty local candidates', async () => {
+  const f = fixture();
+  await f.peer.offer();
+  f.rtc.emit('icecandidate', { candidate: { ...screenIce, candidate: ' ' } });
+  await flush();
+  expect(f.options.onError).toHaveBeenCalledWith(
+    expect.objectContaining({
+      errors: [expect.objectContaining({ message: 'Invalid screen signaling envelope.' })],
+    }),
+  );
+  expect(f.rtc.close).toHaveBeenCalledOnce();
+  expect(f.sent).toHaveLength(1);
+});
+
 it('serializes early ICE after offer delivery and viewer ICE after answer delivery', async () => {
   for (const role of ['publisher', 'viewer'] as const) {
     const f = fixture(role);

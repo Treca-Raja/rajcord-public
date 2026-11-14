@@ -1,3 +1,13 @@
+# Screen ICE completion compatibility — 2026-11-14
+
+Reproduced the reported `Invalid screen signaling envelope.` error with an isolated native Firefox profile and generated canvas video. Its offer and ordinary ICE candidates passed the shared parser; a subsequent native candidate with an empty candidate string failed validation. `ScreenPeer` treated this gathering-complete marker as a candidate to relay and closed the endpoint.
+
+The fix ignores only null candidates and the exact empty-string completion marker before parsing/counting/relaying. Nonempty malformed candidates still fail, and server-side envelope, permission, revision, sequence and candidate-budget validation are unchanged. Regression cases cover both publisher and viewer completion, no sequence/budget consumption and continued delivery of a subsequent valid candidate. Both completion cases failed before the fix and pass afterward.
+
+**111 focused peer/signaling tests** and **15 real-browser peer/application integration tests** passed, along with affected ESLint, web typecheck/build and changed-file formatting. The authenticated browser cases used disposable loopback databases and synthetic media, including source sound, revocation, expiry, renewal and multiple viewers. A separate native Firefox test using the patched `ScreenPeer` connected two peers, observed two empty completion markers, received a video track and **1,706 synthetic video bytes**, and reported no errors. It used generated canvas content without accounts, screen capture or microphones; its temporary browser profile was removed. The production web build retains the existing Vite configuration-loader/chunk-size advisories.
+
+This evidence was collected on `feature/screen-signaling-compatibility` before publication. Verification in the friends' live screen-sharing session remains a separate release acceptance check. The older installed desktop client's screen-sharing availability is separate from this browser signaling fix.
+
 # Combined release preparation — 2026-11-13
 
 Integrated the eleven open feature/dependency PR heads (#20, #22, #23, #34, #36–#42) in an isolated `feature/merge-preparation` worktree, starting at develop `898d1de` and retaining main `4a6df64`. The operator's active checkout, local editor/configuration work, saved credentials, database data and installed application were preserved. The four dependency PRs were retargeted to develop. No shared branch, protection setting, production approval or production service was changed by this preparation.
