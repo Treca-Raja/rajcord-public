@@ -564,7 +564,8 @@ export class ScreenPeer {
     });
   }
   private candidate(event: RTCPeerConnectionIceEvent) {
-    if (!event.candidate || this.closed) return;
+    // Empty candidates mark the end of gathering, rather than a candidate to relay.
+    if (!event.candidate || event.candidate.candidate === '' || this.closed) return;
     try {
       this.check();
       const c = event.candidate;
