@@ -33,10 +33,13 @@ export function settlePendingJump(
   );
   if (target) {
     pinned.current = false;
-    target.scrollIntoView({
-      block: 'center',
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-    });
+    const area = scroll.current;
+    if (area) {
+      const targetRect = target.getBoundingClientRect();
+      const areaRect = area.getBoundingClientRect();
+
+      area.scrollTop += targetRect.top - areaRect.top - (area.clientHeight - targetRect.height) / 2;
+    }
     target.focus({ preventScroll: true });
   }
   // A target already in view emits no scroll event, so recompute the reading position explicitly.

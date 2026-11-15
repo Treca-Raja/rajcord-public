@@ -9,11 +9,15 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 function timeline(reducedMotion = false) {
-  const target = { scrollIntoView: vi.fn(), focus: vi.fn() };
+  const target = {
+    focus: vi.fn(),
+    getBoundingClientRect: vi.fn(() => ({ top: 360, height: 40 })),
+  };
   const area = {
     scrollHeight: 1000,
     scrollTop: 500,
     clientHeight: 500,
+    getBoundingClientRect: vi.fn(() => ({ top: 100 })),
     querySelector: vi.fn().mockReturnValue(target),
   };
   const scroll = { current: area as unknown as HTMLDivElement };
@@ -48,10 +52,7 @@ it.each([false, true])(
     expect(t.area.querySelector).toHaveBeenCalledWith('[data-message-id="quoted"]');
     expect(t.pending.current).toBeNull();
     expect(t.pinned.current).toBe(false);
-    expect(t.target.scrollIntoView).toHaveBeenCalledWith({
-      block: 'center',
-      behavior: reducedMotion ? 'auto' : 'smooth',
-    });
+    expect(t.area.scrollTop).toBe(530);
     expect(t.target.focus).toHaveBeenCalledWith({ preventScroll: true });
     // Already-visible targets emit no scroll event; the scheduled check must resume reading.
     t.frame.mock.calls[0]![0]();
