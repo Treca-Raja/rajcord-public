@@ -65,8 +65,8 @@ importers:
         specifier: ^10.1.10
         version: 10.1.10
       '@livekit/protocol':
-        specifier: ^1.53.1
-        version: 1.53.1
+        specifier: ^1.53.4
+        version: 1.53.4
       '@tricord/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -800,8 +800,8 @@ packages:
   '@livekit/protocol@1.53.0':
     resolution: {integrity: sha512-dM562Q7sEQbJ9ZghjIpcVuRxRApGNwJW/JfXRub+dJT8J1cC2Tep0SyYkDzOawix7+0x969fnjXt0qEZOxkjbQ==}
 
-  '@livekit/protocol@1.53.1':
-    resolution: {integrity: sha512-Kx67RzZL5PhNUtzg7J7CRyCOEKOEyNLh2tKLaGK5FAluKrpIusYAJX8S3o+IYeVwEWGB1gNbfxhIwzAeUC0GNA==}
+  '@livekit/protocol@1.53.4':
+    resolution: {integrity: sha512-xoZ14lbPJepmA7Giyh3CaquuGqfCol2jFZJsgoUZJ52PPqY+MfKHswuY0kQgeBuCqh/dWBKfX8AaYGA16hFoew==}
 
   '@lukeed/ms@2.0.2':
     resolution: {integrity: sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA==}
@@ -3646,7 +3646,7 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.10.1
 
-  '@livekit/protocol@1.53.1':
+  '@livekit/protocol@1.53.4':
     dependencies:
       '@bufbuild/protobuf': 1.10.1
 
