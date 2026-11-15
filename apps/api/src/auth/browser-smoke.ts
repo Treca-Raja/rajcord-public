@@ -174,6 +174,9 @@ async function openConversation(id: string, view: 'Channels' | 'Direct Messages'
 function unreadExpression(id: string, field: 'unreadCount' | 'mentionCount') {
   return `fetch('/api/conversations').then(response => response.json()).then(data => data.conversations.find(conversation => conversation.id===${JSON.stringify(id)})?.[${JSON.stringify(field)}] ?? -1)`;
 }
+function unreadEquals(id: string, field: 'unreadCount' | 'mentionCount', count: number) {
+  return `${unreadExpression(id, field)}.then(value => value === ${count})`;
+}
 async function reload() {
   await js('window.__reloadMarker=true');
   await call('Page.reload');
@@ -1774,8 +1777,8 @@ try {
   });
   assert.equal(unreadReply.statusCode, 200);
   const badge = `document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent==='1'`;
-  const unreadOnServer = `(${unreadExpression(dm.id, 'unreadCount')})===1`;
-  const mentionOnServer = `(${unreadExpression(dm.id, 'mentionCount')})===1`;
+  const unreadOnServer = unreadEquals(dm.id, 'unreadCount', 1);
+  const mentionOnServer = unreadEquals(dm.id, 'mentionCount', 1);
   await wait(unreadOnServer);
   await wait(mentionOnServer);
   // Keep the DM unread while briefly opening its sidebar to inspect the badge.
@@ -2071,7 +2074,7 @@ try {
     payload: { body: 'Muted conversation still counts unread', clientId: randomUUID() },
   });
   assert.equal(mutedPost.statusCode, 200);
-  await wait(`(${unreadExpression(dm.id, 'unreadCount')})===1`);
+  await wait(unreadEquals(dm.id, 'unreadCount', 1));
   await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   assert.equal(await js('window.notificationCalls.length'), mutedNative);
   assert.equal(await js('window.notificationSoundStarts'), mutedSound);
@@ -2108,7 +2111,7 @@ try {
     payload: { body: 'Priority never overrides sender mute', clientId: randomUUID() },
   });
   assert.equal(senderMuted.statusCode, 200);
-  await wait(`(${unreadExpression(dm.id, 'unreadCount')})===1`);
+  await wait(unreadEquals(dm.id, 'unreadCount', 1));
   await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   assert.equal(await js('window.notificationCalls.length'), mutedNative);
   assert.equal(await js('window.notificationSoundStarts'), mutedSound);
@@ -2188,7 +2191,7 @@ try {
     headers: ownerHeaders,
     payload: { body: 'Disabled alert', clientId: randomUUID() },
   });
-  await wait(`(${unreadExpression(dm.id, 'unreadCount')})===1`);
+  await wait(unreadEquals(dm.id, 'unreadCount', 1));
   assert.equal(await js('window.notificationCalls.length'), beforeDisabled);
   assert.equal(await js('window.notificationSoundStarts'), soundBeforeDisabled);
 
@@ -2233,7 +2236,7 @@ try {
     headers: ownerHeaders,
     payload: { body: 'Message alerts leave voice sounds alone', clientId: randomUUID() },
   });
-  await wait(`(${unreadExpression(dm.id, 'unreadCount')})===${unreadBeforeAlert + 1}`);
+  await wait(unreadEquals(dm.id, 'unreadCount', unreadBeforeAlert + 1));
   assert.equal(
     await js('window.soundCalls.length'),
     2,
