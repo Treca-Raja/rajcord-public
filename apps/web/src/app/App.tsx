@@ -352,8 +352,15 @@ function Community() {
     return () => {
       document.removeEventListener('keydown', keydown);
       const bounds = previous?.getBoundingClientRect();
+      const sidebar = previous?.closest('.sidebar');
+      const mobileSidebarClosed = Boolean(
+        sidebar &&
+        innerWidth <= 750 &&
+        !sidebar.closest('.shell')?.classList.contains('mobile-open'),
+      );
       if (
         previous?.isConnected &&
+        !mobileSidebarClosed &&
         bounds &&
         bounds.width > 0 &&
         bounds.height > 0 &&
