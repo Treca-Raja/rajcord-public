@@ -81,6 +81,7 @@ function Community() {
   const requestRef = useRef(request);
   requestRef.current = request;
   const dialogTrigger = useRef<HTMLElement | null>(null);
+  const pendingCreatedConversationFocus = useRef<string | null>(null);
   function openDialog(mode: NonNullable<typeof modal>, trigger?: HTMLElement) {
     dialogTrigger.current =
       trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
@@ -374,6 +375,13 @@ function Community() {
       else document.querySelector<HTMLTextAreaElement>('textarea[name=message]')?.focus();
     };
   }, [modal]);
+  useEffect(() => {
+    if (modal || !current || pendingCreatedConversationFocus.current !== current.id) return;
+    const composer = document.querySelector<HTMLTextAreaElement>('.chat textarea[name="message"]');
+    if (!composer || composer.disabled) return;
+    composer.focus({ preventScroll: true });
+    pendingCreatedConversationFocus.current = null;
+  }, [modal, current]);
   async function action(work: () => Promise<unknown>) {
     setBusy(true);
     setError('');
@@ -395,6 +403,7 @@ function Community() {
           ? { kind: 'channel', ...channelFields(data) }
           : newConversationFields(kind, data);
       const result = await request<{ conversation: Conversation }>('/conversations', 'POST', body);
+      pendingCreatedConversationFocus.current = result.conversation.id;
       selectConversation(result.conversation);
       setModal(null);
     });
