@@ -137,15 +137,8 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
     await page.wait(
       "!document.querySelector('.chat-dialog') && document.querySelector('.channel-header strong').textContent==='Dialog fixture group'",
     );
-    // Preserve the baseline's post-create focus; changing it is outside this refactor.
-    expect(
-      await page.js('document.activeElement===document.body'),
-      JSON.stringify(
-        await page.js(
-          "({tag:document.activeElement.tagName,aria:document.activeElement.getAttribute('aria-label'),name:document.activeElement.getAttribute('name')})",
-        ),
-      ),
-    ).toBe(true);
+    // Successful creation closes the dialog and restores focus to its trigger.
+    expect(await page.js("document.activeElement.getAttribute('aria-label')")).toBe('Create group');
     const group = (
       await database.database.pool.query(
         "SELECT id FROM conversations WHERE kind='group' AND name=$1",
