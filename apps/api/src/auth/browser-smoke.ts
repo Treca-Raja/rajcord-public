@@ -157,6 +157,23 @@ async function click(label: string) {
       ");if(!b)throw new Error('Button missing');b.click();})()",
   );
 }
+async function showWorkspace(view: 'Channels' | 'Direct Messages') {
+  await js(
+    `document.querySelector(${JSON.stringify('button[aria-label="' + view + '"]')}).click()`,
+  );
+  await wait(
+    `document.querySelector('.sidebar')?.getAttribute('aria-label')===${JSON.stringify(view)}`,
+  );
+}
+async function openConversation(id: string, view: 'Channels' | 'Direct Messages') {
+  await showWorkspace(view);
+  const selector = '[data-conversation-id="' + id + '"]';
+  await wait(`!!document.querySelector(${JSON.stringify(selector)})`);
+  await js(`document.querySelector(${JSON.stringify(selector)}).click()`);
+}
+function unreadExpression(id: string, field: 'unreadCount' | 'mentionCount') {
+  return `fetch('/api/conversations').then(response => response.json()).then(data => data.conversations.find(conversation => conversation.id===${JSON.stringify(id)})?.[${JSON.stringify(field)}] ?? -1)`;
+}
 async function reload() {
   await js('window.__reloadMarker=true');
   await call('Page.reload');
@@ -1716,15 +1733,17 @@ try {
   cdpEvents.delete('Network.requestWillBeSent');
   await js("document.querySelector('.voice-settings-toggle').click()");
 
-  await js('document.querySelector(\'button[aria-label="New direct message"]\').click()');
+  await showWorkspace('Direct Messages');
+  await js('document.querySelector(\'button[aria-label="Find or start a conversation"]\').click()');
   await wait("!!document.querySelector('select[name=userId]')");
   await js("document.querySelector('select[name=userId]').value=" + JSON.stringify(owner.id));
   await click('Open conversation');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
-  await wait("document.querySelector('button[aria-pressed=true]')?.textContent==='Participants'");
-  await click('Community');
-  await wait("document.querySelector('button[aria-pressed=true]')?.textContent==='Community'");
-  await click('Participants');
+  await wait("document.querySelector('.sidebar')?.getAttribute('aria-label')==='Direct Messages'");
+  await showWorkspace('Channels');
+  await wait("document.querySelector('.sidebar')?.getAttribute('aria-label')==='Channels'");
+  await showWorkspace('Direct Messages');
+  await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
   await compose('Private browser DM');
   const dm = (
     await fixture.database.pool.query(
@@ -1745,7 +1764,7 @@ try {
   );
 
   // Unselected unread counts survive a full browser reload, then clear after focused reading.
-  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await openConversation(general, 'Channels');
   await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
   const unreadReply = await app.inject({
     url: '/api/conversations/' + dm.id + '/messages',
@@ -1755,15 +1774,26 @@ try {
   });
   assert.equal(unreadReply.statusCode, 200);
   const badge = `document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent==='1'`;
+  const unreadOnServer = `(${unreadExpression(dm.id, 'unreadCount')})===1`;
+  const mentionOnServer = `(${unreadExpression(dm.id, 'mentionCount')})===1`;
+  await wait(unreadOnServer);
+  await wait(mentionOnServer);
+  // Keep the DM unread while briefly opening its sidebar to inspect the badge.
+  await js('document.hasFocus=()=>false');
+  await showWorkspace('Direct Messages');
   await wait(badge);
   await wait(
     `document.querySelector('[data-conversation-id="${dm.id}"] .mention-badge')?.textContent==='@1'`,
   );
   await reload();
   await wait("!!document.querySelector('[data-connection=connected]')");
+  await wait(unreadOnServer);
+  await wait(mentionOnServer);
+  await js('document.hasFocus=()=>false');
+  await showWorkspace('Direct Messages');
   await wait(badge);
   await screenshot('unread-browser-badges.png');
-  await js(`document.querySelector('[data-conversation-id="${dm.id}"]').click()`);
+  await js("delete document.hasFocus;window.dispatchEvent(new Event('focus'))");
   await wait("document.querySelector('.message-scroll')?.innerText.includes('Unread ping')");
   await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
   const storedRead = (
@@ -1807,7 +1837,7 @@ try {
     "document.querySelector('.notification-settings button')?.getAttribute('aria-pressed')==='true'",
   );
   await closeSettings();
-  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await openConversation(general, 'Channels');
   await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
   await js("document.hasFocus=()=>false; window.dispatchEvent(new Event('blur'))");
   const alertResponse = await app.inject({
@@ -1840,9 +1870,8 @@ try {
   await js('window.notificationCalls[0].onclick()');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
   await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
-  await js(
-    `document.querySelector('[data-conversation-id="${general}"]').click(); document.hasFocus=()=>false; window.dispatchEvent(new Event('blur'))`,
-  );
+  await openConversation(general, 'Channels');
+  await js("document.hasFocus=()=>false; window.dispatchEvent(new Event('blur'))");
   await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
   const marker = 'rajcord-test-popup:';
   await js(`window.Notification=class extends window.Notification {
@@ -1978,7 +2007,7 @@ try {
   await js(
     `for(const key of Object.keys(localStorage))if(key.startsWith('${marker}'))localStorage.removeItem(key);delete document.hasFocus;window.dispatchEvent(new Event('focus'))`,
   );
-  await js(`document.querySelector('[data-conversation-id="${dm.id}"]').click()`);
+  await openConversation(dm.id, 'Direct Messages');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
   await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
   await notificationSettings();
@@ -2031,7 +2060,7 @@ try {
   await mode('muted');
   await screenshot('notification-settings-desktop.png');
   await closeSettings();
-  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await openConversation(general, 'Channels');
   await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
   const mutedNative = await js<number>('window.notificationCalls.length');
   const mutedSound = await js<number>('window.notificationSoundStarts');
@@ -2042,11 +2071,11 @@ try {
     payload: { body: 'Muted conversation still counts unread', clientId: randomUUID() },
   });
   assert.equal(mutedPost.statusCode, 200);
-  await wait(badge);
+  await wait(`(${unreadExpression(dm.id, 'unreadCount')})===1`);
   await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   assert.equal(await js('window.notificationCalls.length'), mutedNative);
   assert.equal(await js('window.notificationSoundStarts'), mutedSound);
-  await js(`document.querySelector('[data-conversation-id="${dm.id}"]').click()`);
+  await openConversation(dm.id, 'Direct Messages');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
   await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
   await notificationSettings();
@@ -2070,7 +2099,7 @@ try {
     }, 'account-private sender preference persisted');
   }
   await closeSettings();
-  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await openConversation(general, 'Channels');
   await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
   const senderMuted = await app.inject({
     method: 'POST',
@@ -2079,11 +2108,11 @@ try {
     payload: { body: 'Priority never overrides sender mute', clientId: randomUUID() },
   });
   assert.equal(senderMuted.statusCode, 200);
-  await wait(badge);
+  await wait(`(${unreadExpression(dm.id, 'unreadCount')})===1`);
   await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   assert.equal(await js('window.notificationCalls.length'), mutedNative);
   assert.equal(await js('window.notificationSoundStarts'), mutedSound);
-  await js(`document.querySelector('[data-conversation-id="${dm.id}"]').click()`);
+  await openConversation(dm.id, 'Direct Messages');
   await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
   await notificationSettings();
   await wait(`(()=>{const row=[...document.querySelectorAll('.notification-sender')].find(row=>row.textContent.includes(${JSON.stringify('@' + owner.username)}));
@@ -2100,7 +2129,7 @@ try {
     return !!row && !row.muted && row.priority;
   }, 'priority remains private without bypassing global disable');
   await closeSettings();
-  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await openConversation(general, 'Channels');
   await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
   const beforeThreadNoticeRead =
     (
@@ -2151,7 +2180,7 @@ try {
     "document.querySelector('.notification-settings button')?.getAttribute('aria-pressed')==='false'",
   );
   await closeSettings();
-  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
+  await openConversation(general, 'Channels');
   await wait("document.querySelector('.channel-header strong')?.innerText==='general'");
   await app.inject({
     url: '/api/conversations/' + dm.id + '/messages',
@@ -2159,7 +2188,7 @@ try {
     headers: ownerHeaders,
     payload: { body: 'Disabled alert', clientId: randomUUID() },
   });
-  await wait(badge);
+  await wait(`(${unreadExpression(dm.id, 'unreadCount')})===1`);
   assert.equal(await js('window.notificationCalls.length'), beforeDisabled);
   assert.equal(await js('window.notificationSoundStarts'), soundBeforeDisabled);
 
@@ -2196,19 +2225,15 @@ try {
     beforeDisabled,
     'Voice sounds must not enable popups',
   );
-  await js(`document.querySelector('[data-conversation-id="${general}"]').click()`);
-  const unreadBeforeAlert = await js<number>(
-    `Number(document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent || '0')`,
-  );
+  await openConversation(general, 'Channels');
+  const unreadBeforeAlert = await js<number>(unreadExpression(dm.id, 'unreadCount'));
   await app.inject({
     url: '/api/conversations/' + dm.id + '/messages',
     method: 'POST',
     headers: ownerHeaders,
     payload: { body: 'Message alerts leave voice sounds alone', clientId: randomUUID() },
   });
-  await wait(
-    `Number(document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')?.textContent || '0')===${unreadBeforeAlert + 1}`,
-  );
+  await wait(`(${unreadExpression(dm.id, 'unreadCount')})===${unreadBeforeAlert + 1}`);
   assert.equal(
     await js('window.soundCalls.length'),
     2,
@@ -2267,7 +2292,7 @@ try {
       headers: ownerHeaders,
       payload: { body: ('History line ' + i + '\n').repeat(12), clientId: randomUUID() },
     });
-  await js(`document.querySelector('[data-conversation-id="${dm.id}"]').click()`);
+  await openConversation(dm.id, 'Direct Messages');
   await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
   await js(
     `(()=>{const area=document.querySelector('.message-scroll');area.scrollTop=0;area.dispatchEvent(new Event('scroll'))})()`,
@@ -2358,6 +2383,7 @@ try {
     mobile: false,
   });
   await reload();
+  await showWorkspace('Direct Messages');
   await wait(
     "[...document.querySelectorAll('.channels button')].some(b=>b.innerText.includes('Browser invitation group'))",
   );
