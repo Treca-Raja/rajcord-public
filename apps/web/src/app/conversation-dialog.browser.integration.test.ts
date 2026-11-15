@@ -137,6 +137,7 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
     await page.wait(
       "!document.querySelector('.chat-dialog') && document.querySelector('.channel-header strong').textContent==='Dialog fixture group'",
     );
+    await page.wait("document.activeElement.getAttribute('aria-label')==='Create group'");
     // Successful creation closes the dialog and restores focus to its trigger.
     expect(await page.js("document.activeElement.getAttribute('aria-label')")).toBe('Create group');
     const group = (
