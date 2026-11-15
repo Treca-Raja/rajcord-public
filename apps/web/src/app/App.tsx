@@ -81,9 +81,9 @@ function Community() {
   const requestRef = useRef(request);
   requestRef.current = request;
   const dialogTrigger = useRef<HTMLElement | null>(null);
-  function openDialog(mode: NonNullable<typeof modal>) {
+  function openDialog(mode: NonNullable<typeof modal>, trigger?: HTMLElement) {
     dialogTrigger.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setError('');
     setModal(mode);
   }
@@ -474,7 +474,10 @@ function Community() {
             <Users size={18} />
           </button>
           {current && (
-            <button aria-label="Manage conversation" onClick={() => openDialog('manage')}>
+            <button
+              aria-label="Manage conversation"
+              onClick={(event) => openDialog('manage', event.currentTarget)}
+            >
               <Settings size={18} />
             </button>
           )}
@@ -514,12 +517,17 @@ function Community() {
             </p>
             <button
               className="primary"
-              onClick={() => openDialog(workspaceView === 'channels' ? 'channel' : 'dm')}
+              onClick={(event) =>
+                openDialog(workspaceView === 'channels' ? 'channel' : 'dm', event.currentTarget)
+              }
             >
               {workspaceView === 'channels' ? 'Create a channel' : 'Start a direct message'}
             </button>
             {workspaceView === 'direct' && (
-              <button className="text-button" onClick={() => openDialog('group')}>
+              <button
+                className="text-button"
+                onClick={(event) => openDialog('group', event.currentTarget)}
+              >
                 Create a group
               </button>
             )}

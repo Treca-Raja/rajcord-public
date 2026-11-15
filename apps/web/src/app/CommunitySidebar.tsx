@@ -53,7 +53,7 @@ export function CommunitySidebar({
   selected: string | null;
   view: WorkspaceView;
   choose: (id: string) => void;
-  openDialog: (mode: 'channel' | 'dm' | 'group' | 'categories') => void;
+  openDialog: (mode: 'channel' | 'dm' | 'group' | 'categories', trigger?: HTMLElement) => void;
   invites: Invitation[];
   busy: boolean;
   action: (work: () => Promise<unknown>) => Promise<void>;
@@ -89,7 +89,10 @@ export function CommunitySidebar({
         {view === 'channels' ? (
           <ChevronDown size={16} aria-hidden="true" />
         ) : (
-          <button aria-label="Start a direct message" onClick={() => openDialog('dm')}>
+          <button
+            aria-label="Start a direct message"
+            onClick={(event) => openDialog('dm', event.currentTarget)}
+          >
             <Plus size={17} />
           </button>
         )}
@@ -100,7 +103,10 @@ export function CommunitySidebar({
           <div className="section-label">
             TEXT CHANNELS
             <div className="channel-management-actions">
-              <button aria-label="Create channel" onClick={() => openDialog('channel')}>
+              <button
+                aria-label="Create channel"
+                onClick={(event) => openDialog('channel', event.currentTarget)}
+              >
                 <Plus size={15} />
               </button>
             </div>
@@ -109,7 +115,7 @@ export function CommunitySidebar({
             className="manage-categories-link"
             aria-label="Manage categories"
             title="Create or manage categories"
-            onClick={() => openDialog('categories')}
+            onClick={(event) => openDialog('categories', event.currentTarget)}
           >
             <FolderPlus size={17} aria-hidden="true" />
             <span>
@@ -176,14 +182,17 @@ export function CommunitySidebar({
           <button
             className="dm-search"
             aria-label="Find or start a conversation"
-            onClick={() => openDialog('dm')}
+            onClick={(event) => openDialog('dm', event.currentTarget)}
           >
             <Search size={16} />
             <span>Find or start a conversation</span>
           </button>
           <div className="section-label">
             DIRECT MESSAGES
-            <button aria-label="Create group" onClick={() => openDialog('group')}>
+            <button
+              aria-label="Create group"
+              onClick={(event) => openDialog('group', event.currentTarget)}
+            >
               <Plus size={15} />
             </button>
           </div>
