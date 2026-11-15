@@ -1,4 +1,5 @@
 export { VoicePanel } from './VoicePanel';
+export type { VoiceSessionDock } from './VoicePanel';
 export type {
   VoiceControls,
   VoiceDevice,

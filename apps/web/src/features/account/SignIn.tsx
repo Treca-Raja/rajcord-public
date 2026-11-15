@@ -1,7 +1,7 @@
 import { runInBackground } from '../../shared/background';
 import { useState, type FormEvent } from 'react';
 import type { AuthState } from '@tricord/shared';
-import { ShieldCheck } from 'lucide-react';
+import { AppearanceBrand } from '../appearance';
 import { api, apiContract } from './context';
 export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void }) {
   const [register, setRegister] = useState(false),
@@ -41,30 +41,16 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
   }
   return (
     <main className="auth-page">
-      <div className="auth-intro">
-        <div className="logo">
-          t<span>•</span>
-        </div>
-        <div className="eyebrow">YOUR PEOPLE, YOUR PLACE</div>
-        <h1>
-          A little space
-          <br />
-          of our own.
-        </h1>
-        <p>
-          Good conversations. Familiar faces.
-          <br />A private corner for your group.
-        </p>
-        <span className="auth-tag">
-          <ShieldCheck size={16} /> One community. Made for friends.
-        </span>
-      </div>
       <section className="auth-card">
-        <h2>{register ? 'Find your people.' : 'Welcome back.'}</h2>
+        <div className="auth-brand">
+          <AppearanceBrand />
+          <strong>Rajcord</strong>
+        </div>
+        <h2>{register ? 'Create an account' : 'Welcome back.'}</h2>
         <p>
           {register
-            ? 'Create an account. A member of the group will approve your registration.'
-            : 'Sign in to your Rajcord community.'}
+            ? 'A member of the group will approve your registration.'
+            : 'Sign in with your account.'}
         </p>
         <form
           onSubmit={(event) => runInBackground(submit(event))}

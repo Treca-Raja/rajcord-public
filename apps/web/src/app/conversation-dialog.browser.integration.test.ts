@@ -60,10 +60,16 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
     });
     await page.call('Page.navigate', { url: origin });
     await page.wait(
-      "!!document.querySelector('[aria-label=\"Create group\"]') && !!document.querySelector('.message-scroll')",
+      "!!document.querySelector('button[aria-label=\"Direct Messages\"]') && !!document.querySelector('.message-scroll')",
     );
     await page.js('document.querySelector(\'[aria-label="Toggle navigation"]\').click()');
     await page.wait("document.querySelector('.shell').classList.contains('mobile-open')");
+    await page.js('document.querySelector(\'button[aria-label="Direct Messages"]\').click()');
+    await page.wait(
+      "document.querySelector('.sidebar').getAttribute('aria-label')==='Direct Messages'",
+    );
+    expect(await page.js("!document.querySelector('.sidebar .voice-panel')")).toBe(true);
+    expect(await page.js("!document.querySelector('.sidebar .sound-settings')")).toBe(true);
     const open = async (label: string) => {
       await page.js(
         `(()=>{const button=document.querySelector('button[aria-label="${label}"]');button.focus();button.click()})()`,
@@ -137,9 +143,14 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
     await page.wait(
       "!document.querySelector('.chat-dialog') && document.querySelector('.channel-header strong').textContent==='Dialog fixture group'",
     );
-    await page.wait('document.activeElement===document.body');
-    // Preserve the baseline focus after the refreshed sidebar replaces the dialog trigger.
-    expect(await page.js('document.activeElement===document.body')).toBe(true);
+    await page.wait(
+      'document.activeElement===document.querySelector(\'button[aria-label="Create group"]\')',
+    );
+    expect(
+      await page.js(
+        'document.activeElement===document.querySelector(\'button[aria-label="Create group"]\')',
+      ),
+    ).toBe(true);
     const group = (
       await database.database.pool.query(
         "SELECT id FROM conversations WHERE kind='group' AND name=$1",
@@ -162,7 +173,7 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
         )
       ).rows,
     ).toEqual([{ invitee_id: friend.id, status: 'pending' }]);
-    await open('New direct message');
+    await open('Find or start a conversation');
     await page.wait("document.activeElement.getAttribute('aria-label')==='Close dialog'");
     expect(
       await page.js(`!!document.querySelector('.chat-dialog option[value="${owner.id}"]')`),
@@ -173,9 +184,15 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
     await page.wait(
       "!document.querySelector('.chat-dialog') && document.querySelector('.channel-header strong').textContent.includes('Dialog friend')",
     );
-    expect(await page.js("document.activeElement.getAttribute('aria-label')")).toBe(
-      'New direct message',
-    );
+    expect(
+      await page.js(
+        'document.activeElement===document.querySelector(\'button[aria-label="Find or start a conversation"]\')',
+      ),
+    ).toBe(true);
+    await page.js('document.querySelector(\'button[aria-label="Channels"]\').click()');
+    await page.wait("document.querySelector('.sidebar').getAttribute('aria-label')==='Channels'");
+    expect(await page.js("!!document.querySelector('.sidebar .voice-panel')")).toBe(true);
+    expect(await page.js("!!document.querySelector('.sidebar .sound-settings')")).toBe(true);
     await open('Create channel');
     await page.wait(
       "document.activeElement===document.querySelector('.chat-dialog input[name=name]')",

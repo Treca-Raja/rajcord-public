@@ -8,3 +8,4 @@ import './shell.css';
 import '../shared/styles.css';
 import '@fontsource-variable/inter/index.css';
 import '../features/appearance/styles.css';
+import '../workspace-redesign.css';
