@@ -36,5 +36,8 @@ try {
 }
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.once(signal, () => {
-    void app.close();
+    void app.close().catch(() => {
+      console.error('API shutdown failed.');
+      process.exitCode = 1;
+    });
   });
