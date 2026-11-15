@@ -351,9 +351,16 @@ function Community() {
     document.addEventListener('keydown', keydown);
     return () => {
       document.removeEventListener('keydown', keydown);
+      const bounds = previous?.getBoundingClientRect();
       if (
         previous?.isConnected &&
-        previous.getClientRects().length > 0 &&
+        bounds &&
+        bounds.width > 0 &&
+        bounds.height > 0 &&
+        bounds.bottom > 0 &&
+        bounds.right > 0 &&
+        bounds.top < innerHeight &&
+        bounds.left < innerWidth &&
         getComputedStyle(previous).visibility === 'visible'
       )
         previous.focus();
