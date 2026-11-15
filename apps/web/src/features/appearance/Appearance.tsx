@@ -38,11 +38,9 @@ export function AppearanceToggle() {
 }
 
 export function AppearanceBrand() {
-  const { theme } = useAppearance();
   return (
-    <div className="logo" aria-label="Rajcord">
-      {theme === 'retro' ? 'r' : 't'}
-      <span aria-hidden="true">{theme === 'retro' ? '✦' : '•'}</span>
+    <div className="logo" role="img" aria-label="Rajcord">
+      r
     </div>
   );
 }
@@ -51,8 +49,8 @@ export function AppearancePreferences() {
   const { theme, error } = useAppearance();
   return (
     <div className="account-content appearance-preferences">
-      <h3>A different kind of internet.</h3>
-      <p>Same people, same messages. Pick your atmosphere; switching never reloads the chat.</p>
+      <h3>A familiar place to catch up.</h3>
+      <p>Same people, same messages. Pick your colors; switching never reloads the chat.</p>
       <div className="appearance-options" role="group" aria-label="Chat theme">
         {(['original', 'retro'] as const).map((value: Appearance) => (
           <button
@@ -71,7 +69,7 @@ export function AppearancePreferences() {
               <strong>{value === 'original' ? 'Original' : 'Retro'}</strong>
               <small>
                 {value === 'original'
-                  ? 'Charcoal, soft green. The familiar corner.'
+                  ? 'Neutral charcoal surfaces, red Rajcord mark, and soft gray channel selection.'
                   : 'Racing green, stone-gray mist, a fine matte grain. Calm daylight.'}
               </small>
             </span>

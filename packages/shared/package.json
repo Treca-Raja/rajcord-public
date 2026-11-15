@@ -21,7 +21,6 @@
     "dist"
   ],
   "dependencies": {
-    "@sinclair/typebox": "0.34.52",
     "emojibase-data": "17.0.0"
   }
 }

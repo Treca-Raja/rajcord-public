@@ -15,12 +15,6 @@ import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import staticFiles from '@fastify/static';
 import { Server } from 'socket.io';
-import {
-  API_ERROR_RESPONSE,
-  getApiContract,
-  invalidClientSocketAck,
-  validateClientSocketPacket,
-} from '@tricord/shared';
 import type { HealthResponse, ServerToClientEvents, ClientToServerEvents } from '@tricord/shared';
 import { identity, equal, SESSION_COOKIE } from './auth/service.js';
 import { registerAuth } from './auth/routes.js';
@@ -76,38 +70,12 @@ export function createApp({
     logger,
     bodyLimit: 16384,
     requestTimeout: 15000,
-    // Reject malformed wire values as sent; handlers must still see extra fields and wrong types.
-    ajv: { customOptions: { coerceTypes: false, useDefaults: false, removeAdditional: false } },
     trustProxy:
       trustProxyHops === 1
         ? (address, hop) =>
             hop === 0 &&
             (address === trustedProxyAddress || address === '::ffff:' + trustedProxyAddress)
         : false,
-  });
-  app.addHook('onRoute', (routeOptions) => {
-    const path = routeOptions.url;
-    if (!path.startsWith('/api/') || path.includes('*')) return;
-    const methods = Array.isArray(routeOptions.method)
-      ? routeOptions.method
-      : [routeOptions.method];
-    const contracts = methods.map((method) => getApiContract(path, method));
-    if (contracts.some((contract) => !contract))
-      throw new Error(`API route has no shared contract: ${methods.join('|')} ${path}`);
-    const contract = contracts[0]!;
-    const schema = routeOptions.schema ?? {};
-    const responseSchemas = (schema.response ?? {}) as Record<string, unknown>;
-    routeOptions.schema = {
-      ...schema,
-      ...(contract.body ? { body: contract.body } : {}),
-      ...(contract.query ? { querystring: contract.query } : {}),
-      response: {
-        ...responseSchemas,
-        '4xx': API_ERROR_RESPONSE,
-        '5xx': API_ERROR_RESPONSE,
-        [contract.status ?? 200]: contract.response,
-      },
-    };
   });
   const database = databaseUrl ? createDatabase(databaseUrl) : null;
   const voice = database && voiceConfig ? new VoiceService(database.pool, voiceConfig) : undefined;
@@ -188,43 +156,28 @@ export function createApp({
     pingTimeout: PRESENCE_TIMING.pingTimeoutMs,
     destroyUpgrade: false,
   });
-  io.use((socket, next) => {
-    void (async () => {
-      try {
-        const raw = app.parseCookie(socket.request.headers.cookie ?? '')[SESSION_COOKIE];
-        const auth = database ? await identity(database.pool, raw) : null;
-        if (!auth || !equal(socket.handshake.auth.csrfToken, auth.csrfToken))
-          return next(new Error('Sign in required.'));
-        socket.data.token = raw;
-        socket.data.auth = auth;
-        next();
-      } catch {
-        next(new Error('Authentication unavailable.'));
-      }
-    })().catch(() => next(new Error('Authentication unavailable.')));
+  io.use(async (socket, next) => {
+    try {
+      const raw = app.parseCookie(socket.request.headers.cookie ?? '')[SESSION_COOKIE];
+      const auth = database ? await identity(database.pool, raw) : null;
+      if (!auth || !equal(socket.handshake.auth.csrfToken, auth.csrfToken))
+        return next(new Error('Sign in required.'));
+      socket.data.token = raw;
+      socket.data.auth = auth;
+      next();
+    } catch {
+      next(new Error('Authentication unavailable.'));
+    }
   });
   io.on('connection', (socket) => {
-    socket.use((packet, next) => {
-      const [event, ...args] = packet;
-      if (validateClientSocketPacket(event, args)) return next();
-      if (typeof event === 'string') {
-        const ack = args.at(-1);
-        if (typeof ack === 'function') ack(invalidClientSocketAck(event));
-      }
-      next(new Error('Invalid socket request.'));
-    });
     const auth = socket.data.auth;
-    const welcome = () => {
-      if (socket.connected && auth.user.status === 'approved')
-        socket.emit('connection:welcome', {
-          message: 'Connected to Rajcord.',
-          connectedAt: new Date().toISOString(),
-        });
-    };
-    const joined = socket.join(['user:' + auth.user.id, 'session:' + auth.sessionId]);
-    if (joined) void joined.then(welcome).catch(() => socket.disconnect(true));
-    else welcome();
-    const ping = async (ack: (response: { ok: boolean }) => void) => {
+    void socket.join(['user:' + auth.user.id, 'session:' + auth.sessionId]);
+    if (auth.user.status === 'approved')
+      socket.emit('connection:welcome', {
+        message: 'Connected to Rajcord.',
+        connectedAt: new Date().toISOString(),
+      });
+    socket.on('connection:ping', async (ack) => {
       try {
         const fresh = database ? await identity(database.pool, socket.data.token) : null;
         if (!fresh || fresh.user.status !== 'approved') {
@@ -236,9 +189,6 @@ export function createApp({
       } catch {
         socket.disconnect(true);
       }
-    };
-    socket.on('connection:ping', (ack) => {
-      void ping(ack).catch(() => socket.disconnect(true));
     });
   });
   const presence = database ? new PresenceService(database.pool, io) : undefined;
@@ -251,7 +201,7 @@ export function createApp({
         } catch {
           socket.disconnect(true);
         }
-      })().catch(() => socket.disconnect(true));
+      })();
     }
   }, 15000);
   expiry.unref();
@@ -284,11 +234,7 @@ export function createApp({
       checkingVoice = false;
     }
   };
-  const voiceTimer = setInterval(() => {
-    void checkVoice().catch(() => {
-      app.log.error({ code: 'voice_reconcile' }, 'Unexpected voice reconciliation failure.');
-    });
-  }, 1000);
+  const voiceTimer = setInterval(() => void checkVoice(), 1000);
   voiceTimer.unref();
   app.addHook('onResponse', async (req) => {
     if (
@@ -325,7 +271,7 @@ export function createApp({
     await presence?.close();
     await voice?.close();
     io.disconnectSockets(true);
-    await io.close();
+    io.close();
   });
   app.addHook('onClose', async () => {
     await database?.pool.end();

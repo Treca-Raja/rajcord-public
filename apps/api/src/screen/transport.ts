@@ -103,26 +103,13 @@ export function registerScreen(
       c.refreshing = false;
     }
   };
-  const refreshInBackground = (c: Connection) => {
-    void refresh(c).catch(() => {
-      const epoch = c.epoch;
-      if (!epoch) return;
-      c.epoch = undefined;
-      c.dirty = false;
-      c.links.clear();
-      service.disconnect(c.socket.id, epoch);
-    });
-  };
-  const rejectUnexpected = (work: Promise<unknown>) => {
-    void work.catch(() => console.error('Screen event handler escaped its failure boundary.'));
-  };
   const schedule = () => {
     for (const c of connections.values()) if (c.epoch) c.dirty = true;
     if (scheduled || disposed) return;
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      if (!disposed) for (const c of connections.values()) refreshInBackground(c);
+      if (!disposed) for (const c of connections.values()) void refresh(c);
     });
   };
   const unsubscribe = service.onChange(schedule);
@@ -172,9 +159,10 @@ export function registerScreen(
         release?.();
       }
     };
-    socket.on('screen:bind', (data, ack) =>
-      rejectUnexpected(
-        handle('control', data, ack, async () => {
+    socket.on(
+      'screen:bind',
+      (data, ack) =>
+        void handle('control', data, ack, async () => {
           const binding: ScreenBinding = await service.bind(c.caller, data);
           if (!socket.connected) {
             service.disconnect(socket.id, binding.epoch);
@@ -188,35 +176,39 @@ export function registerScreen(
           schedule();
           return binding;
         }),
-      ),
     );
-    socket.on('screen:publish', (data, ack) =>
-      rejectUnexpected(handle('control', data, ack, () => service.publish(c.caller, data))),
+    socket.on(
+      'screen:publish',
+      (data, ack) => void handle('control', data, ack, () => service.publish(c.caller, data)),
     );
-    socket.on('screen:stop', (data, ack) =>
-      rejectUnexpected(handle('control', data, ack, () => service.stop(c.caller, data))),
+    socket.on(
+      'screen:stop',
+      (data, ack) => void handle('control', data, ack, () => service.stop(c.caller, data)),
     );
-    socket.on('screen:select', (data, ack) =>
-      rejectUnexpected(
-        handle('control', data, ack, (reply) => service.select(c.caller, data, reply)),
-      ),
+    socket.on(
+      'screen:select',
+      (data, ack) =>
+        void handle('control', data, ack, (reply) => service.select(c.caller, data, reply)),
     );
-    socket.on('screen:renew', (data, ack) =>
-      rejectUnexpected(handle('renew', data, ack, (reply) => service.renew(c.caller, data, reply))),
+    socket.on(
+      'screen:renew',
+      (data, ack) =>
+        void handle('renew', data, ack, (reply) => service.renew(c.caller, data, reply)),
     );
-    socket.on('screen:directory', (data, ack) =>
-      rejectUnexpected(
-        handle<ScreenDirectory>('control', data, ack, (reply) =>
+    socket.on(
+      'screen:directory',
+      (data, ack) =>
+        void handle<ScreenDirectory>('control', data, ack, (reply) =>
           service.snapshot(c.caller, data, (snapshot) => {
             sendSnapshot(c, snapshot);
             reply(snapshot.directory);
           }),
         ),
-      ),
     );
-    socket.on('screen:signal', (data, ack) =>
-      rejectUnexpected(
-        handle('signal', data, ack, () =>
+    socket.on(
+      'screen:signal',
+      (data, ack) =>
+        void handle('signal', data, ack, () =>
           service.relay(c.caller, data, (destination, notice) => {
             const target = connections.get(destination.transportId);
             if (!target?.socket.connected || target.epoch !== destination.epoch) return false;
@@ -226,7 +218,6 @@ export function registerScreen(
             return true;
           }),
         ),
-      ),
     );
     socket.once('disconnect', () => {
       connections.delete(socket.id);

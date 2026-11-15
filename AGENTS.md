@@ -12,17 +12,14 @@ Repository/guidance names use Rajcord. Existing `@tricord/*`, `TRICORD_*`, datab
 - Routine fixes need targeted investigation, not a design document or a chain of planning, ticket, hosting and documentation workflows. Ask about material scope/behavior decisions; do not repeat settled approvals. Delegate only substantial independent work.
 - Reuse helpers, preserve types and surface errors; no broad catches or success-shaped fallbacks. Make the simplest complete change, without speculative abstractions or unrelated cleanup. Comment only non-obvious intent/constraints; no narration or commented-out code.
 - UI work follows [rajcord-ui](.agents/skills/rajcord-ui/SKILL.md): compact layouts, quick smooth hover/menu/panel feedback, immediate loading states and uninterrupted typing; preserve keyboard/touch access and reduced motion.
-- Web feature work belongs in `apps/web/src/features/<feature>` with co-located tests. Import another feature through its public `index.ts`, type-only `contracts.ts`, or `styles.css`; keep private implementation imports within the owning feature. `app/` owns composition and session/call lifetimes through app-only `composition.ts` entrypoints; `shared/` holds common helpers and typed context adapters. `pnpm lint` enforces these boundaries. See [feature ownership](CONTRIBUTING.md#web-feature-ownership).
-- API features compose in `apps/api/src/app.ts`. Keep production dependencies directional: chat may use auth, voice may use auth/database, screen may use auth/voice, and auth bootstrap may use database. Add shared API contracts when adding routes; `pnpm lint` enforces these feature boundaries.
 
-Code map: `apps/api/src/{auth,chat,db,screen,voice}`, `apps/api/src/{app.ts,presence.ts}`, `apps/api/drizzle`, `apps/web/src/{app,features,shared}`, `apps/desktop/src`, `packages/shared/src`, `infrastructure`, `scripts`.
+Code map: `apps/api/src/{auth,chat,db,voice}`, `apps/api/drizzle`, `apps/web/src`, `apps/desktop/src`, `packages/shared/src`, `infrastructure`, `scripts`.
 
 ## Invariants
 
 - Preserve database data, credentials and Docker volumes. Never use `down -v`, volume pruning or database resets as repair. Add migrations; never rewrite applied SQL or journal history.
 - Development services stay on loopback; public hosting requires deliberate HTTPS/media configuration with PostgreSQL and control endpoints private. Development Compose is not a public deployment recipe.
 - Preserve current session/status, trusted-origin and CSRF checks. Socket rooms are not permission grants; recheck private delivery and revocation.
-- HTTP schemas are grouped by feature in `packages/shared/src/contracts`; `api-response.ts` composes the route registry and runtime validators. Use the schema-derived browser contract helper for new typed calls. Socket.IO client-event payload schemas are shared in `packages/shared`; keep server and browser transports on those contracts while retaining service authorization and semantic validation.
 - Group history requires current membership and the account's membership periods. Only authors edit/delete messages. Preserve send idempotency and sequence ordering.
 - Unread cursors are account-private and monotonic; exclude own/deleted/inaccessible messages. Acknowledge only visible, focused reading at the latest messages. Keep updates on authenticated sockets and retain bounded event/request budgets.
 - Voice uses session-bound `/media/rtc` leases with JWTs server-side, one reservation per account and a ten-person cap. Preserve revocation/leave cleanup and exact device selection without silent fallback.

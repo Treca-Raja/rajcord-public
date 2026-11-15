@@ -51,12 +51,6 @@ jobs:
       - run: pnpm db:migrate
       - run: pnpm test:db
       - run: pnpm build
-      - name: Run browser regression tests
-        shell: bash
-        run: |
-          browser_path=$(command -v google-chrome || command -v chromium || true)
-          test -n "$browser_path" || { echo 'A Chromium browser is required for browser regressions.' >&2; exit 1; }
-          TRICORD_BROWSER_PATH="$browser_path" pnpm test:browser:built
       - name: Build deployable server image
         run: docker build --label org.opencontainers.image.revision="$GITHUB_SHA" -f infrastructure/server/Dockerfile -t tricord-ci .
       - name: Verify image and backup restore

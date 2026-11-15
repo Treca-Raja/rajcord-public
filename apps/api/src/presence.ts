@@ -29,9 +29,7 @@ export class PresenceService {
     private io: Server<ClientToServerEvents, ServerToClientEvents>,
   ) {
     io.on('connection', (socket) => this.connected(socket));
-    this.periodic = setInterval(() => {
-      void this.reconcile().catch(() => this.unavailable());
-    }, PRESENCE_TIMING.authorizationCheckMs);
+    this.periodic = setInterval(() => void this.reconcile(), PRESENCE_TIMING.authorizationCheckMs);
     this.periodic.unref();
   }
 
@@ -82,8 +80,6 @@ export class PresenceService {
           if (socket.connected)
             ack({ ok: false, status: 503, error: 'Presence temporarily unavailable.' });
         }
-      }).catch(() => {
-        if (!this.closed) this.unavailable();
       });
     });
     socket.on('disconnect', (reason) => {
@@ -100,9 +96,9 @@ export class PresenceService {
             deadline: Date.now() + PRESENCE_TIMING.reconnectGraceMs,
           });
       }
-      void this.reconcile().catch(() => this.unavailable());
+      void this.reconcile();
     });
-    void this.reconcile().catch(() => this.unavailable());
+    void this.reconcile();
   }
 
   reconcile(): Promise<void> {
@@ -179,7 +175,7 @@ export class PresenceService {
     const deadlines = [...this.grace.values()].map((entry) => entry.deadline);
     if (deadlines.length) {
       this.timer = setTimeout(
-        () => void this.reconcile().catch(() => this.unavailable()),
+        () => void this.reconcile(),
         Math.max(0, Math.min(...deadlines) - Date.now()),
       );
       this.timer.unref();

@@ -1,4 +1,4 @@
-import type { Pool, PoolClient, QueryResultRow } from 'pg';
+import type { PoolClient } from 'pg';
 import {
   chatMetadataLimits,
   type AuthUser,
@@ -10,32 +10,12 @@ import {
   type ChannelCategoryPage,
   type MessageNotice,
 } from '@tricord/shared';
-import { approved, identity, digest } from '../auth/service.js';
+import { AuthService, approved, identity, digest } from '../auth/service.js';
 import { HttpError, input, text, uuid } from '../auth/validation.js';
-import { withTransaction } from '../auth/transaction.js';
 import { chatName, channelTopic, metadataPosition, checkMetadataRevision } from './metadata.js';
 import { hydrateMessages, messageVisibility } from './message-data.js';
 const missing = () => new HttpError(404, 'Conversation or message not found.');
 const visible = messageVisibility;
-type CategoryRow = QueryResultRow & {
-  id: string;
-  name: string;
-  position: number;
-  revision: string | number;
-};
-type MemberRow = QueryResultRow & {
-  id: string;
-  username: string;
-  display_name: string;
-  status: AuthUser['status'];
-};
-type UnreadRow = QueryResultRow & {
-  last_read_seq: string;
-  unread_count: number;
-  mention_count: number;
-};
-type ConversationIdRow = QueryResultRow & { id: string };
-type ReadCursorRow = QueryResultRow & { last_seq: string | number };
 function content(value: unknown) {
   if (typeof value !== 'string' || !value.trim() || value.length > 4000)
     throw new HttpError(400, 'Messages must contain 1–4000 characters.');
@@ -51,19 +31,18 @@ function cursor(value: unknown) {
     throw new HttpError(400, 'Invalid message cursor.');
   return value;
 }
-function category(row: CategoryRow): ChannelCategory {
+function category(row: Record<string, unknown>): ChannelCategory {
   return {
-    id: row.id,
-    name: row.name,
-    position: row.position,
+    id: String(row.id),
+    name: String(row.name),
+    position: Number(row.position),
     revision: String(row.revision),
   };
 }
-export class ChatService {
-  constructor(readonly pool: Pool) {}
+export class ChatService extends AuthService {
   async run<T>(token: string, work: (db: PoolClient, user: AuthUser) => Promise<T>) {
     try {
-      return await withTransaction(this.pool, async (db) =>
+      return await this.transaction(async (db) =>
         work(db, approved(await identity(db, token)).user),
       );
     } catch (error) {
@@ -93,7 +72,7 @@ export class ChatService {
   async detail(db: PoolClient, userId: string, id: string): Promise<Conversation> {
     const row = await this.access(db, userId, id);
     const members = (
-      await db.query<MemberRow>(
+      await db.query(
         row.kind === 'channel'
           ? "SELECT id,username,display_name,status FROM users WHERE status='approved' ORDER BY username"
           : 'SELECT u.id,u.username,u.display_name,u.status FROM users u JOIN memberships h ON h.user_id=u.id WHERE h.conversation_id=$1 AND h.end_seq IS NULL ORDER BY u.username',
@@ -101,7 +80,7 @@ export class ChatService {
       )
     ).rows;
     const unread = (
-      await db.query<UnreadRow>(
+      await db.query(
         `SELECT coalesce(r.last_seq,0)::text last_read_seq,
         count(m.id)::int unread_count,
         count(m.id) FILTER (WHERE EXISTS(SELECT 1 FROM message_mentions mm WHERE mm.message_id=m.id AND mm.user_id=u.id))::int mention_count
@@ -113,7 +92,6 @@ export class ChatService {
         [id, userId, row.kind],
       )
     ).rows[0];
-    if (!unread) throw new Error('Unread summary query returned no row.');
     return {
       unreadCount: unread.unread_count,
       mentionCount: unread.mention_count,
@@ -149,7 +127,7 @@ export class ChatService {
   async list(token: string) {
     return this.run(token, async (db, user) => {
       const rows = (
-        await db.query<ConversationIdRow>(
+        await db.query(
           "SELECT c.id FROM conversations c LEFT JOIN channel_categories k ON k.id=c.category_id WHERE c.kind='channel' OR EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=c.id AND h.user_id=$1 AND h.end_seq IS NULL) ORDER BY CASE WHEN c.kind='channel' THEN 0 ELSE 1 END,k.position NULLS LAST,k.id,c.position,c.created_at,c.id",
           [user.id],
         )
@@ -179,13 +157,11 @@ export class ChatService {
         ).rowCount
       )
         throw missing();
-      const result = await db.query<ReadCursorRow>(
+      const result = await db.query(
         'INSERT INTO conversation_reads(conversation_id,user_id,last_seq) VALUES($1,$2,$3) ON CONFLICT(conversation_id,user_id) DO UPDATE SET last_seq=greatest(conversation_reads.last_seq,EXCLUDED.last_seq) RETURNING last_seq',
         [id, user.id, seq],
       );
-      const readCursor = result.rows[0];
-      if (!readCursor) throw new Error('Read cursor upsert returned no row.');
-      return { lastReadSeq: String(readCursor.last_seq) };
+      return { lastReadSeq: String(result.rows[0].last_seq) };
     });
   }
   async get(token: string, id: string) {
@@ -253,7 +229,7 @@ export class ChatService {
       throw new HttpError(400, 'Invalid category page size.');
     return this.run(token, async (db) => {
       const rows = (
-        await db.query<CategoryRow>(
+        await db.query(
           'SELECT * FROM channel_categories WHERE (position,id)>($1,$2::uuid) ORDER BY position,id LIMIT $3',
           [position, afterId, limit + 1],
         )
@@ -271,13 +247,11 @@ export class ChatService {
     const name = chatName(body.name, chatMetadataLimits.categoryName, 'Category name');
     const position = body.position === undefined ? 0 : metadataPosition(body.position);
     return this.run(token, async (db) => {
-      const result = await db.query<CategoryRow>(
+      const result = await db.query(
         'INSERT INTO channel_categories(name,name_key,position) VALUES($1,$2,$3) RETURNING *',
         [name.name, name.key, position],
       );
-      const created = result.rows[0];
-      if (!created) throw new Error('Category insert returned no row.');
-      return category(created);
+      return category(result.rows[0]);
     });
   }
   async updateCategory(token: string, id: string, value: unknown, remove = false) {
@@ -306,13 +280,11 @@ export class ChatService {
           ? { name: row.name, key: row.name_key }
           : chatName(body.name, chatMetadataLimits.categoryName, 'Category name');
       const position = body.position === undefined ? row.position : metadataPosition(body.position);
-      const result = await db.query<CategoryRow>(
+      const result = await db.query(
         'UPDATE channel_categories SET name=$1,name_key=$2,position=$3,revision=revision+1 WHERE id=$4 RETURNING *',
         [name.name, name.key, position, id],
       );
-      const updated = result.rows[0];
-      if (!updated) throw new Error('Category update returned no row.');
-      return category(updated);
+      return category(result.rows[0]);
     });
   }
   async create(token: string, value: unknown) {

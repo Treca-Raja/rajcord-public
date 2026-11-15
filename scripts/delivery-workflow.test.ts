@@ -96,16 +96,14 @@ describe('verification and main-only delivery boundary', () => {
     });
   });
 
-  it('runs browser regressions within the existing Linux verifier', () => {
+  it('retains one Linux verifier without the added browser or Windows jobs', () => {
     expect(Object.keys(verify.jobs)).toEqual(['verify']);
     const checks = runs(verification);
     for (const command of ['pnpm test', 'pnpm test:db', 'pnpm build'])
       expect(checks).toContain(command);
     expect(checks).toContain('scripts/server-image-smoke.mjs tricord-ci');
     expect(checks).toContain('scripts/hosting/smoke.mjs tricord-ci');
-    expect(checks).toContain('TRICORD_BROWSER_PATH="$browser_path" pnpm test:browser:built');
-    expect(checks.indexOf('pnpm build')).toBeLessThan(checks.indexOf('pnpm test:browser:built'));
-    expect(checks).toContain('test -n "$browser_path"');
+    expect(checks).not.toMatch(/test:browser|google-chrome|TRICORD_BROWSER_PATH/);
     expect(verify.permissions).toEqual({ contents: 'read' });
     expect(JSON.stringify(verify)).not.toMatch(/packages.*write|DEPLOY_SSH_KEY|secrets\./);
     expect(verification['continue-on-error']).not.toBe(true);

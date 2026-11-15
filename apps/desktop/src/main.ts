@@ -1,12 +1,28 @@
-import { trustedNoticeFrame } from './notification-policy.js';
-import { installNotificationMain } from './notification-main.js';
+import {
+  validNotice,
+  validNativeNotice,
+  trustedNoticeFrame,
+  canCoalesceNativeNotice,
+  nativeNotificationResponse,
+  type NativeNotificationTarget,
+  type NativeNotificationResult,
+} from './notification-policy.js';
 import { createWindowOpenHandler } from './external-links.js';
 import { serverUrl } from './server-url.js';
 import { MicrophonePermission, microphonePermissions } from './microphone-permission.js';
 import { installNativeCapture } from './native-capture.js';
 import { createSessionCaptureAuthority } from './capture-authority-http.js';
 import { installScreenIpc } from './screen-ipc.js';
-import { app, BrowserWindow, session, dialog, ipcMain, shell, desktopCapturer } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  session,
+  dialog,
+  ipcMain,
+  Notification,
+  shell,
+  desktopCapturer,
+} from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { configureUpdates } from './updates.js';
@@ -170,6 +186,7 @@ app
       if (!win.isDestroyed()) win.webContents.send('microphone:reset');
     };
     const notificationAppId = app.isPackaged ? 'com.rajcord.desktop' : process.execPath;
+    app.setAppUserModelId(notificationAppId);
     const trustedSender = (event: Pick<Electron.IpcMainEvent, 'sender' | 'senderFrame'>) =>
       event.sender === win.webContents &&
       trustedNoticeFrame(
@@ -177,7 +194,6 @@ app
         event.senderFrame?.url ?? '',
         event.senderFrame === win.webContents.mainFrame,
       );
-    installNotificationMain({ owner: win, notificationAppId, trustedSender });
     const screens = installScreenIpc({
       owner: win,
       ipc: ipcMain,
@@ -191,8 +207,131 @@ app
     ipcMain.on('microphone:reset-listener', resetAvailability);
     win.webContents.on('did-navigate', () => setMicrophoneResetReady(false));
     win.webContents.on('render-process-gone', () => setMicrophoneResetReady(false));
+    ipcMain.handle('notifications:capabilities', (event) => {
+      if (!trustedSender(event)) throw new Error('Untrusted notification request.');
+      return { version: 2 };
+    });
+    ipcMain.handle('notifications:enable', (event) => {
+      if (!trustedSender(event) || !Notification.isSupported()) return false;
+      if (process.platform !== 'win32' || app.isPackaged) return true;
+      // Windows associates development toasts with a Start Menu shortcut, as documented by Electron.
+      const shortcut = path.join(
+        app.getPath('appData'),
+        'Microsoft',
+        'Windows',
+        'Start Menu',
+        'Programs',
+        'Rajcord development.lnk',
+      );
+      try {
+        if (fs.existsSync(shortcut)) {
+          const existing = shell.readShortcutLink(shortcut);
+          if (existing.target !== process.execPath || existing.appUserModelId !== notificationAppId)
+            return false;
+        }
+        return shell.writeShortcutLink(shortcut, fs.existsSync(shortcut) ? 'update' : 'create', {
+          target: process.execPath,
+          args: '"' + path.join(__dirname, 'main.js') + '"',
+          cwd: path.resolve(__dirname, '../../..'),
+          appUserModelId: notificationAppId,
+          description: 'Rajcord development app notification registration',
+        });
+      } catch {
+        return false;
+      }
+    });
+    const notices = new Set<Notification>();
+    let burst:
+      | {
+          at: number;
+          active: boolean;
+          count: number;
+          target: NativeNotificationTarget;
+          shown: Promise<boolean>;
+        }
+      | undefined;
+    ipcMain.handle('notifications:show', async (event, value: unknown) => {
+      const modern = validNativeNotice(value);
+      const requestedModern = !!value && typeof value === 'object' && 'version' in value;
+      const result = (value: NativeNotificationResult) =>
+        nativeNotificationResponse(requestedModern, value);
+      if (!trustedSender(event) || (!modern && !validNotice(value)))
+        return result({ status: 'invalid' });
+      if (!Notification.isSupported()) return result({ status: 'unavailable' });
+      const destination: NativeNotificationTarget = modern
+        ? value.target
+        : { conversationId: (value as { conversationId: string }).conversationId };
+      if (modern && canCoalesceNativeNotice(burst, Date.now()) && burst) {
+        const existing = burst;
+        if (!(await existing.shown)) return result({ status: 'unavailable' });
+        if (existing.active) {
+          existing.target = destination;
+          existing.count++;
+          return result({ status: 'coalesced', count: existing.count });
+        }
+      }
+      try {
+        const notification = new Notification({
+          title: 'Rajcord',
+          body: 'New activity. Open Rajcord to read it.',
+          silent: true,
+        });
+        while (notices.size >= 8) {
+          const oldest = notices.values().next().value!;
+          notices.delete(oldest);
+          oldest.close();
+        }
+        notices.add(notification);
+        const delivery = {
+          at: Date.now(),
+          active: true,
+          count: 1,
+          target: destination,
+          shown: Promise.resolve(false),
+        };
+        const closed = () => {
+          delivery.active = false;
+          notices.delete(notification);
+        };
+        notification.on('close', closed);
+        notification.on('failed', closed);
+        notification.on('click', () => {
+          if (win.isDestroyed()) return;
+          if (win.isMinimized()) win.restore();
+          win.show();
+          win.focus();
+          if (modern) win.webContents.send('notifications:open-target', delivery.target);
+          else win.webContents.send('notifications:open', delivery.target.conversationId);
+          notification.close();
+        });
+        delivery.shown = new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => {
+            closed();
+            notification.close();
+            resolve(false);
+          }, 4000);
+          notification.once('show', () => {
+            clearTimeout(timer);
+            resolve(true);
+          });
+          notification.once('failed', () => {
+            clearTimeout(timer);
+            resolve(false);
+          });
+          notification.show();
+        });
+        if (modern) burst = delivery;
+        return result({ status: (await delivery.shown) ? 'shown' : 'unavailable' });
+      } catch {
+        return result({ status: 'unavailable' });
+      }
+    });
     win.on('closed', () => {
       ipcMain.removeListener('microphone:reset-listener', resetAvailability);
+      ipcMain.removeHandler('notifications:show');
+      ipcMain.removeHandler('notifications:enable');
+      ipcMain.removeHandler('notifications:capabilities');
+      for (const notice of notices) notice.close();
     });
     win.webContents.setWindowOpenHandler(
       await createWindowOpenHandler({
@@ -228,12 +367,6 @@ app
         quitting = false;
       },
     );
-    const checkForUpdates = () => {
-      void updates.check().catch(() => console.error('Update check failed unexpectedly.'));
-    };
-    const installUpdate = () => {
-      void updates.install().catch(() => console.error('Update installation failed unexpectedly.'));
-    };
     Menu.setApplicationMenu(
       createMenu([
         {
@@ -247,8 +380,8 @@ app
               enabled: microphoneResetReady,
               click: resetMicrophone,
             },
-            { label: 'Check for updates…', click: checkForUpdates },
-            { label: 'Install downloaded update…', click: installUpdate },
+            { label: 'Check for updates…', click: updates.check },
+            { label: 'Install downloaded update…', click: updates.install },
             { type: 'separator' },
             { label: 'Quit Rajcord', accelerator: 'Control+Q', click: () => app.quit() },
           ],
@@ -292,7 +425,7 @@ app
               enabled: microphoneResetReady,
               click: resetMicrophone,
             },
-            { label: 'Check for updates…', click: checkForUpdates },
+            { label: 'Check for updates…', click: updates.check },
             { label: 'Quit Rajcord', click: () => app.quit() },
           ]),
         );
@@ -344,9 +477,7 @@ app.on('before-quit', (event) => {
   quitting = true;
   void clearTemporarySession()
     .then(() => session.defaultSession.cookies.flushStore())
-    .catch(() => console.warn('Temporary session cleanup failed during shutdown.'))
-    .then(() => app.quit())
-    .catch(() => console.error('Desktop shutdown failed.'));
+    .finally(() => app.quit());
 });
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => tray?.destroy());

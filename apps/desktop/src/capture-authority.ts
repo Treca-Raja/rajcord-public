@@ -184,18 +184,12 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
       },
       Math.max(1, record.deadline - this.now()),
     );
-    this.watch = setTimeout(
-      () => void this.check(record).catch(() => this.invalidate()),
-      this.watchMs,
-    );
+    this.watch = setTimeout(() => void this.check(record), this.watchMs);
   }
   private async check(record: RecordState) {
     if (this.record !== record || !this.inspect()) return;
     if (this.flight || this.verifying) {
-      this.watch = setTimeout(
-        () => void this.check(record).catch(() => this.invalidate()),
-        this.watchMs,
-      );
+      this.watch = setTimeout(() => void this.check(record), this.watchMs);
       return;
     }
     const started = this.now();
@@ -336,16 +330,13 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
       },
       Math.max(1, publication.deadline - this.now()),
     );
-    this.publicationWatch = setTimeout(
-      () => void this.checkPublication(publication).catch(() => this.invalidate()),
-      this.watchMs,
-    );
+    this.publicationWatch = setTimeout(() => void this.checkPublication(publication), this.watchMs);
   }
   private async checkPublication(publication: PublicationState) {
     if (this.publication !== publication || !this.inspectPublication()) return;
     if (this.flight || this.verifying) {
       this.publicationWatch = setTimeout(
-        () => void this.checkPublication(publication).catch(() => this.invalidate()),
+        () => void this.checkPublication(publication),
         this.watchMs,
       );
       return;

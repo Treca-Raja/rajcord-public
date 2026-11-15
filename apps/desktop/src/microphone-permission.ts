@@ -133,17 +133,14 @@ export function microphonePermissions(
       callback(false);
       return;
     }
-    void permission.request().then(
-      (allowed) => {
-        callback(
-          allowed &&
-            permission.allowed &&
-            !contents.isDestroyed() &&
-            trustedAudioCheck(target, contents.getURL(), true, 'media', 'audio'),
-        );
-      },
-      () => callback(false),
-    );
+    void permission.request().then((allowed) => {
+      callback(
+        allowed &&
+          permission.allowed &&
+          !contents.isDestroyed() &&
+          trustedAudioCheck(target, contents.getURL(), true, 'media', 'audio'),
+      );
+    });
   };
   const check: NativeCapturePermissions['check'] = (requester, kind, origin, details) =>
     requester === contents &&

@@ -35,7 +35,6 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
-      ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
       '--remote-debugging-address=127.0.0.1',
       '--remote-debugging-port=0',
       '--user-data-dir=' + profile,
