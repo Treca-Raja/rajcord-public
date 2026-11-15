@@ -498,7 +498,7 @@ import { AuthRoot, useAuth } from '/src/app/Auth.tsx';
 import { useCall } from '/src/app/CallProvider.tsx';
 import { VoicePanel } from '/src/features/voice/VoicePanel.tsx';
 const deferred=()=>{let resolve,reject; const promise=new Promise((r,e)=>{resolve=r;reject=e});return {promise,resolve,reject}};
-const f=window.fixture={active:0, created:0, captureCalls:0, captures:[], enumerateCalls:0, enumerations:[], deviceList:[], stopped:0, calls:[], joins:[], logouts:[], errors:[]};
+const f=window.fixture={active:0, created:0, captureCalls:0, captures:[], enumerateCalls:0, enumerations:[], deviceList:[], stopped:0, calls:[], joins:[], logouts:[], errors:[], channelId:'90d27181-8af8-4ea4-b3a9-e32805758484',leaseId:'c7e52d31-a9ee-4b6b-a088-521243578fb3'};
 window.addEventListener('unhandledrejection',event=>f.errors.push(String(event.reason)));
 const listeners=new Set();
 const devices=navigator.mediaDevices;
@@ -659,7 +659,7 @@ it('native microphone reset replaces only the call owner and fences old pending 
       await audioControls(browser);
       await discoverAudio(browser);
       await browser.js(
-        "(async()=>{fixture.saved=fixture.call.controls;fixture.staleReset=[...fixture.resets][0];await fixture.call.controls.selectInput('owned-mic');await fixture.call.controls.selectOutput('owned-output');fixture.observe(fixture.call.controls.join('room'),'oldJoin');const field=document.createElement('textarea');field.id='reset-draft';field.value='Keep this draft';document.body.append(field);field.focus();fixture.staleReset()})()",
+        "(async()=>{fixture.saved=fixture.call.controls;fixture.staleReset=[...fixture.resets][0];await fixture.call.controls.selectInput('owned-mic');await fixture.call.controls.selectOutput('owned-output');fixture.observe(fixture.call.controls.join(fixture.channelId),'oldJoin');const field=document.createElement('textarea');field.id='reset-draft';field.value='Keep this draft';document.body.append(field);field.focus();fixture.staleReset()})()",
       );
       await browser.wait(
         "fixture.oldJoin==='Voice session ended.' && !!fixture.call && fixture.call.controls!==fixture.saved && fixture.active===1",
@@ -677,10 +677,10 @@ it('native microphone reset replaces only the call owner and fences old pending 
         '!!fixture.call && fixture.call.controls!==fixture.replacement && fixture.active===1',
       );
       await browser.js(
-        "fixture.respond(fixture.joins[0],{id:'old-reset-lease',channelId:'room',credential:'synthetic'})",
+        "fixture.respond(fixture.joins[0],{id:fixture.leaseId,channelId:fixture.channelId,credential:'synthetic'})",
       );
       await browser.wait(
-        "fixture.calls.some(call=>call.path==='/api/voice/leave'&&JSON.parse(call.body).leaseId==='old-reset-lease')",
+        "fixture.calls.some(call=>call.path==='/api/voice/leave'&&JSON.parse(call.body).leaseId===fixture.leaseId)",
       );
       expect(await browser.js('fixture.resets.size')).toBe(1);
       expect(await browser.js('fixture.errors')).toEqual([]);
@@ -729,7 +729,9 @@ it('panel remount preserves the discovered visible selections without opening de
         'fixture.call.devices===fixture.catalog && fixture.call.controls===fixture.originalControls',
       ),
     ).toBe(true);
-    await browser.js("fixture.observe(fixture.call.controls.join('room'),'catalogJoin')");
+    await browser.js(
+      "fixture.observe(fixture.call.controls.join(fixture.channelId),'catalogJoin')",
+    );
     await browser.wait("fixture.call.voice.status==='joining'");
     await browser.js('document.querySelector(\'[aria-label="Leave voice"]\').click()');
     await browser.wait("fixture.call.voice.status==='idle'");
@@ -739,7 +741,7 @@ it('panel remount preserves the discovered visible selections without opening de
       ),
     ).toBe(true);
     await browser.js(
-      "fixture.respond(fixture.joins[0],{id:'old-catalog-lease',channelId:'room',credential:'synthetic'})",
+      "fixture.respond(fixture.joins[0],{id:fixture.leaseId,channelId:fixture.channelId,credential:'synthetic'})",
     );
     await browser.wait("fixture.catalogJoin==='resolved'");
     expect(await browser.js('fixture.captureCalls===1 && fixture.enumerateCalls===1')).toBe(true);
@@ -992,7 +994,7 @@ it('an old logout intention cannot stop a same-account replacement or invalidate
       "fixture.replacement=fixture.call.controls;fixture.call.controls.selectInput('synthetic-mic');fixture.call.controls.selectOutput('synthetic-output')",
     );
     await browser.js(
-      "fixture.observe(fixture.call.controls.join('room'),'replacementJoin');fixture.holdMe=true;fixture.refreshing=fixture.auth.refresh();void 0",
+      "fixture.observe(fixture.call.controls.join(fixture.channelId),'replacementJoin');fixture.holdMe=true;fixture.refreshing=fixture.auth.refresh();void 0",
     );
     await browser.wait(
       "fixture.joins.length===1 && fixture.call.voice.status==='joining' && !!fixture.me",
@@ -1156,7 +1158,7 @@ it('owns one approved-session call across actual React mounts, logout, replaceme
     ).toBe(true);
 
     await browser.js(
-      "fixture.call.controls.selectInput('synthetic-mic');fixture.call.controls.selectOutput('synthetic-output');fixture.observe(fixture.call.controls.join('room'),'joinResult')",
+      "fixture.call.controls.selectInput('synthetic-mic');fixture.call.controls.selectOutput('synthetic-output');fixture.observe(fixture.call.controls.join(fixture.channelId),'joinResult')",
     );
     await browser.wait("fixture.joins.length===1 && fixture.call.voice.status==='joining'");
     await browser.js(
@@ -1172,7 +1174,7 @@ it('owns one approved-session call across actual React mounts, logout, replaceme
       await browser.js('(()=>{try{fixture.original.mute();return false}catch{return true}})()'),
     ).toBe(true);
     await browser.js(
-      "fixture.oldAuthState.csrfToken='mutated-fixture';fixture.respond(fixture.me,fixture.state('a'));fixture.respond(fixture.joins[0],{id:'old-lease',channelId:'room',credential:'synthetic'});",
+      "fixture.oldAuthState.csrfToken='mutated-fixture';fixture.respond(fixture.me,fixture.state('a'));fixture.respond(fixture.joins[0],{id:fixture.leaseId,channelId:fixture.channelId,credential:'synthetic'});",
     );
     await browser.wait("fixture.calls.some(c=>c.path==='/api/voice/leave')");
     expect(await browser.js("fixture.calls.find(c=>c.path==='/api/voice/leave').csrf")).toBe('a');
@@ -1260,7 +1262,7 @@ it('owns one approved-session call across actual React mounts, logout, replaceme
       "fixture.call.controls.selectInput('synthetic-mic');fixture.call.controls.selectOutput('synthetic-output')",
     );
     await browser.js(
-      "fixture.observe(fixture.call.controls.join('room'),'disposedJoin');fixture.root.unmount()",
+      "fixture.observe(fixture.call.controls.join(fixture.channelId),'disposedJoin');fixture.root.unmount()",
     );
     await browser.wait(
       "fixture.active===0 && fixture.disposedJoin==='Voice session ended.' && fixture.joins.length===2",
@@ -1268,10 +1270,10 @@ it('owns one approved-session call across actual React mounts, logout, replaceme
     await browser.js('fixture.mount()');
     await browser.wait('fixture.active===1 && !!fixture.call');
     await browser.js(
-      "fixture.respond(fixture.joins[1],{id:'disposed-lease',channelId:'room',credential:'synthetic'});",
+      "fixture.respond(fixture.joins[1],{id:fixture.leaseId,channelId:fixture.channelId,credential:'synthetic'});",
     );
     await browser.wait(
-      "fixture.calls.some(c=>c.path==='/api/voice/leave' && JSON.parse(c.body).leaseId==='disposed-lease')",
+      "fixture.calls.some(c=>c.path==='/api/voice/leave' && JSON.parse(c.body).leaseId===fixture.leaseId)",
     );
     expect(
       await browser.js(
