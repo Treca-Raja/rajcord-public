@@ -135,7 +135,7 @@ export function VoicePanel({
       toggleDeafen,
       leave,
     };
-  }, [voiceStatus, voiceChannelId, channelName, muted, deafened, toggleMute, toggleDeafen, leave]);
+  }, [voiceStatus, channelName, muted, deafened, toggleMute, toggleDeafen, leave]);
   useEffect(() => {
     notifySession.current?.(session);
   }, [session]);
