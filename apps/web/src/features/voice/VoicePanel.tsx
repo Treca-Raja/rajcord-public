@@ -1,16 +1,29 @@
 import { runInBackground } from '../../shared/background';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Mic, MicOff, Headphones, PhoneOff, Volume2, Plus } from 'lucide-react';
 import { useAuth } from '../account';
 import { useCall, type VoiceControls } from '../../shared/call';
 import { concreteDevices, type VoiceChannel } from './voice-controller';
 import './styles.css';
-import { ScreenLauncher } from '../screen-sharing';
+export type VoiceSessionDock = {
+  status: 'connected' | 'joining' | 'reconnecting';
+  channelName: string;
+  muted: boolean;
+  deafened: boolean;
+  toggleMute: () => void;
+  toggleDeafen: () => void;
+  leave: () => void;
+};
+
 export function VoicePanel({
+  showDirectory = true,
   onChannels,
+  onSession,
   requestedChannel,
 }: {
+  showDirectory?: boolean;
   onChannels?: (channels: VoiceChannel[]) => void;
+  onSession?: (session: VoiceSessionDock | null) => void;
   requestedChannel?: { id: string; version: number } | null;
 }) {
   const { request, state: auth } = useAuth();
@@ -89,6 +102,44 @@ export function VoicePanel({
       if (controlsRef.current === controller) setBusy(false);
     }
   }, []);
+  const toggleMute = useCallback(() => {
+    runInBackground(action((controller) => controller.mute()));
+  }, [action]);
+  const toggleDeafen = useCallback(() => {
+    runInBackground(action((controller) => controller.deafen()));
+  }, [action]);
+  const leave = useCallback(() => {
+    runInBackground(action((controller) => controller.leave()));
+  }, [action]);
+  const notifySession = useRef(onSession);
+  notifySession.current = onSession;
+  const voiceStatus = voice?.status;
+  const voiceChannelId = voice?.channelId;
+  const muted = voice?.muted;
+  const deafened = voice?.deafened;
+  const channelName =
+    channels.find((channel) => channel.id === voiceChannelId)?.name ?? 'Voice channel';
+  const session = useMemo<VoiceSessionDock | null>(() => {
+    if (!voiceStatus || voiceStatus === 'idle') return null;
+    return {
+      status:
+        voiceStatus === 'connected'
+          ? 'connected'
+          : voiceStatus === 'joining'
+            ? 'joining'
+            : 'reconnecting',
+      channelName,
+      muted: muted ?? true,
+      deafened: deafened ?? false,
+      toggleMute,
+      toggleDeafen,
+      leave,
+    };
+  }, [voiceStatus, channelName, muted, deafened, toggleMute, toggleDeafen, leave]);
+  useEffect(() => {
+    notifySession.current?.(session);
+  }, [session]);
+  useEffect(() => () => notifySession.current?.(null), []);
   useEffect(() => {
     if (expanded) runInBackground(action((c) => c.refreshDevices()));
   }, [expanded, call?.controls, action]);
@@ -96,6 +147,7 @@ export function VoicePanel({
     setBusy(false);
     setError('');
   }, [call?.controls]);
+  if (!showDirectory) return null;
   return (
     <section className="voice-panel">
       <div className="section-label voice-label">
@@ -141,7 +193,6 @@ export function VoicePanel({
       <button className="voice-settings-toggle" onClick={() => setExpanded(!expanded)}>
         {voice?.status === 'idle' ? 'Set up voice' : (voice?.status ?? 'Voice')} · Audio controls
       </button>
-      <ScreenLauncher />
       {expanded && voice && (
         <div className="voice-controls">
           <p className="voice-help">Choose your devices. You join muted.</p>
