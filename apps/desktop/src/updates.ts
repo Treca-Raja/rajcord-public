@@ -171,12 +171,12 @@ export function configureUpdates(
   };
   if (updater) {
     timer = setTimeout(() => {
-      void check(false);
+      void check(false).catch(() => console.error('Automatic update check failed unexpectedly.'));
     }, 30000);
     timer.unref();
     const interval = setInterval(
       () => {
-        void check(false);
+        void check(false).catch(() => console.error('Automatic update check failed unexpectedly.'));
       },
       6 * 60 * 60 * 1000,
     );

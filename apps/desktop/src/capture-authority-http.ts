@@ -19,7 +19,11 @@ async function json(response: Response, signal: AbortSignal) {
     return cancellation;
   };
   const abort = () => {
-    void cancel();
+    void cancel()
+      .then((result) => {
+        if (!result.ok) console.warn('Capture stream cancellation failed.');
+      })
+      .catch(() => console.warn('Capture stream cancellation failed.'));
   };
   signal.addEventListener('abort', abort, { once: true });
   const current = () => {
@@ -152,18 +156,21 @@ export function createSessionCaptureAuthority(options: {
     const cleanup = authority.dispose();
     contents.removeListener('did-start-navigation', invalidate);
     contents.removeListener('render-process-gone', invalidate);
-    owner.removeListener('closed', dispose);
+    owner.removeListener('closed', disposeOnClose);
     session.cookies.removeListener('changed', cookie);
     shutdown?.removeListener('before-quit', invalidate);
-    shutdown?.removeListener('will-quit', dispose);
+    shutdown?.removeListener('will-quit', disposeOnClose);
     return cleanup;
+  };
+  const disposeOnClose = () => {
+    void dispose().catch(() => console.error('Capture authority cleanup failed.'));
   };
   contents.on('did-start-navigation', invalidate);
   contents.on('render-process-gone', invalidate);
-  owner.once('closed', dispose);
+  owner.once('closed', disposeOnClose);
   session.cookies.on('changed', cookie);
   shutdown?.on('before-quit', invalidate);
-  shutdown?.on('will-quit', dispose);
+  shutdown?.on('will-quit', disposeOnClose);
   return Object.freeze({
     prepare: authority.prepare.bind(authority),
     handoff: authority.handoff.bind(authority),

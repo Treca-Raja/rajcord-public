@@ -5,7 +5,7 @@ description: Use for Rajcord voice/LiveKit, exact audio devices, Electron media 
 
 # Rajcord voice work
 
-Identify the failing/changed layer first. Read only relevant [service](../../../apps/api/src/voice/service.ts), [gateway](../../../apps/api/src/voice/gateway.ts), [controller](../../../apps/web/src/voice-controller.ts) or [desktop permission](../../../apps/desktop/src/media-permissions.ts) paths, then expand across their affected contracts.
+Identify the failing/changed layer first. Read only relevant [service](../../../apps/api/src/voice/service.ts), [gateway](../../../apps/api/src/voice/gateway.ts), [controller](../../../apps/web/src/features/voice/voice-controller.ts) or [desktop permission](../../../apps/desktop/src/media-permissions.ts) paths, then expand across their affected contracts.
 
 ## Invariants to preserve
 

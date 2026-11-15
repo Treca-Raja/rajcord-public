@@ -18,6 +18,13 @@ describe('foundation', () => {
     active.push(instance);
     expect((await instance.app.inject('/messages')).statusCode).toBe(404);
   });
+  it('fails during route registration when an API endpoint has no shared contract', async () => {
+    const instance = createApp();
+    active.push(instance);
+    expect(() => instance.app.get('/api/uncontracted', async () => ({ ok: true }))).toThrow(
+      'API route has no shared contract: GET /api/uncontracted',
+    );
+  });
   it('rejects anonymous Socket.IO connections', async () => {
     const instance = createApp();
     active.push(instance);

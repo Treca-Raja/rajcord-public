@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { AuthUser, AccountStatus } from '@tricord/shared';
 import { HttpError, username, password, text } from './validation.js';
 import { hashPassword, verifyLogin } from './password.js';
+import { withTransaction } from './transaction.js';
 export const SESSION_COOKIE = 'tricord_session';
 export const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 export function equal(a: unknown, b: string) {
@@ -55,20 +56,8 @@ export function approved(auth: Identity | null) {
 }
 export class AuthService {
   constructor(readonly pool: Pool) {}
-  async transaction<T>(work: (db: PoolClient) => Promise<T>) {
-    const db = await this.pool.connect();
-    try {
-      await db.query('BEGIN');
-      await db.query('SELECT pg_advisory_xact_lock(716204)');
-      const result = await work(db);
-      await db.query('COMMIT');
-      return result;
-    } catch (error) {
-      await db.query('ROLLBACK');
-      throw error;
-    } finally {
-      db.release();
-    }
+  transaction<T>(work: (db: PoolClient) => Promise<T>) {
+    return withTransaction(this.pool, work);
   }
   async register(body: Record<string, unknown>) {
     const name = username(body.username),

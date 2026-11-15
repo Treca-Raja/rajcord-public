@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { emojiAssetPrefix } from './src/emoji-assets';
+import { emojiAssetPrefix } from './src/shared/emoji/assets.ts';
 const require = createRequire(import.meta.url);
 const fontLicenses = [
   'Inter — @fontsource-variable/inter',
