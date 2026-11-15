@@ -144,11 +144,11 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
       "!document.querySelector('.chat-dialog') && document.querySelector('.channel-header strong').textContent==='Dialog fixture group'",
     );
     await page.wait(
-      'document.activeElement===document.querySelector(\'button[aria-label="Create group"]\')',
+      'document.activeElement===document.querySelector(\'textarea[name="message"]\')',
     );
     expect(
       await page.js(
-        'document.activeElement===document.querySelector(\'button[aria-label="Create group"]\')',
+        'document.activeElement===document.querySelector(\'textarea[name="message"]\')',
       ),
     ).toBe(true);
     const group = (
@@ -186,7 +186,7 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
     );
     expect(
       await page.js(
-        'document.activeElement===document.querySelector(\'button[aria-label="Find or start a conversation"]\')',
+        'document.activeElement===document.querySelector(\'textarea[name="message"]\')',
       ),
     ).toBe(true);
     await page.js('document.querySelector(\'button[aria-label="Channels"]\').click()');

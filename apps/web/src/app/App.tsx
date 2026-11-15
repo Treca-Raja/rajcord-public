@@ -351,7 +351,13 @@ function Community() {
     document.addEventListener('keydown', keydown);
     return () => {
       document.removeEventListener('keydown', keydown);
-      if (previous?.isConnected) previous.focus();
+      if (
+        previous?.isConnected &&
+        previous.getClientRects().length > 0 &&
+        getComputedStyle(previous).visibility === 'visible'
+      )
+        previous.focus();
+      else document.querySelector<HTMLTextAreaElement>('textarea[name=message]')?.focus();
     };
   }, [modal]);
   async function action(work: () => Promise<unknown>) {
