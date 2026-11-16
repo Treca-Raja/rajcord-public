@@ -27,10 +27,17 @@ it('bounds incomplete readiness and reports file access errors', async () => {
   await expect(waitForDebuggingPort('fixture-profile', () => {})).rejects.toThrow(
     'valid debugging port',
   );
-  expect(readFile).toHaveBeenCalledTimes(100);
+  expect(readFile).toHaveBeenCalledTimes(300);
   const denied = Object.assign(new Error('denied'), { code: 'EACCES' });
   vi.mocked(readFile).mockRejectedValueOnce(denied);
   await expect(waitForDebuggingPort('fixture-profile', () => {})).rejects.toBe(denied);
+});
+
+it('allows a cold start beyond ten seconds within the bounded thirty-second readiness window', async () => {
+  let reads = 0;
+  vi.mocked(readFile).mockImplementation(async () => (++reads > 150 ? '43123\n' : ''));
+  await expect(waitForDebuggingPort('fixture-profile', () => {})).resolves.toBe('43123');
+  expect(readFile).toHaveBeenCalledTimes(151);
 });
 
 it('stops waiting when the browser launch has failed', async () => {

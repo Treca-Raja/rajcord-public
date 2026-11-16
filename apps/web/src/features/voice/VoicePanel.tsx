@@ -1,5 +1,5 @@
 import { runInBackground } from '../../shared/background';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Mic, MicOff, Headphones, PhoneOff, Volume2, Plus, Settings } from 'lucide-react';
 import { useAuth } from '../account';
 import { useCall, type VoiceControls } from '../../shared/call';
@@ -149,11 +149,11 @@ export function VoicePanel({
   const [participantId, setParticipantId] = useState<string | null>(null);
   const [participantAnchor, setParticipantAnchor] = useState<HTMLElement | null>(null);
   const participant = voice?.participants.find((person) => person.id === participantId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setParticipantId(null);
     setParticipantAnchor(null);
   }, [call?.controls, voice?.channelId]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!participant || !participantAnchor?.isConnected) {
       setParticipantId(null);
       setParticipantAnchor(null);

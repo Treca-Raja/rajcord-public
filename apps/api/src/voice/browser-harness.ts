@@ -6,7 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 export type Browser = Awaited<ReturnType<typeof launch>>;
 export async function waitForDebuggingPort(profile: string, check: () => void) {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < 300; attempt++) {
     check();
     try {
       const port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split(
@@ -64,8 +64,12 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
       '--autoplay-policy=no-user-gesture-required',
       'about:blank',
     ],
-    { windowsHide: true, stdio: 'ignore' },
+    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] },
   );
+  let diagnostics = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    diagnostics = (diagnostics + chunk.toString()).slice(-4096);
+  });
   let launchError: Error | undefined;
   child.on('error', (error) => {
     launchError = error;
@@ -90,6 +94,11 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
       if (launchError) throw launchError;
       if (child.exitCode !== null || child.signalCode !== null)
         throw new Error('Test browser exited before publishing its debugging port.');
+    }).catch((cause: unknown) => {
+      throw new Error(
+        `${cause instanceof Error ? cause.message : 'Browser startup failed.'} ${diagnostics}`,
+        { cause },
+      );
     });
     const pages = (await (await fetch('http://127.0.0.1:' + port + '/json/list')).json()) as {
       type: string;
