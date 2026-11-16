@@ -1072,11 +1072,15 @@ it('keeps a same-session refreshed logout intention current and consumes it only
     expect(
       await browser.js("fixture.calls.filter(c=>c.path==='/api/auth/logout').map(c=>c.csrf)"),
     ).toEqual(['a']);
-    await browser.js('fixture.respond(fixture.logouts[0],{ok:true})');
+    await browser.js('fixture.server=null;fixture.respond(fixture.logouts[0],{ok:true})');
     await browser.wait(
       "fixture.firstLogout==='resolved' && !!document.querySelector('[name=password]')",
     );
     expect(await browser.js('fixture.logouts.length')).toBe(1);
+    await browser.js("window.dispatchEvent(new Event('focus'));fixture.auth.refresh()");
+    await browser.wait(
+      "fixture.firstLogout==='resolved' && !!document.querySelector('[name=password]')",
+    );
   });
 });
 
