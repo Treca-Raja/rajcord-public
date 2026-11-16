@@ -47,9 +47,11 @@ export function AuthRoot({
   const mounted = useRef(false);
   const logoutGeneration = useRef<number | null>(null);
   const verifiedAuth = useRef<Readonly<{ account: string; csrf: string }> | null>(null);
+  const knownSignedOut = useRef(false);
   const sessions = useRef(new VerifiedVoiceSessions());
   const [callSession, setCallSession] = useState<ApprovedVoiceSession | null>(null);
   function acceptVerified(next: AuthState | null) {
+    knownSignedOut.current = next === null;
     const csrf = next?.csrfToken;
     if (!next) verifiedAuth.current = null;
     else if (verifiedAuth.current?.account !== next.user.id || verifiedAuth.current.csrf !== csrf) {
@@ -85,7 +87,7 @@ export function AuthRoot({
               acceptVerified(null);
               setSettings(null);
               setRefreshError('');
-            } else if (logoutGeneration.current !== started)
+            } else if (logoutGeneration.current !== started && !knownSignedOut.current)
               setRefreshError('Could not check your account. Check your connection and try again.');
           }
         } finally {

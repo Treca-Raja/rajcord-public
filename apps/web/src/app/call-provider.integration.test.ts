@@ -1109,7 +1109,7 @@ it('a failed logout ends its intention even when fresh verification returns the 
       await browser.js("fixture.observe(fixture.auth.logout(),'freshLogout');fixture.active"),
     ).toBe(0);
     await browser.wait('fixture.logouts.length===2');
-    await browser.js('fixture.respond(fixture.logouts[1],{ok:true})');
+    await browser.js('fixture.server=null;fixture.respond(fixture.logouts[1],{ok:true})');
     await browser.wait(
       "fixture.freshLogout==='resolved' && !!document.querySelector('[name=password]')",
     );
@@ -1158,7 +1158,7 @@ it.each(['pending', 'rejected'] as const)(
       await browser.js("document.querySelector('button.text-button').click()");
       await browser.wait('fixture.logouts.length===1');
       expect(await browser.js("fixture.calls.find(c=>c.path==='/api/auth/logout').csrf")).toBe('a');
-      await browser.js('fixture.respond(fixture.logouts[0],{ok:true})');
+      await browser.js('fixture.server=null;fixture.respond(fixture.logouts[0],{ok:true})');
       await browser.wait("!!document.querySelector('[name=password]')");
       expect(await browser.js('fixture.active===0 && fixture.captureCalls===0')).toBe(true);
     }, status);
@@ -1850,6 +1850,8 @@ it('returns to sign in after logout even when the last account check failed', as
       await browser.wait('fixture.logouts.length===1');
       await browser.js('fixture.server=null;fixture.respond(fixture.logouts[0],{ok:true})');
       await browser.wait("!!document.querySelector('[name=password]')");
+      await browser.js('fixture.auth.refresh()');
+      expect(await browser.js("!!document.querySelector('[name=password]')")).toBe(true);
       expect(await browser.js("document.body.textContent.includes('Could not open Rajcord')")).toBe(
         false,
       );
