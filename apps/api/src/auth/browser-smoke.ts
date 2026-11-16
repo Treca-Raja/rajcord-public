@@ -2043,12 +2043,9 @@ try {
     `JSON.parse(localStorage.getItem('tricord-notification-device-v2:${user.id}')).volume===0.25`,
   );
   async function mode(value: string) {
-    await wait(
-      "!!document.querySelector('.notification-settings select') && !document.querySelector('.notification-settings select').disabled",
-    );
-    await js(
-      `(()=>{const input=document.querySelector('.notification-settings select');input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('change',{bubbles:true}));})()`,
-    );
+    await wait(`(()=>{const input=document.querySelector('.notification-settings select');
+      if(!input||input.matches(':disabled'))return false;
+      input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
     await waitCondition(async () => {
       const row = (
         await fixture.database.pool.query(
@@ -2087,9 +2084,8 @@ try {
       `!![...document.querySelectorAll('.notification-sender')].find(row=>row.textContent.includes(${JSON.stringify('@' + owner.username)}))`,
     );
     await wait(`(()=>{const row=[...document.querySelectorAll('.notification-sender')].find(row=>row.textContent.includes(${JSON.stringify('@' + owner.username)}));
-      const input=[...row.querySelectorAll('input')].find(input=>input.getAttribute('aria-label')?.startsWith(${JSON.stringify(prefix)}));return !!input&&!input.disabled})()`);
-    await js(`(()=>{const row=[...document.querySelectorAll('.notification-sender')].find(row=>row.textContent.includes(${JSON.stringify('@' + owner.username)}));
-      const input=[...row.querySelectorAll('input')].find(input=>input.getAttribute('aria-label')?.startsWith(${JSON.stringify(prefix)}));input.click()})()`);
+      const input=[...(row?.querySelectorAll('input')??[])].find(input=>input.getAttribute('aria-label')?.startsWith(${JSON.stringify(prefix)}));
+      if(!input||input.matches(':disabled'))return false;input.click();return true})()`);
     await waitCondition(async () => {
       const row = (
         await fixture.database.pool.query(
@@ -2118,9 +2114,8 @@ try {
   await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
   await notificationSettings();
   await wait(`(()=>{const row=[...document.querySelectorAll('.notification-sender')].find(row=>row.textContent.includes(${JSON.stringify('@' + owner.username)}));
-    const input=row&&[...row.querySelectorAll('input')].find(input=>input.getAttribute('aria-label')?.startsWith('Mute alerts from '));return !!input&&!input.disabled&&input.checked})()`);
-  await js(`(()=>{const row=[...document.querySelectorAll('.notification-sender')].find(row=>row.textContent.includes(${JSON.stringify('@' + owner.username)}));
-    [...row.querySelectorAll('input')].find(input=>input.getAttribute('aria-label')?.startsWith('Mute alerts from ')).click()})()`);
+    const input=[...(row?.querySelectorAll('input')??[])].find(input=>input.getAttribute('aria-label')?.startsWith('Mute alerts from '));
+    if(!input||input.matches(':disabled')||!input.checked)return false;input.click();return true})()`);
   await waitCondition(async () => {
     const row = (
       await fixture.database.pool.query(
