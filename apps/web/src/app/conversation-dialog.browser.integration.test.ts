@@ -201,12 +201,14 @@ it('preserves conversation dialog focus, failed group drafts, invitation boundar
     await page.wait('!!document.querySelector(\'form[aria-label="Create category"]\')');
     await escape();
     await page.wait("!document.querySelector('.chat-dialog')");
-    await open('Create channel');
-    await escape();
-    await page.wait("!document.querySelector('.chat-dialog')");
-    expect(await page.js("document.activeElement.getAttribute('aria-label')")).toBe(
-      'Create channel',
-    );
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await open('Create channel');
+      await escape();
+      await page.wait("!document.querySelector('.chat-dialog')");
+      expect(await page.js("document.activeElement.getAttribute('aria-label')")).toBe(
+        'Create channel',
+      );
+    }
     expect(await page.js('window.__dialogCaptureCalls')).toBe(0);
   } finally {
     try {
