@@ -260,6 +260,14 @@
   padding: 20px 0;
   border-bottom: 1px solid #383f4a;
 }
+.account-row > div,
+.account-identity {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.account-row > button {
+  flex-shrink: 0;
+}
 .account-row small,
 .audit-row small {
   display: block;

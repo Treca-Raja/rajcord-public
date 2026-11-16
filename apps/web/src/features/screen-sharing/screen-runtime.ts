@@ -161,7 +161,7 @@ export class ScreenRuntime {
       let active = true;
       let voice: Voice | undefined;
       let binding: OwnedScreenBinding | undefined;
-      let incoming: ScreenReceiveHandle | undefined;
+      const incoming = new Set<ScreenReceiveHandle>();
       let removeVoice = () => {},
         removeSession = () => {};
       const pending = new Set<(cause: Error) => void>();
@@ -173,12 +173,12 @@ export class ScreenRuntime {
         try {
           const previous = binding;
           binding = undefined;
-          const received = incoming;
-          incoming = undefined;
+          const received = [...incoming];
+          incoming.clear();
           for (const cancel of [...pending]) cancel(new Error('Screen attachment stopped.'));
           pending.clear();
           const tasks = [
-            () => received?.stop(),
+            ...received.map((handle) => () => handle.stop()),
             () => previous?.release(),
             () => this.options.capture?.stop(),
           ];
@@ -260,15 +260,18 @@ export class ScreenRuntime {
             !this.options.incoming
           )
             throw new Error('Screen receiving is unavailable.');
-          if (incoming && ['closed', 'paused-hidden'].includes(incoming.inspect().phase))
-            incoming = undefined;
-          if (incoming) throw new Error('Stop the current screen receiver first.');
           const handle = this.options.incoming.open(options);
           if (!current() || !binding.inspect()) {
             handle.dispose();
             throw new Error('Screen attachment ended.');
           }
-          incoming = handle;
+          incoming.add(handle);
+          let unsubscribe = () => {};
+          unsubscribe = handle.subscribe((state) => {
+            if (state.phase !== 'closed' && state.phase !== 'paused-hidden') return;
+            incoming.delete(handle);
+            unsubscribe();
+          });
           return handle;
         },
         stop: () => {

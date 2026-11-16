@@ -1730,11 +1730,10 @@ try {
   await js(
     `document.querySelector('[data-message-id="${voiceReference.id}"] .channel-reference').click()`,
   );
-  await wait("!!document.querySelector('.voice-panel .voice-controls')");
+  await wait("document.activeElement?.hasAttribute('data-voice-channel-id')");
   await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   assert.equal(automaticJoins, 0, 'Voice references must not join or capture media');
   cdpEvents.delete('Network.requestWillBeSent');
-  await js("document.querySelector('.voice-settings-toggle').click()");
 
   await showWorkspace('Direct Messages');
   await js('document.querySelector(\'button[aria-label="Find or start a conversation"]\').click()');
@@ -2199,20 +2198,14 @@ try {
   await click('Enable sounds');
   await click('Preview sound');
   await wait("document.querySelector('.sound-settings').innerText.includes('Choose speakers')");
-  await js("document.querySelector('.voice-settings-toggle').click()");
-  await wait(
-    "['ready','permission-needed'].includes(document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus)",
-  );
-  if (
-    await js(
-      "document.querySelector('[data-audio-devices-status]').dataset.audioDevicesStatus==='permission-needed'",
-    )
-  )
-    await click('Allow microphone access');
+  await js("document.querySelector('.profile-settings').click()");
+  await click('Voice & audio');
+  await click('Find audio devices');
   await wait('document.querySelector(\'select[aria-label="Voice speakers"]\').options.length>1');
   await js(
     `(()=>{const s=document.querySelector('select[aria-label="Voice speakers"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
   );
+  await js('document.querySelector(\'[aria-label="Close settings"]\').click()');
   await click('Preview sound');
   await wait('window.soundCalls.length===1');
   assert.ok(await js('window.soundCalls[0].sink.length>0'));

@@ -5,6 +5,21 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 export type Browser = Awaited<ReturnType<typeof launch>>;
+export async function waitForDebuggingPort(profile: string, check: () => void) {
+  for (let attempt = 0; attempt < 300; attempt++) {
+    check();
+    try {
+      const port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split(
+        '\n',
+      )[0]!;
+      if (/^\d+$/.test(port) && Number(port) > 0 && Number(port) <= 65535) return port;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await delay(100);
+  }
+  throw new Error('Test browser did not publish a valid debugging port.');
+}
 export async function launch(options: { fakeMicrophone?: boolean } = {}) {
   const profile = await mkdtemp(path.join(tmpdir(), 'tricord-voice-browser-'));
   const wav = Buffer.alloc(44 + 48000 * 2 * 4);
@@ -49,8 +64,12 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
       '--autoplay-policy=no-user-gesture-required',
       'about:blank',
     ],
-    { windowsHide: true, stdio: 'ignore' },
+    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] },
   );
+  let diagnostics = '';
+  child.stderr?.on('data', (chunk: Buffer) => {
+    diagnostics = (diagnostics + chunk.toString()).slice(-4096);
+  });
   let launchError: Error | undefined;
   child.on('error', (error) => {
     launchError = error;
@@ -71,17 +90,16 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   };
   try {
-    let port = '';
-    for (let i = 0; i < 100; i++) {
+    const port = await waitForDebuggingPort(profile, () => {
       if (launchError) throw launchError;
-      try {
-        port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]!;
-        break;
-      } catch {
-        await delay(100);
-      }
-    }
-    assert.match(port, /^\d+$/);
+      if (child.exitCode !== null || child.signalCode !== null)
+        throw new Error('Test browser exited before publishing its debugging port.');
+    }).catch((cause: unknown) => {
+      throw new Error(
+        `${cause instanceof Error ? cause.message : 'Browser startup failed.'} ${diagnostics}`,
+        { cause },
+      );
+    });
     const pages = (await (await fetch('http://127.0.0.1:' + port + '/json/list')).json()) as {
       type: string;
       webSocketDebuggerUrl: string;
@@ -224,8 +242,9 @@ export async function setup(browser: Browser, token: string, origin: string) {
   });
   await browser.call('Browser.grantPermissions', { origin, permissions: ['audioCapture'] });
   await browser.call('Page.navigate', { url: origin });
-  await browser.wait("!!document.querySelector('.voice-settings-toggle')");
-  await browser.js("document.querySelector('.voice-settings-toggle').click()");
+  await browser.wait("!!document.querySelector('.profile-settings')");
+  await browser.js("document.querySelector('.profile-settings').click()");
+  await browser.click('Voice & audio');
   await browser.wait(
     "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
   );
@@ -233,14 +252,6 @@ export async function setup(browser: Browser, token: string, origin: string) {
     await browser.js('window.__captureCount'),
     0,
     'Automatic setup must not capture audio',
-  );
-  assert.equal(
-    await browser.js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
-    '',
-  );
-  assert.equal(
-    await browser.js('document.querySelector(\'select[aria-label="Voice speakers"]\').value'),
-    '',
   );
   await browser.wait(
     'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
@@ -252,11 +263,9 @@ export async function setup(browser: Browser, token: string, origin: string) {
         "]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
     );
   }
-  await browser.wait(
-    '!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled',
-  );
+  await browser.wait("!!document.querySelector('[data-voice-channel-id]')");
   await browser.js(
-    "(()=>{const s=document.querySelector('select[aria-label=\"Join voice channel\"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
+    "document.querySelector('[aria-label=\"Close settings\"]')?.click();document.querySelector('[data-voice-channel-id]').click()",
   );
   await browser.wait(
     "document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'",

@@ -2,6 +2,7 @@ import { CallContext, type Call } from '../shared/call';
 import type { VoiceControls, VoiceDevice, VoiceSnapshot } from '../features/voice/contracts';
 export { useCall } from '../shared/call';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { joinDevices } from '../features/voice/composition';
 import { CallPreviewLifetime, type CallPreviewDependency } from './call-preview';
 import { VoiceController, concreteDevices } from '../features/voice/composition';
 import type { ApprovedVoiceSession } from '../features/voice/contracts';
@@ -91,22 +92,102 @@ export function CallProvider({
         );
       });
     };
+    const preferenceKey = 'rajcord.voice.devices';
+    if (permissionReset?.session === session) localStorage.removeItem(preferenceKey);
+    const saved = localStorage.getItem(preferenceKey);
+    if (saved) {
+      try {
+        const value: unknown = JSON.parse(saved);
+        if (
+          value &&
+          typeof value === 'object' &&
+          'input' in value &&
+          'output' in value &&
+          typeof value.input === 'string' &&
+          typeof value.output === 'string'
+        )
+          controller.update({ input: value.input, output: value.output });
+      } catch (cause) {
+        if (!(cause instanceof SyntaxError)) throw cause;
+        localStorage.removeItem(preferenceKey);
+      }
+    }
+    const saveDevices = () =>
+      localStorage.setItem(
+        preferenceKey,
+        JSON.stringify({
+          input: controller.state.input,
+          output: controller.state.output,
+        }),
+      );
+    const discover = async () => {
+      await controller.devices();
+      check();
+      if (controller.state.devicesStatus !== 'ready')
+        throw new Error(controller.state.devicesError || 'Audio device discovery failed.');
+      return controller.state.devices;
+    };
+    let joining = false;
+    let joinGeneration = 0;
+    const leaveCall = () => {
+      localPreview.stop();
+      cleanScreens([
+        () => screenCall?.stopSource(),
+        () => screenCall?.stopWatching(),
+        () => screenAttachment?.stop(),
+      ]);
+      return controller.leave();
+    };
     const controls: VoiceControls = {
-      devices: () => invoke(() => controller.devices()),
       refreshDevices: () => invoke(() => controller.refreshDevices()),
       setOutputVolume: (value) => invoke(() => controller.setOutputVolume(value)),
-      selectInput: (id) => invoke(() => controller.selectInput(id)),
-      selectOutput: (id) => invoke(() => controller.selectOutput(id)),
+      devices: () => invoke(() => controller.devices()),
+      selectInput: (id) =>
+        invoke(async () => {
+          await controller.selectInput(id);
+          check();
+          saveDevices();
+        }),
+      selectOutput: (id) =>
+        invoke(async () => {
+          await controller.selectOutput(id);
+          check();
+          saveDevices();
+        }),
       join: (id) => invoke(() => controller.join(id)),
+      joinChannel: (id) =>
+        invoke(async () => {
+          if (joining) throw new Error('A voice channel change is already in progress.');
+          if (controller.state.channelId === id && controller.state.status !== 'idle') return;
+          joining = true;
+          const attempt = ++joinGeneration;
+          const checkJoin = () => {
+            check();
+            if (attempt !== joinGeneration) throw new Error('Voice channel change cancelled.');
+          };
+          try {
+            const selected = joinDevices(await discover(), controller.state);
+            checkJoin();
+            if (controller.state.status !== 'idle') await leaveCall();
+            checkJoin();
+            await controller.selectInput(selected.input);
+            checkJoin();
+            await controller.selectOutput(selected.output);
+            checkJoin();
+            saveDevices();
+            await controller.join(id);
+            checkJoin();
+            if (controller.state.channelId !== id || controller.state.status === 'idle')
+              throw new Error(controller.state.error || 'Could not join the voice channel.');
+          } finally {
+            joining = false;
+          }
+        }),
       leave: () =>
         invoke(() => {
-          localPreview.stop();
-          cleanScreens([
-            () => screenCall?.stopSource(),
-            () => screenCall?.stopWatching(),
-            () => screenAttachment?.stop(),
-          ]);
-          return controller.leave();
+          joinGeneration++;
+          cleanScreens([() => screenCall?.controls().close()]);
+          return leaveCall();
         }),
       mute: () => invoke(() => controller.mute()),
       deafen: () => invoke(() => controller.deafen()),

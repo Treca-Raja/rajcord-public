@@ -1,5 +1,22 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { MonitorUp, Square, X } from 'lucide-react';
+import { useEffect, useMemo, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  Headphones,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  LayoutGrid,
+  Maximize2,
+  Mic,
+  MicOff,
+  Minimize2,
+  MonitorUp,
+  PhoneOff,
+  Settings2,
+  Square,
+  UsersRound,
+  Volume2,
+  X,
+} from 'lucide-react';
 import {
   SCREEN_RESOLUTIONS,
   SCREEN_FRAME_RATES,
@@ -10,27 +27,67 @@ import {
   type ScreenShare,
 } from '@tricord/shared';
 import { useCall } from '../../shared/call';
+import { useAuth } from '../account';
 import type { ScreenControls } from './screen-call';
+import type { VoiceChannel } from '../voice/contracts';
+import { StreamTile, ParticipantTile } from './ScreenCallTiles';
+import { ParticipantVolume } from '../../shared/ParticipantVolume';
 import './styles.css';
+
+const defaultScreenQuality: ScreenQuality = Object.freeze({
+  profile: 'smooth',
+  resolution: 1080,
+  frameRate: 60,
+  videoBitrate: 8000000,
+});
 
 function useScreen(controls: ScreenControls) {
   return useSyncExternalStore(controls.subscribe, controls.inspect, controls.inspect);
 }
 function ScreenButton({ controls, connected }: { controls: ScreenControls; connected: boolean }) {
   const state = useScreen(controls);
+  const busy = ['connecting', 'preparing', 'choosing', 'publishing'].includes(state.phase);
   return (
     <div className="screen-launcher">
       <button
-        disabled={!connected}
+        disabled={!connected || busy}
+        aria-label={
+          state.phase === 'sharing' ? `Sharing · ${state.viewers} viewers` : 'Share Your Screen'
+        }
+        title="Share Your Screen"
         aria-expanded={state.open}
         aria-controls="screen-panel"
         onClick={() => {
-          if (state.open) controls.close();
-          else void controls.open().catch(() => {});
+          if (state.phase === 'sharing') {
+            if (state.open) controls.close();
+            else void controls.open().catch(() => {});
+          } else if (state.prepared && state.phase === 'ready') {
+            void controls.choose().catch(() => {});
+          } else if (window.tricordDesktop && !state.open) {
+            void controls
+              .open()
+              .then(() => controls.prepare({ ...defaultScreenQuality, sound: 'none' }))
+              .then(() => controls.choose())
+              .catch(() => {});
+          } else if (window.tricordDesktop && state.open && !state.prepared) {
+            void controls
+              .prepare({ ...defaultScreenQuality, sound: 'none' })
+              .then(() => controls.choose())
+              .catch(() => {});
+          } else void controls.open(true).catch(() => {});
         }}
       >
         <MonitorUp size={16} />
-        {state.phase === 'sharing' ? `Sharing · ${state.viewers} viewers` : 'Screen sharing'}
+        {state.phase === 'sharing' ? `Sharing · ${state.viewers} viewers` : 'Share Your Screen'}
+      </button>
+      <button
+        className="screen-watch-launcher"
+        disabled={!connected}
+        aria-label="Browse shared screens"
+        title="Browse shared screens"
+        onClick={() => void controls.open().catch(() => {})}
+      >
+        <Eye size={16} />
       </button>
       {(state.prepared ||
         ['choosing', 'preview', 'publishing', 'sharing'].includes(state.phase)) && (
@@ -55,18 +112,28 @@ export function ScreenLauncher() {
     />
   ) : null;
 }
-export function ScreenPanel() {
+export function ScreenPanel({ voiceChannels = [] }: { voiceChannels?: readonly VoiceChannel[] }) {
   const call = useCall();
-  return call?.screens ? <ConnectedScreenPanel controls={call.screens} /> : null;
+  return call?.screens ? (
+    <ConnectedScreenPanel controls={call.screens} voiceChannels={voiceChannels} />
+  ) : null;
 }
-function ConnectedScreenPanel({ controls }: { controls: ScreenControls }) {
+function ConnectedScreenPanel({
+  controls,
+  voiceChannels,
+}: {
+  controls: ScreenControls;
+  voiceChannels: readonly VoiceChannel[];
+}) {
   const call = useCall();
+  const { state: auth } = useAuth();
   const state = useScreen(controls);
+  const [settingsVisible, setSettingsVisible] = useState(() => !!state.setupRequested);
+  const [participantsVisible, setParticipantsVisible] = useState(true);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [fullscreen, setFullscreen] = useState(false);
   const [quality, setQuality] = useState<ScreenQuality>({
-    profile: 'smooth',
-    resolution: 1080,
-    frameRate: 60,
-    videoBitrate: 8000000,
+    ...defaultScreenQuality,
   });
   const [watchQuality, setWatchQuality] = useState<ScreenQuality>({
     profile: 'smooth',
@@ -78,15 +145,181 @@ function ConnectedScreenPanel({ controls }: { controls: ScreenControls }) {
   const [error, setError] = useState('');
   const currentControls = useRef(controls);
   currentControls.current = controls;
+  const panel = useRef<HTMLElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const idleTimer = useRef<number | null>(null);
+  const previousShareCount = useRef(state.shares.length);
+  const participants = useMemo(() => call?.voice.participants ?? [], [call?.voice.participants]);
+  const activeShare =
+    state.shares.find((item) => item.id === state.watching) ??
+    state.shares.find((item) => item.id === state.ownShareId);
+  const activePublisher = activeShare
+    ? (participants.find((person) => person.id === activeShare.publisherId)?.name ?? 'Participant')
+    : '';
+  const activeChannel = voiceChannels.find((channel) => channel.id === call?.voice.channelId);
+  const localVideo = ['preview', 'publishing', 'sharing'].includes(state.phase);
+  const [endedStream, setEndedStream] = useState<string | null>(null);
+  const lastWatched = useRef<{ id: string; name: string } | null>(null);
+  const gallery = !endedStream && (state.layout === 'grid' || (!state.watching && !localVideo));
+  const availableShares = state.shares.filter(
+    (item) => !state.watchingShareIds.includes(item.id) && item.id !== state.ownShareId,
+  );
+  const [participantMenu, setParticipantMenu] = useState<{
+    id: string;
+    anchor: HTMLElement;
+  } | null>(null);
+  const menuParticipant = participants.find((person) => person.id === participantMenu?.id);
+  useEffect(() => {
+    setParticipantMenu(null);
+  }, [controls, call?.voice.channelId, state.open]);
+  useEffect(() => {
+    if (!menuParticipant || !participantMenu?.anchor.isConnected) setParticipantMenu(null);
+  }, [menuParticipant, participantMenu]);
+  const media = useRef<HTMLDivElement>(null);
+  const [tileWidth, setTileWidth] = useState(240);
+  const galleryCount =
+    state.watchingShareIds.length +
+    availableShares.length +
+    participants.length +
+    (localVideo ? 1 : 0);
+
+  useEffect(() => {
+    const previous = lastWatched.current;
+    if (state.watching) {
+      lastWatched.current = { id: state.watching, name: activePublisher };
+      setEndedStream(null);
+    } else {
+      if (previous && !state.shares.some((item) => item.id === previous.id))
+        setEndedStream(previous.name);
+      lastWatched.current = null;
+    }
+  }, [state.watching, state.shares, activePublisher]);
+  useLayoutEffect(() => {
+    const host = media.current;
+    if (!state.open || !gallery || !host) return;
+    const resize = () => {
+      const width = host.clientWidth,
+        height = host.clientHeight;
+      let best = 0;
+      for (let columns = 1; columns <= Math.max(1, galleryCount); columns++) {
+        const rows = Math.ceil(galleryCount / columns);
+        const candidate = Math.min(
+          (width - (columns - 1) * 8) / columns,
+          (((height - (rows - 1) * 8) / rows) * 16) / 9,
+        );
+        best = Math.max(best, candidate);
+      }
+      setTileWidth(Math.max(Math.min(200, width), Math.floor(best)));
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [state.open, gallery, galleryCount]);
+
   useEffect(() => setError(''), [controls]);
-  const preview = useRef<HTMLVideoElement>(null),
-    incoming = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setSettingsVisible(state.open && !!state.setupRequested);
+  }, [state.open, state.setupRequested]);
+  useEffect(() => {
+    const syncFullscreen = () =>
+      setFullscreen(!!panel.current && document.fullscreenElement === panel.current);
+    syncFullscreen();
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen);
+  }, [state.open]);
+  useEffect(() => {
+    if (!state.open || settingsVisible) {
+      setControlsVisible(true);
+      if (idleTimer.current !== null) window.clearTimeout(idleTimer.current);
+      idleTimer.current = null;
+      return;
+    }
+    setControlsVisible(true);
+    idleTimer.current = window.setTimeout(() => setControlsVisible(false), 3200);
+    return () => {
+      if (idleTimer.current !== null) window.clearTimeout(idleTimer.current);
+      idleTimer.current = null;
+    };
+  }, [state.open, settingsVisible]);
+  useEffect(() => {
+    const hadShares = previousShareCount.current > 0;
+    previousShareCount.current = state.shares.length;
+    if (!hadShares && state.shares.length > 0 && !state.prepared && !state.watching)
+      setSettingsVisible(false);
+  }, [state.prepared, state.shares.length, state.watching]);
+  useEffect(() => {
+    const element = panel.current;
+    const parent = element?.parentElement;
+    if (!state.open || !element || !parent) return;
+    const siblings = Array.from(parent.children).filter(
+      (child): child is HTMLElement => child instanceof HTMLElement && child !== element,
+    );
+    const priorInert = siblings.map((sibling) => sibling.inert);
+    const priorFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    siblings.forEach((sibling) => {
+      sibling.inert = true;
+    });
+    closeButton.current?.focus({ preventScroll: true });
+    return () => {
+      siblings.forEach((sibling, index) => {
+        sibling.inert = priorInert[index] ?? false;
+      });
+      priorFocus?.focus({ preventScroll: true });
+    };
+  }, [state.open]);
+
+  const preview = useRef<HTMLVideoElement>(null);
+  const incoming = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (state.open && preview.current) return controls.preview(preview.current);
   }, [controls, state.open]);
   useEffect(() => {
     if (state.open && incoming.current) return controls.incoming(incoming.current);
   }, [controls, state.open]);
+  useEffect(() => {
+    const host = incoming.current;
+    if (!host) return;
+    for (const tile of host.querySelectorAll<HTMLElement>('[data-screen-share-id]')) {
+      const share = state.shares.find((item) => item.id === tile.dataset.screenShareId);
+      const publisher = share
+        ? (participants.find((person) => person.id === share.publisherId)?.name ?? 'Participant')
+        : 'Participant';
+      const label = tile.querySelector<HTMLElement>('.screen-incoming-label');
+      if (label) label.textContent = `${publisher}'s screen`;
+      tile.setAttribute(
+        'aria-label',
+        `${publisher}'s shared screen. Activate to change the viewing layout.`,
+      );
+    }
+  }, [participants, state.shares, state.watchingShareIds]);
+  useEffect(() => {
+    const host = incoming.current;
+    if (!state.open || !host) return;
+    const activate = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const tile = target.closest<HTMLElement>('[data-screen-share-id]');
+      const shareId = tile?.dataset.screenShareId;
+      if (!shareId) return;
+      if (state.layout === 'focus') controls.zoomOutWatch();
+      else controls.focusWatch(shareId);
+    };
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (!(event.target instanceof HTMLElement) || !event.target.matches('[data-screen-share-id]'))
+        return;
+      event.preventDefault();
+      activate(event);
+    };
+    host.addEventListener('click', activate);
+    host.addEventListener('keydown', keydown);
+    return () => {
+      host.removeEventListener('click', activate);
+      host.removeEventListener('keydown', keydown);
+    };
+  }, [controls, state.layout, state.open]);
   const run = (work: () => Promise<unknown>) => {
     setError('');
     const failed = (cause: unknown) => {
@@ -108,13 +341,88 @@ function ConnectedScreenPanel({ controls }: { controls: ScreenControls }) {
       videoBitrate: preference.videoBitrate,
     };
   };
+  const addToMulti = async (item: Readonly<ScreenShare>) => {
+    await controls.watchMultiple(item.id, requested(item, watchQuality));
+    controls.zoomOutWatch();
+  };
   const changeWatchQuality = (next: ScreenQuality) => {
     setWatchQuality(next);
     const selected = state.shares.find((item) => item.id === state.watching);
-    if (selected) run(() => controls.watch(selected.id, requested(selected, next)));
+    if (selected) run(() => controls.watchMultiple(selected.id, requested(selected, next)));
   };
+  const revealControls = () => {
+    setControlsVisible(true);
+    if (idleTimer.current !== null) window.clearTimeout(idleTimer.current);
+    idleTimer.current =
+      state.open && !settingsVisible
+        ? window.setTimeout(() => setControlsVisible(false), 3200)
+        : null;
+  };
+  const toggleFullscreen = () => {
+    const element = panel.current;
+    if (!element) return;
+    run(() =>
+      document.fullscreenElement === element
+        ? document.exitFullscreen()
+        : element.requestFullscreen(),
+    );
+  };
+  const displayQuality = activeShare
+    ? state.watching
+      ? requested(activeShare, watchQuality)
+      : {
+          resolution: activeShare.resolution ?? quality.resolution,
+          frameRate: activeShare.frameRate ?? quality.frameRate,
+        }
+    : null;
+  const renderStream = (item: Readonly<ScreenShare>) => {
+    const watched = state.watchingShareIds.includes(item.id);
+    const publisher =
+      participants.find((person) => person.id === item.publisherId)?.name ?? 'Participant';
+    return (
+      <StreamTile
+        key={item.id}
+        share={item}
+        publisher={publisher}
+        videoSource={
+          item.id === state.ownShareId
+            ? preview.current
+            : [...(incoming.current?.querySelectorAll<HTMLElement>('[data-screen-share-id]') ?? [])]
+                .find((tile) => tile.dataset.screenShareId === item.id)
+                ?.querySelector('video')
+        }
+        own={item.id === state.ownShareId}
+        watching={watched}
+        focused={state.watching === item.id}
+        connecting={state.selectingShareId === item.id}
+        busy={!!state.selectingShareId}
+        watch={() => {
+          setSettingsVisible(false);
+          if (watched) controls.focusWatch(item.id);
+          else run(() => controls.watch(item.id, requested(item, watchQuality)));
+        }}
+        multiple={() => {
+          setSettingsVisible(false);
+          if (watched) controls.stopWatchingShare(item.id);
+          else run(() => addToMulti(item));
+        }}
+      />
+    );
+  };
+  const renderParticipant = (person: (typeof participants)[number], index: number) => (
+    <ParticipantTile
+      key={person.id}
+      person={person}
+      index={index}
+      own={person.id === auth.user.id}
+      expanded={participantMenu?.id === person.id}
+      open={(anchor) => setParticipantMenu({ id: person.id, anchor })}
+    />
+  );
   if (!state.open) return null;
+
   const busy = ['connecting', 'preparing', 'choosing', 'publishing'].includes(state.phase);
+  const live = !!state.watching || state.phase === 'sharing';
   const phases = {
     idle: 'Join voice to share or watch',
     connecting: 'Connecting…',
@@ -125,266 +433,594 @@ function ConnectedScreenPanel({ controls }: { controls: ScreenControls }) {
     publishing: 'Starting…',
     sharing: `Sharing · ${state.viewers} viewers`,
   };
+
   return (
     <section
+      ref={panel}
       id="screen-panel"
-      className="screen-panel"
-      aria-label="Screen sharing"
+      className={'screen-panel' + (!controlsVisible && !settingsVisible ? ' controls-hidden' : '')}
+      role="region"
+      aria-label="Screen sharing call"
+      data-layout={gallery ? 'grid' : 'focus'}
+      data-members={participantsVisible}
       data-phase={state.phase}
       data-prepared={state.prepared}
+      onPointerMove={revealControls}
+      onPointerDown={revealControls}
+      onKeyDown={revealControls}
+      onFocusCapture={revealControls}
     >
-      <header>
-        <MonitorUp size={18} />
-        <strong>Screen sharing</strong>
-        <span className="screen-status" role="status">
-          {phases[state.phase]}
-        </span>
+      <header className="screen-call-header">
+        <div className="screen-call-context">
+          <span className="screen-call-context-icon" aria-hidden="true">
+            <Volume2 size={18} />
+          </span>
+          <div>
+            <strong>{activeChannel?.name ?? 'Voice channel'}</strong>
+            <span className="screen-status" role="status">
+              {phases[state.phase]} · {participants.length}{' '}
+              {participants.length === 1 ? 'participant' : 'participants'}
+            </span>
+          </div>
+        </div>
         <span className="grow" />
+        <div className="screen-call-indicators">
+          {displayQuality && (
+            <span className="screen-quality-badge">
+              {displayQuality.resolution}p {displayQuality.frameRate} FPS
+            </span>
+          )}
+          <span className={live ? 'screen-live-badge is-live' : 'screen-live-badge'}>
+            <span aria-hidden="true" />
+            {live ? 'LIVE' : 'SCREEN SHARE'}
+          </span>
+        </div>
         {state.prepared && (
-          <button className="screen-stop" onClick={controls.stopSource}>
-            Stop sharing
+          <button
+            className="screen-stop"
+            title={state.phase === 'sharing' ? 'Stop sharing' : 'Cancel screen setup'}
+            onClick={controls.stopSource}
+          >
+            <Square size={13} />
+            {state.phase === 'sharing' ? 'Stop sharing' : 'Cancel'}
           </button>
         )}
-        <button aria-label="Close screen panel" onClick={controls.close}>
-          <X size={17} />
+        <button
+          ref={closeButton}
+          className="screen-close"
+          aria-label="Back to chat"
+          title="Back to chat"
+          onClick={controls.close}
+        >
+          <X size={18} />
         </button>
       </header>
-      <div className="screen-panel-body">
-        <div className="screen-options">
-          <fieldset disabled={busy || state.prepared}>
-            <legend>Your screen</legend>
-            <div className="screen-quality">
-              <label>
-                Resolution
-                <select
-                  aria-label="Screen resolution"
-                  value={quality.resolution}
-                  onChange={(event) =>
-                    setQuality({
-                      ...quality,
-                      resolution: Number(event.target.value) as ScreenQuality['resolution'],
-                    })
-                  }
-                >
-                  {SCREEN_RESOLUTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {value}p
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Frame rate
-                <select
-                  aria-label="Screen frame rate"
-                  value={quality.frameRate}
-                  onChange={(event) =>
-                    setQuality({
-                      ...quality,
-                      frameRate: Number(event.target.value) as ScreenQuality['frameRate'],
-                    })
-                  }
-                >
-                  {SCREEN_FRAME_RATES.map((value) => (
-                    <option key={value} value={value}>
-                      {value} fps
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Video cap per viewer
-                <select
-                  aria-label="Screen video bitrate"
-                  value={quality.videoBitrate ?? 8000000}
-                  onChange={(event) =>
-                    setQuality({
-                      ...quality,
-                      videoBitrate: Number(event.target.value) as ScreenQuality['videoBitrate'],
-                    })
-                  }
-                >
-                  {SCREEN_VIDEO_BITRATES.map((value) => (
-                    <option key={value} value={value}>
-                      {value / 1000000} Mb/s
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label>
-              Source sound
-              <select
-                aria-label="Screen source sound"
-                value={sound}
-                onChange={(event) => setSound(event.target.value as ScreenSound)}
-              >
-                <option value="none">Video only</option>
-                {window.tricordDesktop ? (
-                  window.tricordDesktop.platform === 'win32' && (
-                    <option value="system">System sound — all applications</option>
-                  )
-                ) : (
-                  <option value="tab">Selected browser tab sound</option>
-                )}
-              </select>
-            </label>
-          </fieldset>
-          {sound === 'system' && (
-            <p className="screen-help">
-              System sound may include Rajcord and other applications. Use a separate playback route
-              to avoid feeding the call back into your share.
-            </p>
-          )}
-          {sound === 'tab' && (
-            <p className="screen-help">
-              Choose a browser tab and explicitly enable its audio in the browser picker.
-            </p>
-          )}
-          {!state.prepared && (
-            <button
-              disabled={busy}
-              onClick={() => run(() => controls.prepare({ ...quality, sound }))}
-            >
-              Prepare source
-            </button>
-          )}
-          {state.prepared && state.phase === 'ready' && (
-            <button onClick={() => run(controls.choose)}>Choose source</button>
-          )}
-          {state.phase === 'preview' && (
-            <button className="primary" onClick={() => run(controls.publish)}>
-              Start sharing
-            </button>
-          )}
-          {busy && (
-            <p role="status">
-              {state.phase === 'choosing'
-                ? 'Choose a source in the picker…'
-                : 'Preparing screen sharing…'}
-            </p>
-          )}
-          <p className="screen-help">
-            Resolution, frame rate and bitrate are ceilings. Actual delivery depends on the source,
-            hardware and network connection.
-          </p>
-        </div>
-        <div className="screen-media" data-has-incoming={!!state.watching}>
-          <video
-            ref={preview}
-            className="screen-preview"
-            aria-label="Local screen preview"
-            hidden={!['preview', 'publishing', 'sharing'].includes(state.phase)}
-            muted
-            playsInline
-          />
-          {state.label && (
-            <span className="screen-source-label">{state.label} · local preview</span>
-          )}
-          <div ref={incoming} className="screen-incoming" />
-        </div>
-        <div className="screen-watch">
-          <strong>Available screens</strong>
-          <div className="screen-watch-quality">
-            <label>
-              Watch resolution
-              <select
-                aria-label="Watch resolution"
-                value={watchQuality.resolution}
-                onChange={(event) =>
-                  changeWatchQuality({
-                    ...watchQuality,
-                    resolution: Number(event.target.value) as ScreenQuality['resolution'],
-                  })
-                }
-              >
-                {SCREEN_RESOLUTIONS.map((value) => (
-                  <option key={value} value={value}>
-                    {value}p
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Watch frame rate
-              <select
-                aria-label="Watch frame rate"
-                value={watchQuality.frameRate}
-                onChange={(event) =>
-                  changeWatchQuality({
-                    ...watchQuality,
-                    frameRate: Number(event.target.value) as ScreenQuality['frameRate'],
-                  })
-                }
-              >
-                {SCREEN_FRAME_RATES.map((value) => (
-                  <option key={value} value={value}>
-                    {value} fps
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Watch video cap
-              <select
-                aria-label="Watch video bitrate"
-                value={watchQuality.videoBitrate ?? 4000000}
-                onChange={(event) =>
-                  changeWatchQuality({
-                    ...watchQuality,
-                    videoBitrate: Number(event.target.value) as ScreenQuality['videoBitrate'],
-                  })
-                }
-              >
-                {SCREEN_VIDEO_BITRATES.map((value) => (
-                  <option key={value} value={value}>
-                    {value / 1000000} Mb/s
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          {state.shares.length === 0 && <p>No one is sharing yet.</p>}
-          {state.shares.map((item) => (
-            <button
-              key={item.id}
-              disabled={item.id === state.ownShareId}
-              aria-pressed={state.watching === item.id}
-              onClick={() => run(() => controls.watch(item.id, requested(item, watchQuality)))}
-            >
-              <MonitorUp size={15} />
-              {call?.voice.participants.find((person) => person.id === item.publisherId)?.name ??
-                'Participant'}{' '}
-              · {item.resolution ?? 1080}p · {item.frameRate ?? 60} fps ·{' '}
-              {item.sound === 'none' ? 'Video' : 'With sound'}
-            </button>
-          ))}
-          <label>
-            <input type="checkbox" onChange={(event) => controls.mute(event.target.checked)} />
-            Mute screen sound
-          </label>
-          <label>
-            Screen volume
-            <input
-              aria-label="Screen volume"
-              type="range"
-              min="0"
-              max="1"
-              step=".05"
-              defaultValue="1"
-              onChange={(event) => controls.volume(Number(event.target.value))}
+      <div className="screen-call-body">
+        <div
+          ref={media}
+          className="screen-media"
+          data-layout={gallery ? 'grid' : 'focus'}
+          style={{ '--screen-tile-width': tileWidth + 'px' } as React.CSSProperties}
+          data-has-incoming={state.watchingShareIds.length > 0}
+        >
+          {!endedStream &&
+            !participants.length &&
+            !state.shares.length &&
+            !state.watchingShareIds.length &&
+            !localVideo && (
+              <div className="screen-stage-empty" role="status">
+                <span className="screen-stage-empty-icon" aria-hidden="true">
+                  <MonitorUp size={25} />
+                </span>
+                <strong>
+                  {state.phase === 'choosing'
+                    ? 'Choose a screen to share'
+                    : state.phase === 'idle'
+                      ? 'Join voice to share your screen'
+                      : 'Your preview will appear here'}
+                </strong>
+                <span>
+                  {state.phase === 'ready'
+                    ? 'Set your quality, then choose a screen to preview it.'
+                    : state.phase === 'idle'
+                      ? 'Join a voice channel to share or watch a stream.'
+                      : 'Set up sharing and choose a source to see it here.'}
+                </span>
+              </div>
+            )}
+          <div className="screen-local-tile" hidden={!localVideo || !!endedStream}>
+            <video
+              ref={preview}
+              className="screen-preview"
+              aria-label="Local screen preview"
+              muted
+              playsInline
             />
-          </label>
-          {state.watching && (
-            <>
-              <p role="status">{state.playback}</p>
-              <button onClick={() => run(controls.play)}>Enable screen playback</button>
-              <button onClick={() => controls.stopWatching()}>Stop watching</button>
-            </>
+            {(gallery || !!state.watching) && (
+              <span className="screen-incoming-label">Your screen</span>
+            )}
+          </div>
+          <div ref={incoming} className="screen-incoming" hidden={!!endedStream} />
+          {gallery && (
+            <div className="screen-gallery-extras">
+              {availableShares.map(renderStream)}
+              {participants.map(renderParticipant)}
+            </div>
           )}
-          {state.hidden && <p>Incoming screen delivery is paused while Rajcord is hidden.</p>}
+          {endedStream && (
+            <div className="screen-stage-ended" role="status">
+              <MonitorUp size={40} aria-hidden="true" />
+              <strong>This stream has ended.</strong>
+              <span>{endedStream}'s screen is no longer available.</span>
+              <button onClick={() => setEndedStream(null)}>Close Stream</button>
+            </div>
+          )}
+          {!!state.watchingShareIds.length && (
+            <button
+              className="screen-layout-toggle"
+              aria-label={state.layout === 'focus' ? 'Show all streams' : 'Focus shared screen'}
+              title={state.layout === 'focus' ? 'Show all streams' : 'Focus shared screen'}
+              onClick={() =>
+                state.layout === 'focus'
+                  ? controls.zoomOutWatch()
+                  : state.watching && controls.focusWatch(state.watching)
+              }
+            >
+              {state.layout === 'focus' ? <LayoutGrid size={17} /> : <Maximize2 size={17} />}
+            </button>
+          )}
+          {activeShare && !gallery && !endedStream && (
+            <div className="screen-stage-label">
+              <MonitorUp size={14} aria-hidden="true" />
+              <span>
+                {activePublisher}'s screen
+                {state.label && activeShare.id === state.ownShareId ? ` · ${state.label}` : ''}
+              </span>
+              <strong>{live ? 'LIVE' : 'READY'}</strong>
+            </div>
+          )}
         </div>
+        <aside
+          id="screen-settings"
+          className="screen-settings"
+          aria-label="Screen share settings"
+          hidden={!settingsVisible}
+        >
+          <div className="screen-settings-header">
+            <span className="screen-header-icon" aria-hidden="true">
+              <Settings2 size={17} />
+            </span>
+            <div>
+              <strong>{state.prepared ? 'Stream settings' : 'Set up your stream'}</strong>
+              <span>Quality, sound and viewers</span>
+            </div>
+            <button
+              className="screen-settings-close"
+              aria-label="Close screen settings"
+              title="Close screen settings"
+              onClick={() => setSettingsVisible(false)}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="screen-settings-content">
+            <div className="screen-options">
+              <fieldset disabled={busy || (state.prepared && state.phase !== 'preview')}>
+                <legend>Your screen</legend>
+                <div className="screen-quality">
+                  <label>
+                    Resolution
+                    <select
+                      aria-label="Screen resolution"
+                      value={quality.resolution}
+                      onChange={(event) =>
+                        setQuality({
+                          ...quality,
+                          resolution: Number(event.target.value) as ScreenQuality['resolution'],
+                        })
+                      }
+                    >
+                      {SCREEN_RESOLUTIONS.map((value) => (
+                        <option key={value} value={value}>
+                          {value}p
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Frame rate
+                    <select
+                      aria-label="Screen frame rate"
+                      value={quality.frameRate}
+                      onChange={(event) =>
+                        setQuality({
+                          ...quality,
+                          frameRate: Number(event.target.value) as ScreenQuality['frameRate'],
+                        })
+                      }
+                    >
+                      {SCREEN_FRAME_RATES.map((value) => (
+                        <option key={value} value={value}>
+                          {value} fps
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Video cap per viewer
+                    <select
+                      aria-label="Screen video bitrate"
+                      value={quality.videoBitrate ?? 8000000}
+                      onChange={(event) =>
+                        setQuality({
+                          ...quality,
+                          videoBitrate: Number(event.target.value) as ScreenQuality['videoBitrate'],
+                        })
+                      }
+                    >
+                      {SCREEN_VIDEO_BITRATES.map((value) => (
+                        <option key={value} value={value}>
+                          {value / 1000000} Mb/s
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  Source sound
+                  <select
+                    aria-label="Screen source sound"
+                    disabled={state.prepared}
+                    value={sound}
+                    onChange={(event) => setSound(event.target.value as ScreenSound)}
+                  >
+                    <option value="none">Video only</option>
+                    {window.tricordDesktop ? (
+                      window.tricordDesktop.platform === 'win32' && (
+                        <option value="system">System sound — all applications</option>
+                      )
+                    ) : (
+                      <option value="tab">Selected browser tab sound</option>
+                    )}
+                  </select>
+                </label>
+              </fieldset>
+              {sound === 'system' && (
+                <p className="screen-help">
+                  System sound may include Rajcord and other applications. Use a separate playback
+                  route to avoid feeding the call back into your share.
+                </p>
+              )}
+              {sound === 'tab' && (
+                <p className="screen-help">
+                  Choose a browser tab and enable its audio in the browser picker.
+                </p>
+              )}
+              {!state.prepared && (
+                <button
+                  className="screen-action-primary"
+                  disabled={busy}
+                  onClick={() => {
+                    setSettingsVisible(true);
+                    run(() => controls.prepare({ ...quality, sound }));
+                  }}
+                >
+                  Prepare source
+                </button>
+              )}
+              {state.prepared && state.phase === 'ready' && (
+                <button
+                  className="screen-action-primary"
+                  onClick={() => {
+                    setSettingsVisible(true);
+                    run(controls.choose);
+                  }}
+                >
+                  Choose source
+                </button>
+              )}
+              {state.phase === 'preview' && (
+                <button
+                  className="screen-action-primary"
+                  onClick={() => {
+                    setSettingsVisible(false);
+                    run(() => controls.publish(quality));
+                  }}
+                >
+                  Start sharing
+                </button>
+              )}
+              {busy && (
+                <p role="status">
+                  {state.phase === 'choosing' ? 'Choose a source in the picker…' : 'Preparing…'}
+                </p>
+              )}
+              <p className="screen-help">
+                Resolution, frame rate and bitrate are ceilings. Actual delivery depends on the
+                source, hardware and network connection.
+              </p>
+            </div>
+            <div className="screen-settings-divider" />
+            <div className="screen-watch">
+              <div className="screen-watch-heading">
+                <strong>Available screens</strong>
+                <span>Choose a stream to watch</span>
+              </div>
+              <div className="screen-watch-quality">
+                <label>
+                  Watch resolution
+                  <select
+                    aria-label="Watch resolution"
+                    value={watchQuality.resolution}
+                    onChange={(event) =>
+                      changeWatchQuality({
+                        ...watchQuality,
+                        resolution: Number(event.target.value) as ScreenQuality['resolution'],
+                      })
+                    }
+                  >
+                    {SCREEN_RESOLUTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}p
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Watch frame rate
+                  <select
+                    aria-label="Watch frame rate"
+                    value={watchQuality.frameRate}
+                    onChange={(event) =>
+                      changeWatchQuality({
+                        ...watchQuality,
+                        frameRate: Number(event.target.value) as ScreenQuality['frameRate'],
+                      })
+                    }
+                  >
+                    {SCREEN_FRAME_RATES.map((value) => (
+                      <option key={value} value={value}>
+                        {value} fps
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Watch video cap
+                  <select
+                    aria-label="Watch video bitrate"
+                    value={watchQuality.videoBitrate ?? 4000000}
+                    onChange={(event) =>
+                      changeWatchQuality({
+                        ...watchQuality,
+                        videoBitrate: Number(event.target.value) as ScreenQuality['videoBitrate'],
+                      })
+                    }
+                  >
+                    {SCREEN_VIDEO_BITRATES.map((value) => (
+                      <option key={value} value={value}>
+                        {value / 1000000} Mb/s
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="screen-share-list" role="group" aria-label="Available screen shares">
+                {state.shares.length === 0 && <p>No one is sharing yet.</p>}
+                {state.shares.map((item) => {
+                  const ownShare = item.id === state.ownShareId;
+                  const publisher =
+                    participants.find((person) => person.id === item.publisherId)?.name ??
+                    'Participant';
+                  const watched = state.watchingShareIds.includes(item.id);
+                  return (
+                    <div key={item.id} className="screen-share-item">
+                      <MonitorUp size={16} aria-hidden="true" />
+                      <span className="screen-share-details">
+                        <strong>{ownShare ? 'Your screen' : publisher}</strong>
+                        <small>
+                          {item.resolution ?? 1080}p · {item.frameRate ?? 60} fps ·{' '}
+                          {item.sound === 'none' ? 'Video' : 'With sound'}
+                        </small>
+                      </span>
+                      <button
+                        className="screen-share-action"
+                        disabled={ownShare || !!state.selectingShareId}
+                        aria-pressed={state.watching === item.id}
+                        onClick={() => {
+                          setSettingsVisible(false);
+                          if (watched) controls.focusWatch(item.id);
+                          else run(() => controls.watch(item.id, requested(item, watchQuality)));
+                        }}
+                      >
+                        {state.selectingShareId === item.id
+                          ? 'Connecting…'
+                          : state.watching === item.id
+                            ? 'Watching'
+                            : 'Watch Stream'}
+                      </button>
+                      {!ownShare && (
+                        <button
+                          className="screen-share-multi"
+                          aria-label={
+                            watched
+                              ? `Remove ${publisher} from multi-view`
+                              : `Watch ${publisher} with multiple streams`
+                          }
+                          aria-pressed={watched}
+                          title={watched ? 'Remove from multi-view' : 'Watch multiple streams'}
+                          disabled={!!state.selectingShareId}
+                          onClick={() => {
+                            setSettingsVisible(false);
+                            if (watched) controls.stopWatchingShare(item.id);
+                            else run(() => addToMulti(item));
+                          }}
+                        >
+                          <LayoutGrid size={15} aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="screen-watch-controls">
+                <label className="screen-mute-control">
+                  <input
+                    type="checkbox"
+                    checked={state.playbackMuted}
+                    onChange={(event) => controls.mute(event.target.checked)}
+                  />
+                  Mute stream audio
+                </label>
+                <label className="screen-volume-control">
+                  Stream volume
+                  <input
+                    aria-label="Screen volume"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step=".05"
+                    value={state.playbackVolume}
+                    onChange={(event) => controls.volume(Number(event.target.value))}
+                  />
+                </label>
+                {state.watchingShareIds.length > 0 && (
+                  <>
+                    <p role="status">{state.playback}</p>
+                    <button onClick={() => run(controls.play)}>Enable playback</button>
+                    <button onClick={() => controls.stopWatching()}>Stop watching</button>
+                  </>
+                )}
+                {state.hidden && <p>Incoming screen delivery is paused while Rajcord is hidden.</p>}
+              </div>
+            </div>
+          </div>
+        </aside>
       </div>
+      <footer className="screen-call-footer">
+        <button
+          hidden={gallery}
+          className="screen-members-toggle"
+          aria-label={participantsVisible ? 'Hide members' : 'Show members'}
+          aria-expanded={participantsVisible}
+          aria-controls="screen-participants"
+          title={participantsVisible ? 'Hide Members' : 'Show Members'}
+          onClick={() => setParticipantsVisible((visible) => !visible)}
+        >
+          {participantsVisible ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+          <UsersRound size={17} />
+        </button>
+        <div
+          id="screen-participants"
+          className="screen-participant-strip"
+          role="group"
+          aria-label="Call participants"
+          hidden={!participantsVisible || gallery}
+        >
+          <div className="screen-participant-tiles">
+            {state.shares.map(renderStream)}
+            {participants.map(renderParticipant)}
+            {participants.length === 0 && state.shares.length === 0 && (
+              <p className="screen-participant-empty">Waiting for people to join the call.</p>
+            )}
+          </div>
+        </div>
+        <div className="screen-call-toolbar">
+          <div className="screen-call-control-group">
+            {call && (
+              <>
+                <button
+                  className={call.voice.muted ? 'is-muted' : ''}
+                  aria-label={call.voice.muted ? 'Unmute microphone' : 'Mute microphone'}
+                  aria-pressed={call.voice.muted}
+                  title={call.voice.muted ? 'Unmute microphone' : 'Mute microphone'}
+                  onClick={() => run(() => call.controls.mute())}
+                >
+                  {call.voice.muted ? <MicOff size={19} /> : <Mic size={19} />}
+                </button>
+                <button
+                  className={call.voice.deafened ? 'is-muted' : ''}
+                  aria-label={call.voice.deafened ? 'Enable audio' : 'Deafen'}
+                  aria-pressed={call.voice.deafened}
+                  title={call.voice.deafened ? 'Enable audio' : 'Deafen'}
+                  onClick={() => run(() => call.controls.deafen())}
+                >
+                  <Headphones size={19} />
+                </button>
+              </>
+            )}
+            <span className="screen-toolbar-divider" />
+            <button
+              className={state.phase === 'sharing' ? 'is-active' : ''}
+              aria-label={state.phase === 'sharing' ? 'Stop screen sharing' : 'Share Your Screen'}
+              title={state.phase === 'sharing' ? 'Stop sharing' : 'Share Your Screen'}
+              disabled={busy}
+              onClick={() => {
+                if (state.phase === 'sharing') controls.stopSource();
+                else if (state.phase === 'preview' || !window.tricordDesktop)
+                  setSettingsVisible(true);
+                else
+                  run(async () => {
+                    if (!state.prepared) await controls.prepare({ ...quality, sound });
+                    await controls.choose();
+                  });
+              }}
+            >
+              {state.phase === 'sharing' ? <Square size={18} /> : <MonitorUp size={19} />}
+            </button>
+            <button
+              className={settingsVisible ? 'is-active' : ''}
+              aria-label={settingsVisible ? 'Close stream settings' : 'Open stream settings'}
+              aria-pressed={settingsVisible}
+              aria-expanded={settingsVisible}
+              aria-controls="screen-settings"
+              title={settingsVisible ? 'Close stream settings' : 'Open stream settings'}
+              onClick={() => setSettingsVisible(!settingsVisible)}
+            >
+              <Settings2 size={19} />
+            </button>
+          </div>
+          <div className="screen-call-toolbar-status">
+            <span className={call?.voice.status === 'connected' ? 'is-connected' : ''} />
+            {call?.voice.status === 'connected'
+              ? 'Voice connected'
+              : call?.voice.status === 'reconnecting'
+                ? 'Reconnecting…'
+                : call?.voice.status === 'joining'
+                  ? 'Joining…'
+                  : 'Voice disconnected'}
+          </div>
+          <span className="grow" />
+          <button
+            className="screen-leave-control"
+            aria-label="Leave voice call"
+            title="Leave voice call"
+            onClick={() => {
+              if (call) run(() => call.controls.leave());
+            }}
+          >
+            <PhoneOff size={19} />
+          </button>
+          <button
+            className="screen-fullscreen-control"
+            aria-label={fullscreen ? 'Exit full screen' : 'Enter full screen'}
+            title={fullscreen ? 'Exit Full Screen' : 'Full Screen'}
+            aria-pressed={fullscreen}
+            onClick={toggleFullscreen}
+          >
+            {fullscreen ? <Minimize2 size={19} /> : <Maximize2 size={19} />}
+          </button>
+        </div>
+      </footer>
+      {participantMenu && menuParticipant && (
+        <ParticipantVolume
+          key={menuParticipant.id}
+          anchor={participantMenu.anchor}
+          participant={menuParticipant}
+          close={() => setParticipantMenu(null)}
+          volume={(value) => call?.controls.volume(menuParticipant.id, value)}
+        />
+      )}
       {(error || state.error) && (
         <p className="screen-error" role="alert">
           {error || state.error}

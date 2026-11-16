@@ -56,6 +56,8 @@ const clientPayloads: Record<string, TSchema | undefined> = {
     requestId: id,
     revision,
     shareId: nullable(id),
+    mode: optional(oneOf('replace', 'add', 'remove', 'clear')),
+    removeShareId: optional(id),
   }),
   'screen:renew': object({ epoch: id, requestId: id, revision }),
   'screen:directory': boundedRequest,

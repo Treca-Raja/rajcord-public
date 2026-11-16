@@ -25,7 +25,7 @@ export type NativeCaptureRequest = {
   userGesture: boolean;
 };
 export type PickerCaller = { webContents: object; frame: object };
-export type CaptureSource = { id: string; name: string };
+export type CaptureSource = { id: string; name: string; previewDataUrl?: string };
 export type CaptureGrant<T extends CaptureSource> = { video: T; audio?: 'loopback' };
 export type CapturePicker = {
   inspect: () => CaptureDocument | null;
@@ -210,7 +210,11 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
           s.id.length > 256 ||
           !/^(screen|window):\d+:[01]$/.test(s.id) ||
           typeof s.name !== 'string' ||
-          s.name.length > 4096,
+          s.name.length > 4096 ||
+          (s.previewDataUrl !== undefined &&
+            (typeof s.previewDataUrl !== 'string' ||
+              s.previewDataUrl.length > 500_000 ||
+              !/^data:image\/jpeg;base64,[A-Za-z0-9+/]*={0,2}$/.test(s.previewDataUrl))),
       )
     )
       throw new Error('Unsupported source list.');
@@ -237,6 +241,7 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
           .slice(0, 120)
           .join(''),
         sounds: this.sounds(p, source),
+        ...(source.previewDataUrl ? { previewDataUrl: source.previewDataUrl } : {}),
       })),
     };
   }

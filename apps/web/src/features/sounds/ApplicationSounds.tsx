@@ -113,8 +113,8 @@ export function SoundControls() {
         Preview sound
       </button>
       <small>
-        Join/leave cues for your voice channel. Uses speakers selected in Audio controls; deafen
-        silences them. Message alerts and popups are in Settings → Notifications.
+        Join/leave cues for your voice channel. Uses speakers selected in Voice & audio settings;
+        deafen silences them. Message alerts and popups are in Settings → Notifications.
       </small>
       {error && <small role="status">{error}</small>}
     </details>

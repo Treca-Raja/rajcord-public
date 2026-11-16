@@ -1,4 +1,5 @@
-// Picker-only DTOs. No raw desktop source ID, NativeImage, or frame identity crosses this bridge.
+// Picker-only DTOs. Raw IDs, NativeImage, and frame identity stay in main; bounded local previews
+// may cross this bridge as data URLs for the isolated source picker only.
 export const DESKTOP_CAPTURE_PROTOCOL_VERSION = 1;
 export type DesktopCaptureSound = 'none' | 'system';
 export type DesktopCaptureChoice = {
@@ -16,6 +17,7 @@ export type DesktopPickerSnapshot = {
     label: string;
     kind: 'screen' | 'window';
     sounds: DesktopCaptureSound[];
+    previewDataUrl?: string;
   }[];
 };
 export type DesktopCaptureCode = 'invalid' | 'not_authorized' | 'busy' | 'stale' | 'unavailable';

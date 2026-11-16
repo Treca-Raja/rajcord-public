@@ -57,7 +57,7 @@ type Slot = 'rtc' | 'playback' | 'signal' | 'cleanup';
 type LaneOptions = {
   iceServers?: readonly RTCIceServer[];
   createRtc(configuration: RTCConfiguration): ScreenRtcPeer;
-  createElement(): ScreenPlaybackElement;
+  createElement(linkId: string): ScreenPlaybackElement;
   createStream(tracks: readonly MediaStreamTrack[]): MediaStream;
   onError(error: Error): void;
   now?: () => number;
@@ -190,8 +190,8 @@ class ReceiveLane {
       addIceCandidate: (...args) => this.run('rtc', () => raw.addIceCandidate(...args)),
     };
   }
-  createElement(): ScreenPlaybackElement {
-    const raw = this.options.createElement();
+  createElement(linkId: string): ScreenPlaybackElement {
+    const raw = this.options.createElement(linkId);
     if (rawElements.has(raw) || !raw.paused || raw.srcObject !== null)
       throw error('invalid', 'Receiver requires a fresh paused empty element.');
     rawElements.add(raw);
@@ -427,7 +427,7 @@ class ReceiveLink {
       lifecycle: this.lifecycle,
       video: this.video,
       audio: this.audio ?? null,
-      createElement: () => this.lane.createElement(),
+      createElement: () => this.lane.createElement(this.options.endpoint.linkId),
       createStream: (tracks) => this.lane.createStream(tracks),
       onStopIncoming: (reason) => this.end(reason),
       onError: (cause) => this.lane.report(cause),
@@ -596,12 +596,67 @@ export type ScreenReceiveHandle = Pick<
   | 'dispose'
   | 'adoptRenewal'
 >;
-export type ScreenReceiveLane = Readonly<Pick<ReceiveLane, 'open' | 'inspect' | 'dispose'>>;
+export type ScreenReceiveLane = Readonly<{
+  open(options: ScreenReceiveOptions): ScreenReceiveHandle;
+  inspect(): Readonly<{
+    occupied: boolean;
+    activeCount: number;
+    capacity: number;
+    disposed: boolean;
+    pending: Readonly<Record<Slot, boolean>>;
+  }>;
+  dispose(): void;
+}>;
 export function createScreenReceiveLane(options: LaneOptions): ScreenReceiveLane {
-  const lane = new ReceiveLane(options);
+  const capacity = 9;
+  const lanes = new Map<string, ReceiveLane>();
+  let disposed = false;
+  const prune = () => {
+    for (const [linkId, lane] of lanes) {
+      const state = lane.inspect();
+      if (!state.occupied && !Object.values(state.pending).some(Boolean)) {
+        lane.dispose();
+        lanes.delete(linkId);
+      }
+    }
+  };
   return Object.freeze({
-    open: lane.open.bind(lane),
-    inspect: lane.inspect.bind(lane),
-    dispose: lane.dispose.bind(lane),
+    open: (request: ScreenReceiveOptions) => {
+      if (disposed) throw error('closed', 'Receive lane was disposed.');
+      prune();
+      const linkId = request.endpoint.linkId;
+      if (lanes.has(linkId)) throw error('busy', 'This screen link already has a receiver.');
+      if (lanes.size >= capacity) throw error('busy', 'The viewer stream limit has been reached.');
+      const lane = new ReceiveLane(options);
+      lanes.set(linkId, lane);
+      try {
+        return lane.open(request);
+      } catch (cause) {
+        prune();
+        throw cause;
+      }
+    },
+    inspect: () => {
+      prune();
+      const states = [...lanes.values()].map((lane) => lane.inspect());
+      const pending = Object.freeze({
+        rtc: states.some((state) => state.pending.rtc),
+        playback: states.some((state) => state.pending.playback),
+        signal: states.some((state) => state.pending.signal),
+        cleanup: states.some((state) => state.pending.cleanup),
+      });
+      return Object.freeze({
+        occupied: states.some((state) => state.occupied),
+        activeCount: states.filter((state) => state.occupied).length,
+        capacity,
+        disposed,
+        pending,
+      });
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      for (const lane of lanes.values()) lane.dispose();
+    },
   });
 }

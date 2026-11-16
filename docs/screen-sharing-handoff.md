@@ -1,6 +1,16 @@
 # Screen-sharing contributor and GPT handoff
 
-Updated 2026-11-13. Screen sharing is implemented locally on `feature/screen-sharing-completion`, continuing the pushed `feature/screen-share-design` checkpoint. It is not a production deployment, signed release, or physical/WAN performance qualification. This document supersedes the old slice-1 continuation prompt; dated evidence remains in [verification.md](verification.md).
+Updated 2026-11-16. The call redesign and account/chat polish are integrated with modularized `develop` on `feature/call-workspace-redesign`, preserving the original `feature/screen-sharing-completion` checkout. This is a feature PR candidate, not a production deployment, signed release, or physical/WAN performance qualification. This document supersedes the old slice-1 continuation prompt; dated evidence remains in [verification.md](verification.md).
+
+## Call UI continuation - 2026-11-15
+
+The 2026-11-16 continuation also fixes call join/leave navigation, retained stream audio controls, stale participant popups and retired playback errors. Account/settings recovery and chat submission/GIF/edit guards have accompanying regressions. See [integration verification](verification.md#call-redesign-integration-with-develop---2026-11-16) for current evidence and the unresolved desktop notification opt-in smoke prerequisite; the preceding [polish verification](verification.md#call-account-and-chat-polish---2026-11-16) describes the original checkout.
+
+The local redesign keeps the existing call/session/media ownership. Clicking a voice channel joins or switches muted and opens the call grid; device discovery/selection lives in Settings > Voice & audio. A compact participant popup exposes local volume on click/right-click in both the sidebar and call tiles. Saved exact device IDs are checked before a switch, and leave cancels pending discovery.
+
+The call view has a focused stream, persistent participant strip, floating controls, balanced grid, Watch Stream replacement and explicit multi-view up to nine incoming streams. The isolated desktop source chooser has Applications/Entire Screen tabs, local thumbnails and explicit source-audio consent. Browser source choice remains native. A silent local preview and explicit Start remain required. Resolution and frame rate stay independently selectable. Unsupported camera sources and paid/promotion features are not presented.
+
+Two-publisher synthetic loopback verification now covers multi-view through the original grant deadline and delayed hidden-selection cleanup, restoring every remaining stream with its quality and previous grid layout. This remains local implementation evidence; the physical/WAN and release gates below remain open. See the [redesign verification](verification.md#discord-style-call-ui---2026-11-15).
 
 ## Current continuation - 2026-11-13
 
@@ -13,7 +23,7 @@ The dedicated screen policy keeps Cloudflare STUN and prefers direct ICE. Option
 ## Implemented composition
 
 - `VoiceController.bindScreens` privately delegates the exact current lease. Copied/frozen replies, request-start deadlines, lease/generation fences and retained raw bind/retirement admission prevent stale adoption. No lease/Room/JWT getter or binding control enters VoiceControls.
-- One bootstrap-owned `ScreenRuntime` retains the capture adapter, incoming lane and binding admission across React StrictMode, session/provider replacement and suspension. A failed optional screen owner does not prevent microphone voice.
+- One bootstrap-owned `ScreenRuntime` retains the capture adapter, bounded incoming pool and binding admission across React StrictMode, session/provider replacement and suspension. A failed optional screen owner does not prevent microphone voice.
 - One dedicated cookie/CSRF-authenticated screen socket belongs to the approved session/exact binding. It does not reconnect or share AuthRoot's chat socket. Screen protocol 2 rejects older versions explicitly.
 - C1 capture preparation requires the same session, exact lease and connected S1 binding. Main derives native frame/navigation identity and independently authenticates Session.fetch with HttpOnly cookies. Renderer correlation tags and epochs confer no authority.
 - C2 publish returns a finite `{share, remainingMs}` proof; renew asserts the exact live own publication. Main promotes consumed preview authority into a distinct publication record and checks it independently. Replays retain absolute deadlines; voice heartbeats alone cannot revive publication.
