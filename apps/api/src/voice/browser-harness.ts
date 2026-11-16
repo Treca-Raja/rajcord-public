@@ -5,6 +5,21 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 export type Browser = Awaited<ReturnType<typeof launch>>;
+export async function waitForDebuggingPort(profile: string, check: () => void) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    check();
+    try {
+      const port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split(
+        '\n',
+      )[0]!;
+      if (/^\d+$/.test(port) && Number(port) > 0 && Number(port) <= 65535) return port;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await delay(100);
+  }
+  throw new Error('Test browser did not publish a valid debugging port.');
+}
 export async function launch(options: { fakeMicrophone?: boolean } = {}) {
   const profile = await mkdtemp(path.join(tmpdir(), 'tricord-voice-browser-'));
   const wav = Buffer.alloc(44 + 48000 * 2 * 4);
@@ -71,17 +86,11 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
     await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   };
   try {
-    let port = '';
-    for (let i = 0; i < 100; i++) {
+    const port = await waitForDebuggingPort(profile, () => {
       if (launchError) throw launchError;
-      try {
-        port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]!;
-        break;
-      } catch {
-        await delay(100);
-      }
-    }
-    assert.match(port, /^\d+$/);
+      if (child.exitCode !== null || child.signalCode !== null)
+        throw new Error('Test browser exited before publishing its debugging port.');
+    });
     const pages = (await (await fetch('http://127.0.0.1:' + port + '/json/list')).json()) as {
       type: string;
       webSocketDebuggerUrl: string;
