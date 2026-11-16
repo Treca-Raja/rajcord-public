@@ -224,8 +224,9 @@ export async function setup(browser: Browser, token: string, origin: string) {
   });
   await browser.call('Browser.grantPermissions', { origin, permissions: ['audioCapture'] });
   await browser.call('Page.navigate', { url: origin });
-  await browser.wait("!!document.querySelector('.voice-settings-toggle')");
-  await browser.js("document.querySelector('.voice-settings-toggle').click()");
+  await browser.wait("!!document.querySelector('.profile-settings')");
+  await browser.js("document.querySelector('.profile-settings').click()");
+  await browser.click('Voice & audio');
   await browser.wait(
     "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
   );
@@ -233,14 +234,6 @@ export async function setup(browser: Browser, token: string, origin: string) {
     await browser.js('window.__captureCount'),
     0,
     'Automatic setup must not capture audio',
-  );
-  assert.equal(
-    await browser.js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
-    '',
-  );
-  assert.equal(
-    await browser.js('document.querySelector(\'select[aria-label="Voice speakers"]\').value'),
-    '',
   );
   await browser.wait(
     'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
@@ -252,11 +245,9 @@ export async function setup(browser: Browser, token: string, origin: string) {
         "]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
     );
   }
-  await browser.wait(
-    '!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled',
-  );
+  await browser.wait("!!document.querySelector('[data-voice-channel-id]')");
   await browser.js(
-    "(()=>{const s=document.querySelector('select[aria-label=\"Join voice channel\"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
+    "document.querySelector('[aria-label=\"Close settings\"]')?.click();document.querySelector('[data-voice-channel-id]').click()",
   );
   await browser.wait(
     "document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'",

@@ -113,7 +113,15 @@ export function GifSearch({
   const [failedPreviews, setFailedPreviews] = useState(new Set<string>());
   const generation = useRef(0),
     input = useRef<HTMLInputElement>(null);
+  const lifetime = useRef(0);
   const selected = providers.find((entry) => entry.id === provider);
+  useEffect(() => {
+    const started = ++lifetime.current;
+    setSending(null);
+    return () => {
+      lifetime.current = started + 1;
+    };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     input.current?.focus();
@@ -123,6 +131,7 @@ export function GifSearch({
     void requestRef
       .current<GifProvidersResponse>('/gifs/providers', 'GET', undefined, controller.signal)
       .then((result) => {
+        if (controller.signal.aborted) return;
         setProviders(result.providers);
         setProvider((previous) => {
           if (result.providers.some((entry) => entry.id === previous && entry.enabled))
@@ -152,7 +161,11 @@ export function GifSearch({
     return () => clearTimeout(timer);
   }, [consent, open, query, committed]);
   useEffect(() => {
-    if (!open || !consent || committed.trim().length < 2 || !selected?.enabled) return;
+    if (!open || !consent || committed.trim().length < 2 || !selected?.enabled) {
+      setBusy(false);
+      setPage(null);
+      return;
+    }
     const controller = new AbortController();
     const version = ++generation.current;
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(6000)]);
@@ -184,16 +197,17 @@ export function GifSearch({
     };
   }, [open, consent, committed, cursor, selected, revision, provider, providerName]);
   async function send(item: GifSearchResult) {
-    if (sending) return;
+    if (!open || sending) return;
+    const current = lifetime.current;
     setSending(item.id);
     setError('');
     try {
       await onSend(item.url);
-      onClose();
+      if (current === lifetime.current) onClose();
     } catch (cause) {
-      setError((cause as Error).message);
+      if (current === lifetime.current) setError((cause as Error).message);
     } finally {
-      setSending(null);
+      if (current === lifetime.current) setSending(null);
     }
   }
   return (
@@ -290,7 +304,14 @@ export function GifSearch({
             placeholder={'Search ' + providerName}
             value={query}
             maxLength={provider === 'klipy' ? 80 : 50}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setQuery(next);
+              if (next.trim().length < 2) {
+                setCommitted(next);
+                setCursor(null);
+              }
+            }}
           />
           <button
             type="submit"
@@ -320,6 +341,8 @@ export function GifSearch({
               previews. Search terms and preview requests go to {providerName}.
             </p>
           </div>
+        ) : committed.trim().length < 2 ? (
+          <p role="status">Type at least two characters to search.</p>
         ) : null}
         {busy && (
           <div className="gif-search-loading" role="status">

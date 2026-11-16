@@ -131,20 +131,20 @@ it.each(['none', 'tab', 'three'] as const)(
       ).toBe(true);
       expect(
         await b.js(
-          "[...document.querySelectorAll('.screen-watch button')].some(button=>button.textContent.includes('Screen owner'))",
+          "[...document.querySelectorAll('.screen-share-item')].some(item=>item.textContent.includes('Screen owner'))",
         ),
       ).toBe(false);
       await a.click('Start sharing');
       await a.wait("document.querySelector('#screen-panel')?.dataset.phase==='sharing'");
       await b.wait(
-        "[...document.querySelectorAll('.screen-watch button')].some(button=>button.textContent.includes('Screen owner'))",
+        "[...document.querySelectorAll('.screen-share-item')].some(item=>item.textContent.includes('Screen owner'))",
       );
       await choose(b, 'Watch resolution', '720');
       await choose(b, 'Watch frame rate', '30');
       await choose(b, 'Watch video bitrate', '2000000');
       await b.js("document.querySelector('.screen-watch input[type=checkbox]').click()");
       await b.js(
-        "[...document.querySelectorAll('.screen-watch button')].find(button=>button.textContent.includes('Screen owner')).click()",
+        "[...document.querySelectorAll('.screen-share-item')].find(item=>item.textContent.includes('Screen owner')).querySelector('.screen-share-action').click()",
       );
       await b.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
       await a.wait("document.querySelector('.screen-status').textContent.includes('1 viewers')");
@@ -181,15 +181,39 @@ it.each(['none', 'tab', 'three'] as const)(
       if (sound === 'three') {
         for (const browser of browsers.slice(2)) {
           await browser.wait(
-            "[...document.querySelectorAll('.screen-watch button')].some(button=>button.textContent.includes('Screen owner'))",
+            "[...document.querySelectorAll('.screen-share-item')].some(item=>item.textContent.includes('Screen owner'))",
           );
           await browser.js("document.querySelector('.screen-watch input[type=checkbox]').click()");
           await browser.js(
-            "[...document.querySelectorAll('.screen-watch button')].find(button=>button.textContent.includes('Screen owner')).click()",
+            "[...document.querySelectorAll('.screen-share-item')].find(item=>item.textContent.includes('Screen owner')).querySelector('.screen-share-action').click()",
           );
           await browser.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
         }
         await a.wait("document.querySelector('.screen-status').textContent.includes('3 viewers')");
+        const secondPublisher = browsers[2]!;
+        await secondPublisher.js(
+          'document.querySelector(\'[aria-label="Open stream settings"]\').click()',
+        );
+        await secondPublisher.click('Prepare source');
+        await secondPublisher.wait(
+          "document.querySelector('#screen-panel')?.dataset.prepared==='true'",
+        );
+        await secondPublisher.click('Choose source');
+        await secondPublisher.wait(
+          "document.querySelector('#screen-panel')?.dataset.phase==='preview'",
+        );
+        expect(
+          await secondPublisher.js("!document.querySelector('.screen-local-tile').hidden"),
+        ).toBe(true);
+        await secondPublisher.click('Start sharing');
+        await b.wait("document.querySelectorAll('.screen-share-item').length===2");
+        await b.js(
+          "[...document.querySelectorAll('.screen-share-item')].find(item=>item.textContent.includes('Screen viewer 2')).querySelector('.screen-share-multi').click()",
+        );
+        await b.wait(
+          "document.querySelectorAll('[data-screen-playback]').length===2 && [...document.querySelectorAll('[data-screen-playback]')].every(video=>video.videoWidth>0)",
+        );
+        expect(await b.js("document.querySelector('#screen-panel').dataset.layout")).toBe('grid');
       }
       const shareId = server.voice!.leases.get(publisher.auth.user.id)!.id;
       const beforeRenewals = new Map(renewals);
@@ -233,6 +257,16 @@ it.each(['none', 'tab', 'three'] as const)(
       await mkdir(artifacts, { recursive: true });
       const screenshot = (await b.call('Page.captureScreenshot')) as { data: string };
       await writeFile(artifacts + '/screen-sharing-ui.png', Buffer.from(screenshot.data, 'base64'));
+      if (sound === 'three') {
+        await b.wait(
+          "document.querySelectorAll('[data-screen-playback]').length===2 && [...document.querySelectorAll('[data-screen-playback]')].every(video=>video.videoWidth>0)",
+        );
+        expect(await b.js("document.querySelector('#screen-panel').dataset.layout")).toBe('grid');
+        await browsers[2]!.js(
+          'document.querySelector(\'[aria-label="Stop screen sharing"]\').click()',
+        );
+        await b.wait("document.querySelectorAll('[data-screen-playback]').length===1");
+      }
       await a.js('document.querySelector(\'[aria-label="Stop screen sharing"]\').click()');
       expect(
         await a.js("window.__screenTest.tracks.every(track=>track.readyState==='ended')"),

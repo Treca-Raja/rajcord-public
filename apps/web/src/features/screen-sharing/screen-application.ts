@@ -11,18 +11,18 @@ export function createScreenApplication() {
     desktop: !!window.tricordDesktop,
     tabAudio: 'consented-selected-tab',
   });
-  const elements = new Set<(element: HTMLVideoElement) => void>();
+  const elements = new Set<(element: HTMLVideoElement, linkId: string) => void>();
   const incoming = createScreenReceiveLane({
     iceServers: publicScreenIceServers,
     createRtc: (config) => new RTCPeerConnection(config),
     createStream: (tracks) => new MediaStream([...tracks]),
-    createElement: () => {
+    createElement: (linkId) => {
       const element = document.createElement('video');
       element.playsInline = true;
       element.muted = true;
       element.dataset.screenPlayback = 'true';
       element.setAttribute('aria-label', 'Shared screen');
-      for (const listener of elements) listener(element);
+      for (const listener of elements) listener(element, linkId);
       return element;
     },
     onError: (error) => console.error('Screen playback failed:', error.message),

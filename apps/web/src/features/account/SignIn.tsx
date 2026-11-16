@@ -1,5 +1,5 @@
 import { runInBackground } from '../../shared/background';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import type { AuthState } from '@tricord/shared';
 import { AppearanceBrand } from '../appearance';
 import { api, apiContract } from './context';
@@ -8,8 +8,11 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState('');
+  const submitting = useRef(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     setError('');
     const form = new FormData(event.currentTarget);
@@ -36,6 +39,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
@@ -115,6 +119,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (state: AuthState) => void 
         <p className="auth-switch">
           {register ? 'Already part of the group?' : 'New around here?'}{' '}
           <button
+            disabled={busy}
             onClick={() => {
               setRegister(!register);
               setError('');

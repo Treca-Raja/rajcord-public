@@ -1,8 +1,31 @@
 import { expect, it } from 'vitest';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { launch } from '../../../api/src/voice/browser-harness';
 import { previewFixture } from './call-preview-fixture.integration';
+
+it('does not restore a session from verification completed after successful logout', async () => {
+  await mountedFixture(async (browser) => {
+    await browser.wait('!!window.fixture?.call && fixture.active===1');
+    await browser.js("fixture.observe(fixture.auth.logout(),'logoutResult')");
+    await browser.wait('fixture.logouts.length===1');
+    await browser.js('fixture.holdMe=true;void fixture.auth.refresh()');
+    await browser.wait('!!fixture.me');
+    await browser.js('fixture.server=null;fixture.respond(fixture.logouts[0],{ok:true})');
+    await browser.wait("!!document.querySelector('[name=password]')");
+    await browser.js('fixture.respond(fixture.me,fixture.state())');
+    await browser.js(
+      'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+    );
+    expect(
+      await browser.js(
+        "({signedOut:!!document.querySelector('[name=password]'),active:fixture.active,calls:fixture.calls.map(c=>c.path)})",
+      ),
+    ).toMatchObject({ signedOut: true, active: 0 });
+    expect(await browser.js('fixture.errors')).toEqual([]);
+  });
+});
 
 const runtimeFixture = previewFixture
   .replace(
@@ -520,6 +543,9 @@ window.fetch=async(path,options={})=>{
  if(path==='/api/auth/logout'){const d=deferred();f.logouts.push(d);return d.promise}
  if(path==='/api/voice/join'){const d=deferred();f.joins.push(d);return d.promise}
  if(path==='/api/voice/channels') return response({channels:[]});
+ if(path==='/api/account/sessions') return response({sessions:[]});
+ if(path==='/api/admin/accounts') return response({users:[]});
+ if(path==='/api/admin/history') return response({history:[]});
  return response({ok:true});
 };
 f.respond=(d,value,status=200)=>d.resolve(response(value,status));
@@ -552,7 +578,7 @@ async function mountedFixture(
             if (request.url !== '/') return next();
             response.setHeader('Content-Type', 'text/html');
             response.end(
-              '<div id="root"></div><script type="module" src="/__call-fixture.js"></script>',
+              '<meta name="viewport" content="width=device-width, initial-scale=1"><div id="root"></div><script type="module" src="/__call-fixture.js"></script>',
             );
           });
         },
@@ -574,6 +600,9 @@ async function mountedFixture(
           if(f.me)f.respond(f.me,{error:'Fixture closed'},401);
           f.joins.forEach(d=>f.respond(d,{error:'Fixture closed'},503));
           f.logouts.forEach(d=>f.respond(d,{error:'Fixture closed'},503));
+          f.settingsRequests?.forEach(d=>f.respond(d,{sessions:[]}));
+          f.accountSaves?.forEach(d=>f.respond(d,{error:'Fixture closed'},503));
+          f.logins?.forEach(d=>f.respond(d,{error:'Fixture closed'},503));
           f.captures.forEach(capture=>f.finishCapture(capture));
           f.enumerations.forEach(enumeration=>enumeration.resolve([]));
           f.drainPreview?.();
@@ -590,10 +619,7 @@ async function mountedFixture(
 }
 
 async function audioControls(browser: Awaited<ReturnType<typeof launch>>) {
-  await browser.wait("!!document.querySelector('.voice-settings-toggle')");
-  await browser.js(
-    "if(!document.querySelector('[aria-label=\"Voice microphone\"]'))document.querySelector('.voice-settings-toggle').click()",
-  );
+  await browser.js("fixture.auth.openSettings('voice')");
   await browser.wait('!!document.querySelector(\'[aria-label="Voice microphone"]\')');
 }
 
@@ -633,11 +659,11 @@ it('opens audio inventory without capture and routes the master level through th
     await browser.wait("fixture.call.voice.devicesStatus==='ready'");
     expect(
       await browser.js(
-        "[...document.querySelectorAll('.voice-controls select')].slice(0,2).map(select=>select.value)",
+        "[...document.querySelectorAll('.voice-preferences select')].slice(0,2).map(select=>select.value)",
       ),
     ).toEqual(['', '']);
     expect(
-      await browser.js('document.querySelector(\'[aria-label="Join voice channel"]\').disabled'),
+      await browser.js('fixture.call.voice.inputMissing && fixture.call.voice.outputMissing'),
     ).toBe(true);
     await browser.js(
       "for(const [label,id] of [['Voice microphone','mic'],['Voice speakers','speaker']]){const select=document.querySelector('[aria-label=\"'+label+'\"]');select.value=id;select.dispatchEvent(new Event('change',{bubbles:true}))}",
@@ -710,12 +736,12 @@ it('panel remount preserves the discovered visible selections without opening de
     await audioControls(browser);
     expect(
       await browser.js(
-        "[...document.querySelectorAll('.voice-controls select')].slice(0,2).map(s=>s.value)",
+        "[...document.querySelectorAll('.voice-preferences select')].slice(0,2).map(s=>s.value)",
       ),
     ).toEqual(['owned-mic', 'owned-output']);
     expect(
       await browser.js(
-        "[...document.querySelectorAll('.voice-controls select')].slice(0,2).map(s=>s.selectedOptions[0].textContent)",
+        "[...document.querySelectorAll('.voice-preferences select')].slice(0,2).map(s=>s.selectedOptions[0].textContent)",
       ),
     ).toEqual(['Owned synthetic microphone', 'Owned synthetic speakers']);
     expect(
@@ -1149,7 +1175,7 @@ it('owns one approved-session call across actual React mounts, logout, replaceme
     await browser.wait("!!document.querySelector('.voice-panel')");
     expect(await browser.js('fixture.created')).toBe(created);
     expect(await browser.js('Object.keys(fixture.call.controls).sort().join(",")')).toBe(
-      'deafen,devices,join,leave,mute,refreshDevices,resumeAudio,selectInput,selectOutput,setOutputVolume,volume',
+      'deafen,devices,join,joinChannel,leave,mute,refreshDevices,resumeAudio,selectInput,selectOutput,setOutputVolume,volume',
     );
     expect(
       await browser.js(
@@ -1285,3 +1311,648 @@ it('owns one approved-session call across actual React mounts, logout, replaceme
     expect(await browser.js('fixture.errors')).toEqual([]);
   });
 }, 60_000);
+
+const channelFixture =
+  fixture
+    .replace('import { createElement', "import '/src/app/styles.ts';\nimport { createElement")
+    .replace(
+      'return panel?h(VoicePanel)',
+      "return panel?h('aside',{className:'sidebar',style:{width:340,height:'100vh'}},h(VoicePanel))",
+    )
+    .replace(
+      'import { VoicePanel }',
+      "import { VoiceController } from '/src/features/voice/voice-controller.ts';\nimport { VoicePanel }",
+    )
+    .replace(
+      'channels:[]',
+      "channels:[{id:'lounge',name:'The lounge',participants:[]},{id:'games',name:'Games',participants:[]}]",
+    ) +
+  `
+f.channelJoins=[];
+VoiceController.prototype.join=async function(id){ f.channelJoins.push(id);f.channelController=this;this.update({status:'connected',channelId:id,muted:true,participants:[{id:'account',name:'Fixture',muted:true,speaking:false,volume:1},{id:'friend',name:'Friend',muted:false,speaking:true,volume:1}]}); };
+VoiceController.prototype.volume=function(id,volume){ this.update({participants:this.state.participants.map(p=>p.id===id?{...p,volume}:p)}); };
+`;
+it('joins and switches with channel clicks, keeps device settings separate and exposes participant volume on click/right-click', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait("!!document.querySelector('[data-voice-channel-id=lounge]')");
+      expect(
+        await browser.js('!!document.querySelector(\'[aria-label="Voice microphone"]\')'),
+      ).toBe(false);
+      await browser.js(
+        "fixture.deviceList=[{kind:'audioinput',deviceId:'mic',label:'Microphone',groupId:'m'},{kind:'audioinput',deviceId:'default',groupId:'m',label:'Synthetic device'},{kind:'audiooutput',deviceId:'speaker',label:'Speakers',groupId:'s'},{kind:'audiooutput',deviceId:'default',groupId:'s',label:'Synthetic device'}];document.querySelector('[data-voice-channel-id=lounge]').click()",
+      );
+      await browser.wait('fixture.captureCalls===1');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait("fixture.call.voice.channelId==='lounge'");
+      expect(
+        await browser.js(
+          "fixture.call.voice.muted && fixture.call.voice.input==='mic' && fixture.call.voice.output==='speaker'",
+        ),
+      ).toBe(true);
+      expect(await browser.js("!!document.querySelector('.voice-controls')")).toBe(false);
+      await browser.js("document.querySelector('.voice-member:not([disabled])').click()");
+      await browser.wait("!!document.querySelector('.voice-participant-popup input')");
+      await browser.js(
+        "(()=>{const s=document.querySelector('.voice-participant-popup input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(s,'0.25');s.dispatchEvent(new Event('input',{bubbles:true}));s.dispatchEvent(new Event('change',{bubbles:true}))})()",
+      );
+      await browser.wait("fixture.call.voice.participants.find(p=>p.id==='friend').volume===.25");
+      await browser.call('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Escape',
+        code: 'Escape',
+      });
+      await browser.wait("!document.querySelector('.voice-participant-popup')");
+      await browser.js(
+        "document.querySelector('.voice-member:not([disabled])').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))",
+      );
+      await browser.wait("!!document.querySelector('.voice-participant-popup input')");
+      const shot = await browser.call('Page.captureScreenshot', { format: 'png' });
+      await mkdir('artifacts', { recursive: true });
+      await writeFile('artifacts/voice-sidebar.png', Buffer.from(shot.data as string, 'base64'));
+      await browser.js(
+        "document.querySelector('[aria-label=\"Close user volume\"]').click();document.querySelector('[data-voice-channel-id=games]').click()",
+      );
+      await browser.wait('fixture.captureCalls===2');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait("fixture.call.voice.channelId==='games'");
+      expect(await browser.js('fixture.channelJoins')).toEqual(['lounge', 'games']);
+      await browser.js("fixture.auth.openSettings('voice')");
+      await browser.wait("!!document.querySelector('.voice-preferences select')");
+      expect(
+        await browser.js('document.querySelector(\'[aria-label="Voice microphone"]\').value'),
+      ).toBe('mic');
+      await browser.js(
+        "document.querySelector('[aria-label=\"Close settings\"]').click();fixture.deviceList=fixture.deviceList.filter(d=>d.deviceId!=='mic');document.querySelector('[data-voice-channel-id=lounge]').click()",
+      );
+      await browser.wait('fixture.captureCalls===3');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait("document.body.textContent.includes('unavailable')");
+      expect(await browser.js('fixture.channelJoins')).toEqual(['lounge', 'games']);
+      expect(await browser.js('fixture.call.voice.channelId')).toBe('games');
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    channelFixture,
+  );
+});
+it('leaving during discovery cancels the channel switch before it can rejoin', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call');
+      await browser.js(
+        "fixture.deviceList=[{kind:'audioinput',deviceId:'mic',label:'Synthetic device',groupId:'m'},{kind:'audiooutput',deviceId:'speaker',label:'Synthetic device',groupId:'s'}];fixture.observe(fixture.call.controls.joinChannel('lounge'),'attempt')",
+      );
+      await browser.wait('fixture.captureCalls===1');
+      await browser.js('fixture.call.controls.leave();fixture.finishCapture()');
+      await browser.wait("fixture.attempt==='Voice channel change cancelled.'");
+      expect(await browser.js('fixture.channelJoins')).toEqual([]);
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    channelFixture,
+  );
+});
+
+const screenUiFixture = channelFixture
+  .replace(
+    'import { VoicePanel }',
+    "import { ScreenPanel } from '/src/features/screen-sharing/ScreenPanel.tsx';\nimport { VoicePanel }",
+  )
+  .replace(
+    "h('aside',{className:'sidebar',style:{width:340,height:'100vh'}},h(VoicePanel))",
+    "h('div',{className:'fixture-shell live-shell screen-call-open'},h('aside',{className:'sidebar'},h(VoicePanel)),h('main',{className:'chat'},h(ScreenPanel,{voiceChannels:[{id:'lounge',name:'The lounge'}]})))",
+  )
+  .replace('h(AuthRoot,null,h(View))', 'h(AuthRoot,{screenApplication:application},h(View))')
+  .replace(
+    'f.mount();',
+    `
+const style=document.createElement('style');style.textContent='.fixture-shell.live-shell{display:grid;height:100vh;grid-template-columns:260px minmax(0,1fr)}.fixture-shell .chat{position:relative;min-height:0}@media(max-width:750px){.fixture-shell.live-shell{grid-template-columns:minmax(0,1fr)}.fixture-shell>.sidebar{display:none}}';document.head.append(style);
+const shares=[{id:'first',publisherId:'friend',resolution:1080,frameRate:60,sound:'none'},{id:'second',publisherId:'other',resolution:720,frameRate:30,sound:'none'}];
+let screenState={phase:'ready',error:'',shares,watching:'first',watchingShareIds:['first'],selectingShareId:null,layout:'focus',playback:'Playing',playbackMuted:false,playbackVolume:1,hidden:false,label:'',viewers:0,open:true,prepared:false,ownShareId:null};
+const screenListeners=new Set();let screenHost;
+const poster=(name,color)=>{const canvas=document.createElement('canvas');canvas.width=1280;canvas.height=720;const ctx=canvas.getContext('2d');const gradient=ctx.createLinearGradient(0,0,1280,720);gradient.addColorStop(0,color);gradient.addColorStop(1,'#101116');ctx.fillStyle=gradient;ctx.fillRect(0,0,1280,720);ctx.fillStyle='#ffffff';ctx.font='40px sans-serif';ctx.fillText(name,70,350);return canvas.toDataURL()};
+const renderScreens=()=>{if(!screenHost)return;screenHost.replaceChildren();screenHost.dataset.layout=screenState.layout;for(const id of screenState.watchingShareIds){const tile=document.createElement('div');tile.className='screen-incoming-tile';tile.dataset.screenShareId=id;tile.dataset.focused=String(screenState.watching===id);tile.tabIndex=0;tile.setAttribute('role','button');const video=document.createElement('video');video.poster=poster(id==='first'?'SYNTHETIC DESIGN PREVIEW':'SECOND SYNTHETIC STREAM',id==='first'?'#385b63':'#654865');const label=document.createElement('span');label.className='screen-incoming-label';label.textContent=id==='first'?"Friend's screen":"Participant's screen";tile.append(video,label);screenHost.append(tile)}};
+f.screenSet=patch=>{screenState={...screenState,...patch};renderScreens();for(const fn of screenListeners)fn()};
+f.screenActions=[];
+f.screens={inspect:()=>screenState,subscribe:fn=>{screenListeners.add(fn);return ()=>screenListeners.delete(fn)},connect:async()=>{},open:async(setupRequested=false)=>f.screenSet({open:true,setupRequested}),close:()=>f.screenSet({open:false}),preview:()=>()=>{},incoming:host=>{screenHost=host;renderScreens();return ()=>{if(screenHost===host)screenHost=undefined}},
+watch:async(id)=>{f.screenActions.push(['replace',id]);f.screenSet({watching:id,watchingShareIds:[id],layout:'focus'})},
+watchMultiple:async(id)=>{f.screenActions.push(['add',id]);f.screenSet({watching:id,watchingShareIds:[...new Set([...screenState.watchingShareIds,id])],layout:'focus'})},
+focusWatch:id=>{f.screenActions.push(['focus',id]);f.screenSet({watching:id,layout:'focus'})},zoomOutWatch:()=>f.screenSet({layout:'grid'}),
+stopWatchingShare:id=>f.screenSet({watchingShareIds:screenState.watchingShareIds.filter(item=>item!==id),watching:screenState.watchingShareIds.find(item=>item!==id)??null}),stopWatching:()=>f.screenSet({watching:null,watchingShareIds:[]}),stopSource:()=>{},prepare:async()=>{},choose:async()=>{},publish:async()=>{},play:async()=>{},mute:value=>f.screenSet({playbackMuted:value}),volume:value=>f.screenSet({playbackVolume:value})};
+const application={runtime:{attachCall:()=>({connectVoice:()=>{},stop:()=>{},release:()=>{}})},createCall:()=>({controls:()=>f.screens,observeVoice:()=>{},stopSource:()=>{},stopWatching:()=>{},dispose:()=>{}})};
+f.mount();`,
+  );
+
+it('shows the whole call in a balanced grid, switches streams, adds multi-view, and opens participant volume from call tiles', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: 1440,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await browser.wait(
+        '!!window.fixture?.call?.screens && !!document.querySelector(".screen-incoming-tile")',
+      );
+      await browser.js("fixture.call.controls.join('lounge')");
+      await browser.js(
+        "fixture.channelController.update({participants:[...fixture.call.voice.participants,{id:'other',name:'Other',muted:false,speaking:false,volume:1}]})",
+      );
+      await browser.wait("document.querySelectorAll('.screen-participant-tile').length===3");
+      await browser.js("document.querySelector('.screen-incoming-tile').click()");
+      await browser.wait(
+        "document.querySelector('.screen-panel').dataset.layout==='grid' && document.querySelector('.screen-participant-strip').hidden",
+      );
+      await browser.wait(
+        "[...document.querySelectorAll('.screen-media .screen-participant-tile')].every(e=>e.getBoundingClientRect().width>200)",
+      );
+      const geometry = await browser.js(
+        `(()=>{const host=document.querySelector('.screen-media').getBoundingClientRect();const tiles=[...document.querySelectorAll('.screen-media .screen-incoming-tile,.screen-media .screen-stream-tile,.screen-media .screen-participant-tile')].map(e=>e.getBoundingClientRect());return {count:tiles.length,lastCentered:Math.abs((tiles.at(-1).left+tiles.at(-1).right)/2-(host.left+host.right)/2)<2,inside:tiles.every(r=>r.left>=host.left-1&&r.right<=host.right+1&&r.top>=host.top-1&&r.bottom<=host.bottom+1),overlap:tiles.some((a,i)=>tiles.slice(i+1).some(b=>a.left<b.right-1&&a.right>b.left+1&&a.top<b.bottom-1&&a.bottom>b.top+1))}})()`,
+      );
+      await saveCallScreenshot(browser, 'grid-geometry');
+      expect(geometry).toEqual({ count: 5, lastCentered: true, inside: true, overlap: false });
+      await browser.js(
+        "document.querySelector('.screen-media [data-share-id=second] .screen-stream-multi').click()",
+      );
+      await browser.wait(
+        "fixture.screens.inspect().watchingShareIds.length===2 && document.querySelector('.screen-panel').dataset.layout==='grid'",
+      );
+      expect(await browser.js('fixture.screenActions')).toContainEqual(['add', 'second']);
+      await browser.js(
+        "document.querySelector('.screen-incoming-tile[data-screen-share-id=first]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}))",
+      );
+      await browser.wait("document.querySelector('.screen-panel').dataset.layout==='focus'");
+      expect(await browser.js('fixture.screens.inspect().watchingShareIds.length')).toBe(2);
+      await browser.js(
+        "document.querySelector('.screen-participant-tile:not([disabled])').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))",
+      );
+      await browser.wait("!!document.querySelector('.voice-participant-popup input')");
+      expect(
+        await browser.js(
+          "document.activeElement===document.querySelector('.voice-participant-popup input')",
+        ),
+      ).toBe(true);
+      await browser.call('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Escape',
+        code: 'Escape',
+      });
+      await browser.wait("!document.querySelector('.voice-participant-popup')");
+      // The participant strip survives idle controls; keyboard focus keeps toolbar controls visible.
+      await browser.js("document.querySelector('.screen-panel').classList.add('controls-hidden')");
+      expect(
+        await browser.js(
+          "getComputedStyle(document.querySelector('.screen-participant-strip')).opacity",
+        ),
+      ).toBe('1');
+      await browser.js(
+        "document.querySelector('.screen-panel').classList.remove('controls-hidden')",
+      );
+      expect(
+        await browser.js(
+          "[...document.querySelectorAll('.screen-stream-thumbnail')].every(video=>video.muted)",
+        ),
+      ).toBe(true);
+      await saveCallScreenshot(browser, 'focused');
+      await browser.js('fixture.screens.zoomOutWatch()');
+      await browser.wait("document.querySelector('.screen-panel').dataset.layout==='grid'");
+      await saveCallScreenshot(browser, 'grid');
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await browser.wait(
+        "document.querySelector('.screen-media').getBoundingClientRect().width<400",
+      );
+      await browser.wait(
+        "[...document.querySelectorAll('.screen-media .screen-participant-tile')].every(e=>e.getBoundingClientRect().right<=390)",
+      );
+      expect(await browser.js('document.documentElement.scrollWidth<=390')).toBe(true);
+      await saveCallScreenshot(browser, 'mobile');
+      expect(await browser.js('fixture.captureCalls')).toBe(0);
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    screenUiFixture,
+  );
+});
+
+it('replaces a watched stream on Watch Stream and shows an ended state when the publisher disappears', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait(
+        '!!window.fixture?.call?.screens && !!document.querySelector(".screen-stream-tile[data-share-id=second]")',
+      );
+      await browser.js(
+        "fixture.call.controls.join('lounge');document.querySelector('[data-share-id=second] .screen-stream-watch').click()",
+      );
+      await browser.wait("fixture.screens.inspect().watching==='second'");
+      expect(await browser.js('fixture.screens.inspect().watchingShareIds')).toEqual(['second']);
+      expect(await browser.js('fixture.screenActions')).toContainEqual(['replace', 'second']);
+      await browser.js(
+        "fixture.screenSet({shares:fixture.screens.inspect().shares.filter(s=>s.id!=='second'),watching:null,watchingShareIds:[]})",
+      );
+      await browser.wait("document.body.textContent.includes('This stream has ended.')");
+      expect(
+        await browser.js("document.querySelector('.screen-stage-ended').textContent"),
+      ).toContain('Participant');
+      await browser.click('Close Stream');
+      await browser.wait("document.querySelector('.screen-panel').dataset.layout==='grid'");
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    screenUiFixture,
+  );
+});
+
+it('resets fullscreen controls when the call closes and reopens', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.screens && !!document.querySelector(".screen-panel")');
+      await browser.js(`fixture.fullscreen=document.querySelector('.screen-panel');
+      Object.defineProperty(document,'fullscreenElement',{configurable:true,get:()=>fixture.fullscreen});
+      document.dispatchEvent(new Event('fullscreenchange'))`);
+      await browser.wait('!!document.querySelector(\'[aria-label="Exit full screen"]\')');
+      await browser.js('fixture.screens.close()');
+      await browser.wait('!document.querySelector(".screen-panel")');
+      await browser.js(
+        "fixture.fullscreen=null;document.dispatchEvent(new Event('fullscreenchange'));fixture.screens.open()",
+      );
+      await browser.wait('!!document.querySelector(\'[aria-label="Enter full screen"]\')');
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    screenUiFixture,
+  );
+});
+
+async function saveCallScreenshot(browser: Awaited<ReturnType<typeof launch>>, name: string) {
+  await browser.js(
+    '(async()=>{await document.fonts.ready;await Promise.all(document.getAnimations().map(a=>a.finished.catch(()=>{})))})()',
+  );
+  const shot = await browser.call('Page.captureScreenshot', { format: 'png' });
+  await mkdir('artifacts', { recursive: true });
+  await writeFile(
+    'artifacts/screen-call-' + name + '.png',
+    Buffer.from(shot.data as string, 'base64'),
+  );
+}
+
+it('opens the call grid on a voice-channel click and opens source setup only on Share Your Screen', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call?.screens');
+      await browser.js(
+        "fixture.screenSet({open:false,watching:null,watchingShareIds:[]});fixture.deviceList=[{kind:'audioinput',deviceId:'mic',label:'Synthetic device',groupId:'m'},{kind:'audiooutput',deviceId:'speaker',label:'Synthetic device',groupId:'s'}];document.querySelector('[data-voice-channel-id=lounge]').click()",
+      );
+      await browser.wait('fixture.captureCalls===1');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait("document.querySelector('#screen-panel')?.dataset.layout==='grid'");
+      expect(await browser.js("document.querySelector('#screen-settings').hidden")).toBe(true);
+      await browser.js(
+        'document.querySelector(\'.screen-call-toolbar [aria-label="Share Your Screen"]\').click()',
+      );
+      await browser.wait("!document.querySelector('#screen-settings').hidden");
+      await browser.js(
+        "document.querySelector('[aria-label=\"Back to chat\"]').click();document.querySelector('[data-voice-channel-id=lounge]').click()",
+      );
+      await browser.wait("document.querySelector('#screen-settings')?.hidden===true");
+      expect(await browser.js('fixture.captureCalls')).toBe(1);
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    screenUiFixture,
+  );
+});
+
+it('keeps chat visible after a failed voice join and returns to chat on leave', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call?.screens');
+      await browser.js(
+        "fixture.screenSet({open:false,watching:null,watchingShareIds:[]});fixture.deviceList=[{kind:'audioinput',deviceId:'mic',label:'Synthetic device'},{kind:'audiooutput',deviceId:'speaker',label:'Synthetic device'}];fixture.channelController=undefined;document.querySelector('[data-voice-channel-id=lounge]').click()",
+      );
+      await browser.wait('fixture.captureCalls===1');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait("document.body.textContent.includes('Synthetic join rejected')");
+      expect(await browser.js('fixture.screens.inspect().open')).toBe(false);
+      await browser.js(
+        "fixture.rejectJoin=false;document.querySelector('[data-voice-channel-id=lounge]').click()",
+      );
+      await browser.wait('fixture.captureCalls===2');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait("!!document.querySelector('#screen-panel')");
+      await browser.js(`document.querySelector('[aria-label="Leave voice call"]').click()`);
+      await browser.wait("fixture.call.voice.status==='idle'");
+      expect(await browser.js('fixture.screens.inspect().open')).toBe(false);
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    screenUiFixture.replace(
+      'f.channelJoins.push(id);f.channelController=this;',
+      "f.channelJoins.push(id);f.channelController=this;if(f.rejectJoin!==false){this.update({status:'idle',channelId:null,error:'Synthetic join rejected'});return;}",
+    ),
+  );
+});
+
+it('does not reopen a participant volume popup after the participant or call view returns', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call?.screens');
+      await browser.js("fixture.call.controls.join('lounge')");
+      await browser.wait("!!document.querySelector('.screen-participant-tile:not([disabled])')");
+      await browser.js(
+        "document.querySelector('.screen-participant-tile:not([disabled])').click()",
+      );
+      await browser.wait("!!document.querySelector('.voice-participant-popup')");
+      await browser.js(
+        'fixture.people=fixture.call.voice.participants;fixture.channelController.update({participants:[]})',
+      );
+      await browser.wait("!document.querySelector('.voice-participant-popup')");
+      await browser.js('fixture.channelController.update({participants:fixture.people})');
+      await browser.wait("!!document.querySelector('.screen-participant-tile:not([disabled])')");
+      expect(await browser.js("!!document.querySelector('.voice-participant-popup')")).toBe(false);
+      await browser.js(
+        "document.querySelector('.screen-participant-tile:not([disabled])').click()",
+      );
+      await browser.wait("!!document.querySelector('.voice-participant-popup')");
+      await browser.js('fixture.screens.close()');
+      await browser.wait("!document.querySelector('#screen-panel')");
+      await browser.js('fixture.screens.open()');
+      await browser.wait("!!document.querySelector('#screen-panel')");
+      expect(await browser.js("!!document.querySelector('.voice-participant-popup')")).toBe(false);
+    },
+    'approved',
+    screenUiFixture,
+  );
+});
+
+it('reflects saved stream playback mute and volume after reopening the call view', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call?.screens');
+      await browser.js(
+        'fixture.screenSet({playbackMuted:true,playbackVolume:0.35});fixture.screens.close()',
+      );
+      await browser.wait("!document.querySelector('#screen-panel')");
+      await browser.js('fixture.screens.open(true)');
+      await browser.wait("!!document.querySelector('.screen-watch-controls')");
+      expect(await browser.js("document.querySelector('.screen-mute-control input').checked")).toBe(
+        true,
+      );
+      expect(await browser.js(`document.querySelector('[aria-label="Screen volume"]').value`)).toBe(
+        '0.35',
+      );
+    },
+    'approved',
+    screenUiFixture,
+  );
+});
+
+it('shows recoverable account verification failures without pretending the session is signed out', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait("!!document.body?.textContent.includes('Could not open Rajcord')");
+      expect(await browser.js("!!document.querySelector('[name=password]')")).toBe(false);
+      await browser.js('fixture.failMe=false');
+      await browser.click('Retry');
+      await browser.wait('!!fixture.call');
+      await browser.js(
+        'fixture.currentControls=fixture.call.controls;fixture.failMe=true;fixture.auth.refresh()',
+      );
+      await browser.wait("!!document.querySelector('.auth-toast')");
+      expect(await browser.js('fixture.call.controls===fixture.currentControls')).toBe(true);
+      await browser.js('fixture.failMe=false;fixture.auth.refresh()');
+      await browser.wait("!document.querySelector('.auth-toast')");
+      await browser.js('fixture.server=null;fixture.auth.refresh()');
+      await browser.wait("!!document.querySelector('[name=password]')");
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    fixture.replace(
+      "if(path==='/api/auth/me') {",
+      "if(path==='/api/auth/me') { if(f.failMe!==false)return response({error:'Synthetic unavailable'},503);",
+    ),
+  );
+});
+
+const settingsFixture = channelFixture.replace(
+  "if(path==='/api/account/sessions') return response({sessions:[]});",
+  "if(path==='/api/account/sessions'){const d=deferred();(f.settingsRequests??=[]).push(d);return d.promise;}",
+);
+it('shows settings loading and retry states, refreshes once and keeps the last link keyboard accessible', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.auth');
+      await browser.js("fixture.auth.openSettings('people')");
+      await browser.wait(
+        "fixture.settingsRequests?.length>0 && document.body.textContent.includes('Loading account details')",
+      );
+      expect(await browser.js("document.body.textContent.includes('all caught up')")).toBe(false);
+      await browser.js(
+        "fixture.settingsRequests.forEach(d=>fixture.respond(d,{error:'Synthetic account failure'},503))",
+      );
+      await browser.wait(
+        "document.body.textContent.includes('Account details could not be loaded')",
+      );
+      expect(await browser.js("document.body.textContent.includes('all caught up')")).toBe(false);
+      await browser.js('fixture.settingsCount=fixture.settingsRequests.length');
+      await browser.click('Retry');
+      await browser.wait('fixture.settingsRequests.length===fixture.settingsCount+1');
+      await browser.js('fixture.respond(fixture.settingsRequests.at(-1),{sessions:[]})');
+      await browser.wait("document.body.textContent.includes('all caught up')");
+      await browser.js(
+        "fixture.settingsCount=fixture.settingsRequests.length;fixture.auth.openSettings('account')",
+      );
+      await browser.click('Refresh');
+      await browser.wait('fixture.settingsRequests.length===fixture.settingsCount+1');
+      await browser.js('fixture.respond(fixture.settingsRequests.at(-1),{sessions:[]})');
+      await browser.wait("!document.body.textContent.includes('Loading account details')");
+      expect(await browser.js('fixture.settingsRequests.length')).toBe(
+        ((await browser.js('fixture.settingsCount')) as number) + 1,
+      );
+      await browser.js("document.querySelector('.font-credits a').focus()");
+      await browser.call('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Tab',
+        code: 'Tab',
+        windowsVirtualKeyCode: 9,
+      });
+      expect(await browser.js("document.activeElement.getAttribute('aria-label')")).toBe(
+        'Close settings',
+      );
+      await browser.js('document.querySelector(\'[aria-label="Close settings"]\').focus()');
+      await browser.call('Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Tab',
+        code: 'Tab',
+        windowsVirtualKeyCode: 9,
+        modifiers: 8,
+      });
+      expect(
+        await browser.js("document.activeElement===document.querySelector('.font-credits a')"),
+      ).toBe(true);
+      const shot = await browser.call('Page.captureScreenshot', { format: 'png' });
+      await writeFile('artifacts/polish-settings.png', Buffer.from(shot.data as string, 'base64'));
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    settingsFixture,
+  );
+});
+it('ignores old settings loads after the verified session is replaced', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.auth');
+      await browser.js("fixture.auth.openSettings('account')");
+      await browser.wait('fixture.settingsRequests?.length>0');
+      await browser.js(
+        "fixture.oldSettings=[...fixture.settingsRequests];fixture.server=fixture.state('b');fixture.auth.refresh()",
+      );
+      await browser.wait(
+        "fixture.auth.state.csrfToken==='b' && fixture.settingsRequests.length>fixture.oldSettings.length",
+      );
+      await browser.js(
+        "fixture.settingsRequests.slice(fixture.oldSettings.length).forEach(d=>fixture.respond(d,{sessions:[{id:'fresh',device_label:'Fresh session',created_at:'2026-11-16T00:00:00Z',expires_at:'2099-01-01T00:00:00Z',remember:false,current:false}]}))",
+      );
+      await browser.wait("document.body.textContent.includes('Fresh session')");
+      await browser.js(
+        "fixture.oldSettings.forEach(d=>fixture.respond(d,{sessions:[{id:'old',device_label:'Obsolete session',created_at:'2026-11-16T00:00:00Z',expires_at:'2099-01-01T00:00:00Z',remember:false,current:false}]}))",
+      );
+      await browser.js(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      expect(await browser.js("document.body.textContent.includes('Obsolete session')")).toBe(
+        false,
+      );
+      expect(await browser.js("document.body.textContent.includes('Fresh session')")).toBe(true);
+    },
+    'approved',
+    settingsFixture,
+  );
+});
+
+it('returns to sign in after logout even when the last account check failed', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.auth');
+      await browser.js('fixture.failMe=true;fixture.auth.refresh()');
+      await browser.wait("!!document.querySelector('.auth-toast')");
+      await browser.js('fixture.auth.logout();void 0');
+      await browser.wait('fixture.logouts.length===1');
+      await browser.js('fixture.server=null;fixture.respond(fixture.logouts[0],{ok:true})');
+      await browser.wait("!!document.querySelector('[name=password]')");
+      expect(await browser.js("document.body.textContent.includes('Could not open Rajcord')")).toBe(
+        false,
+      );
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    fixture.replace(
+      "if(path==='/api/auth/me') {",
+      "if(path==='/api/auth/me') { if(f.failMe)return response({error:'Synthetic unavailable'},503);",
+    ),
+  );
+});
+
+it('submits sign in once while pending and permits a retry after rejection', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait("!!document.querySelector('[name=password]')");
+      await browser.js('fixture.signIn();fixture.signIn()');
+      await browser.wait('fixture.logins?.length===1');
+      expect(await browser.js("document.querySelector('.auth-switch button').disabled")).toBe(true);
+      await browser.js(
+        "fixture.respond(fixture.logins[0],{error:'Synthetic sign-in rejected'},503)",
+      );
+      await browser.wait("document.body.textContent.includes('Synthetic sign-in rejected')");
+      expect(await browser.js("document.querySelector('[name=username]').value")).toBe('fixture');
+      await browser.js("fixture.signIn();fixture.respond(fixture.logins[1],fixture.state('b'))");
+      await browser.wait("fixture.auth?.state.csrfToken==='b'");
+      expect(await browser.js('fixture.logins.length')).toBe(2);
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    fixture
+      .replace('f.server=f.state();', 'f.server=null;')
+      .replace(
+        "if(path==='/api/auth/login') return response(f.server);",
+        "if(path==='/api/auth/login'){const d=deferred();(f.logins??=[]).push(d);return d.promise;}",
+      ),
+  );
+});
+
+it('ignores a sign-in response after account verification replaces the sign-in view', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait("!!document.querySelector('[name=password]')");
+      await browser.js(
+        "fixture.signIn();fixture.server=fixture.state('b');window.dispatchEvent(new Event('focus'))",
+      );
+      await browser.wait("fixture.auth?.state.csrfToken==='b'");
+      await browser.js("fixture.respond(fixture.logins[0],fixture.state('a'))");
+      await browser.js(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      expect(await browser.js('fixture.auth.state.csrfToken')).toBe('b');
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    fixture
+      .replace('f.server=f.state();', 'f.server=null;')
+      .replace(
+        "if(path==='/api/auth/login') return response(f.server);",
+        "if(path==='/api/auth/login'){const d=deferred();(f.logins??=[]).push(d);return d.promise;}",
+      ),
+  );
+});
+
+it('prevents duplicate settings saves, permits retry, and fences late results after session replacement', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.auth');
+      await browser.js("fixture.auth.openSettings('account')");
+      await browser.wait(
+        "!!document.querySelector('.account-content form') && !document.querySelector('.account-content form button').disabled",
+      );
+      await browser.js(
+        "fixture.save=()=>document.querySelector('.account-content form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));fixture.save();fixture.save()",
+      );
+      await browser.wait('fixture.accountSaves?.length===1');
+      await browser.js(
+        "fixture.respond(fixture.accountSaves[0],{error:'Synthetic save rejected'},503)",
+      );
+      await browser.wait(
+        "document.querySelector('.account-panel [role=alert]')?.textContent.includes('Synthetic save rejected')",
+      );
+      await browser.js('fixture.save();fixture.respond(fixture.accountSaves[1],{ok:true})');
+      await browser.wait(
+        "document.body.textContent.includes('Display name saved.') && !document.querySelector('.account-content form button').disabled",
+      );
+      await browser.js("fixture.save();fixture.server=fixture.state('b');fixture.auth.refresh()");
+      await browser.wait(
+        "fixture.auth.state.csrfToken==='b' && !document.querySelector('.account-content form button').disabled",
+      );
+      await browser.js(
+        "fixture.respond(fixture.accountSaves[2],{error:'Obsolete save failure'},503)",
+      );
+      await browser.js(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      expect(await browser.js("document.body.textContent.includes('Obsolete save failure')")).toBe(
+        false,
+      );
+      expect(await browser.js('fixture.accountSaves.length')).toBe(3);
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    channelFixture.replace(
+      "if(path==='/api/account/sessions')",
+      "if(path==='/api/account'){const d=deferred();(f.accountSaves??=[]).push(d);return d.promise;} if(path==='/api/account/sessions')",
+    ),
+  );
+});

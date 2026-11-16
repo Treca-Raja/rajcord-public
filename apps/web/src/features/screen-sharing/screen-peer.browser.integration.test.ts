@@ -490,8 +490,10 @@ it.each(['before-send', 'after-ack'] as const)(
         });
         const next = (await viewer.js(`${f}.reselect()`)) as { linkId: string };
         expect(await viewer.js(`${f}.selectionStatus()`)).toEqual([next.linkId]);
-        expect(await viewer.js(`${f}.prepare().then(()=>false,()=>true)`)).toBe(true);
-        expect(await viewer.js(`${f}.snapshot().nativeCount`)).toBe(1);
+        // Multi-view admits a different link while retaining the old link's cleanup owner.
+        await viewer.js(`${f}.prepare()`);
+        expect(await viewer.js(`${f}.snapshot().nativeCount`)).toBe(2);
+        expect(await viewer.js(`${f}.snapshot().lane.activeCount`)).toBe(1);
         expect(await viewer.js(`${f}.snapshot().lane.pending.cleanup`)).toBe(true);
         await viewer.js(`${f}.releaseCleanup();true`);
         await viewer.js(`${f}.drain()`);
@@ -513,7 +515,6 @@ it.each(['before-send', 'after-ack'] as const)(
         );
         await publisher.js(`${f}.refreshPublisherGrant()`);
         await publisher.js(`${f}.prepare()`);
-        await viewer.js(`${f}.prepare()`);
         await publisher.js(`${f}.offer()`);
         await viewer.wait(
           `${f}.snapshot().connection==='connected' && ${f}.snapshot().receiver.phase==='ready' && ${f}.snapshot().frames>=3 && ${f}.snapshot().rms>0.001`,

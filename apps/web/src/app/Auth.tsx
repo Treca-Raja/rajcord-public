@@ -32,7 +32,9 @@ export function AuthRoot({
     [loading, setLoading] = useState(true),
     [connected, setConnected] = useState(false),
     [settings, setSettings] = useState<SettingsTab | null>(null),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [refreshError, setRefreshError] = useState(''),
+    [refreshing, setRefreshing] = useState(false);
   const [liveSocket, setLiveSocket] = useState<Socket<
     ServerToClientEvents,
     ClientToServerEvents
@@ -41,6 +43,7 @@ export function AuthRoot({
   const [notificationSettingsHost, setNotificationSettingsHost] = useState<HTMLDivElement | null>(
     null,
   );
+  const [voiceSettingsHost, setVoiceSettingsHost] = useState<HTMLDivElement | null>(null);
   const mounted = useRef(false);
   const logoutGeneration = useRef<number | null>(null);
   const verifiedAuth = useRef<Readonly<{ account: string; csrf: string }> | null>(null);
@@ -69,21 +72,27 @@ export function AuthRoot({
       const started = generation.current;
       if (flight?.generation === started) return flight.run();
       const run = singleFlight(async () => {
+        setRefreshing(true);
         try {
           const next = await apiContract('/auth/me', 'GET');
-          if (started === generation.current && logoutGeneration.current !== started)
+          if (started === generation.current && logoutGeneration.current !== started) {
             acceptVerified(next);
+            setRefreshError('');
+          }
         } catch (error) {
-          if (started === generation.current && (error as { status?: number }).status === 401) {
-            acceptVerified(null);
-            setSettings(null);
-          } else if (started === generation.current) {
-            setError(
-              error instanceof Error ? error.message : 'Account verification failed. Please retry.',
-            );
+          if (started === generation.current) {
+            if ((error as { status?: number }).status === 401) {
+              acceptVerified(null);
+              setSettings(null);
+              setRefreshError('');
+            } else if (logoutGeneration.current !== started)
+              setRefreshError('Could not check your account. Check your connection and try again.');
           }
         } finally {
-          if (started === generation.current) setLoading(false);
+          if (started === generation.current) {
+            setLoading(false);
+            setRefreshing(false);
+          }
         }
       });
       flight = { generation: started, run };
@@ -191,9 +200,13 @@ export function AuthRoot({
     try {
       await api('/auth/logout', 'POST', undefined, logoutLifetime.csrf);
       if (started !== generation.current) return;
+      // Verification begun during logout cannot restore the retired session.
+      generation.current++;
       logoutGeneration.current = null;
       acceptVerified(null);
       setSettings(null);
+      setRefreshError('');
+      setRefreshing(false);
       broadcast();
     } catch (e) {
       if (started !== generation.current) return;
@@ -214,17 +227,34 @@ export function AuthRoot({
         <p role="status">Opening your space…</p>
       </div>
     );
+  if (!state && refreshError)
+    return (
+      <div className="auth-page">
+        <section className="auth-card">
+          <h1>Could not open Rajcord</h1>
+          <p role="alert">{refreshError}</p>
+          <button
+            className="primary"
+            disabled={refreshing}
+            onClick={() => runInBackground(refresh())}
+          >
+            {refreshing ? 'Checking account…' : 'Retry'}
+          </button>
+        </section>
+      </div>
+    );
   if (!state)
     return (
       <>
         <SignIn
           onSignedIn={(value) => {
             if (!mounted.current) return;
-
             generation.current++;
             logoutGeneration.current = null;
             acceptVerified(value);
             setError('');
+            setRefreshError('');
+            setRefreshing(false);
             broadcast();
           }}
         />
@@ -241,6 +271,7 @@ export function AuthRoot({
     logout,
     openSettings: (tab = 'account') => setSettings(tab),
     notificationSettingsHost,
+    voiceSettingsHost,
   };
   return (
     <AuthContext.Provider value={context}>
@@ -266,7 +297,11 @@ export function AuthRoot({
             <div className="account-identity">
               {state.user.displayName} <span>@{state.user.username}</span>
             </div>
-            <button className="primary" onClick={() => runInBackground(refresh())}>
+            <button
+              className="primary"
+              disabled={refreshing}
+              onClick={() => runInBackground(refresh())}
+            >
               Check account status
             </button>
             <button className="secondary" onClick={() => setSettings('account')}>
@@ -278,13 +313,28 @@ export function AuthRoot({
           </section>
         </div>
       )}
-      {notice}
+      {refreshError && (
+        <div role="alert" className="auth-toast">
+          {refreshError}
+          <button disabled={refreshing} onClick={() => runInBackground(refresh())}>
+            Retry
+          </button>
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="auth-toast">
+          {error}
+          <button onClick={() => setError('')}>Dismiss</button>
+        </div>
+      )}
       {settings && (
         <FeatureBoundary name="Account settings" onClose={() => setSettings(null)}>
           <AccountPanel
+            key={state.user.id + ':' + state.csrfToken}
             tab={settings}
             setTab={setSettings}
             notificationHostRef={setNotificationSettingsHost}
+            voiceHostRef={setVoiceSettingsHost}
             close={() => setSettings(null)}
           />
         </FeatureBoundary>

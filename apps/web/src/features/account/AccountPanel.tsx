@@ -18,11 +18,13 @@ export function AccountPanel({
   tab,
   setTab,
   notificationHostRef,
+  voiceHostRef,
 }: {
   close: () => void;
   tab: SettingsTab;
   setTab: (tab: SettingsTab) => void;
   notificationHostRef: (element: HTMLDivElement | null) => void;
+  voiceHostRef: (element: HTMLDivElement | null) => void;
 }) {
   const { state, request, requestContract, refresh, logout } = useAuth();
   const panel = useRef<HTMLElement>(null);
@@ -38,13 +40,19 @@ export function AccountPanel({
       }
       if (event.key === 'Tab') {
         const controls = panel.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]',
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]',
         );
-        const visible = [...(controls ?? [])].filter((element) => element.offsetParent !== null);
+        const visible = [...(controls ?? [])].filter(
+          (element) =>
+            element.offsetParent !== null && element.tabIndex >= 0 && !element.matches(':disabled'),
+        );
         if (!visible.length) return;
         const first = visible[0]!,
           last = visible[visible.length - 1]!;
-        if (event.shiftKey && document.activeElement === first) {
+        if (!panel.current?.contains(document.activeElement)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (event.shiftKey && document.activeElement === first) {
           event.preventDefault();
           last.focus();
         } else if (!event.shiftKey && document.activeElement === last) {
@@ -56,7 +64,7 @@ export function AccountPanel({
     document.addEventListener('keydown', key);
     return () => {
       document.removeEventListener('keydown', key);
-      previous?.focus();
+      if (previous?.isConnected) previous.focus();
     };
   }, []);
 
@@ -64,32 +72,79 @@ export function AccountPanel({
     [sessions, setSessions] = useState<Device[]>([]),
     [history, setHistory] = useState<Audit[]>([]),
     [message, setMessage] = useState(''),
-    [busy, setBusy] = useState(false);
+    [messageFailed, setMessageFailed] = useState(false),
+    [loadError, setLoadError] = useState(''),
+    [loading, setLoading] = useState(true),
+    [saving, setSaving] = useState(false);
+  const lifetime = useRef<object | null>(null);
+  const operation = useRef(false);
+  const loadRequest = useRef<AbortController | null>(null);
+  const currentRequest = useRef(requestContract);
+  currentRequest.current = requestContract;
+  const busy = loading || saving;
   const load = useCallback(async () => {
-    const data = await requestContract('/account/sessions', 'GET');
-    setSessions(data.sessions);
-    if (state.user.status === 'approved') {
-      const accounts = await requestContract('/admin/accounts', 'GET');
+    loadRequest.current?.abort();
+    const controller = new AbortController();
+    loadRequest.current = controller;
+    setLoading(true);
+    setLoadError('');
+    try {
+      const [data, accounts, audit] = await Promise.all([
+        currentRequest.current('/account/sessions', 'GET', undefined, controller.signal),
+        state.user.status === 'approved'
+          ? currentRequest.current('/admin/accounts', 'GET', undefined, controller.signal)
+          : Promise.resolve({ users: [] }),
+        state.user.status === 'approved'
+          ? currentRequest.current('/admin/history', 'GET', undefined, controller.signal)
+          : Promise.resolve({ history: [] }),
+      ]);
+      if (controller.signal.aborted || loadRequest.current !== controller) return;
+      setSessions(data.sessions);
       setUsers(accounts.users);
-      const audit = await requestContract('/admin/history', 'GET');
       setHistory(audit.history);
+    } catch (cause) {
+      if (!controller.signal.aborted && loadRequest.current === controller)
+        setLoadError((cause as Error).message);
+    } finally {
+      if (!controller.signal.aborted && loadRequest.current === controller) setLoading(false);
     }
-  }, [requestContract, state.user.status]);
+  }, [state.user.status]);
   useEffect(() => {
-    void load().catch((e) => setMessage(e.message));
+    lifetime.current = {};
+    operation.current = false;
+    setSaving(false);
+    setUsers([]);
+    setSessions([]);
+    setHistory([]);
+    runInBackground(load());
+    return () => {
+      lifetime.current = null;
+      loadRequest.current?.abort();
+    };
   }, [load, state.user.isOwner]);
   async function run(work: () => Promise<unknown>, success: string) {
-    setBusy(true);
+    if (busy || operation.current || !lifetime.current) return;
+    const started = lifetime.current;
+    operation.current = true;
+    setSaving(true);
     setMessage('');
+    setMessageFailed(false);
     try {
       await work();
+      if (lifetime.current !== started) return;
       setMessage(success);
       await refresh();
+      if (lifetime.current !== started) return;
       await load();
     } catch (e) {
+      if (lifetime.current !== started) return;
+      setMessageFailed(true);
       setMessage((e as Error).message);
     } finally {
-      setBusy(false);
+      if (lifetime.current === started) {
+        operation.current = false;
+        setSaving(false);
+      }
     }
   }
   return (
@@ -110,11 +165,25 @@ export function AccountPanel({
             <X />
           </button>
         </header>
-        <nav className="account-tabs">
-          <button className={tab === 'account' ? 'active' : ''} onClick={() => setTab('account')}>
+        <nav className="account-tabs" aria-label="Settings sections">
+          {state.user.status === 'approved' && (
+            <button
+              aria-current={tab === 'voice' ? 'page' : undefined}
+              className={tab === 'voice' ? 'active' : ''}
+              onClick={() => setTab('voice')}
+            >
+              Voice & audio
+            </button>
+          )}
+          <button
+            aria-current={tab === 'account' ? 'page' : undefined}
+            className={tab === 'account' ? 'active' : ''}
+            onClick={() => setTab('account')}
+          >
             My account
           </button>
           <button
+            aria-current={tab === 'appearance' ? 'page' : undefined}
             className={tab === 'appearance' ? 'active' : ''}
             onClick={() => setTab('appearance')}
           >
@@ -122,6 +191,7 @@ export function AccountPanel({
           </button>
           {state.user.status === 'approved' && (
             <button
+              aria-current={tab === 'notifications' ? 'page' : undefined}
               className={tab === 'notifications' ? 'active' : ''}
               onClick={() => setTab('notifications')}
             >
@@ -129,18 +199,42 @@ export function AccountPanel({
             </button>
           )}
           {state.user.status === 'approved' && (
-            <button className={tab === 'people' ? 'active' : ''} onClick={() => setTab('people')}>
+            <button
+              aria-current={tab === 'people' ? 'page' : undefined}
+              className={tab === 'people' ? 'active' : ''}
+              onClick={() => setTab('people')}
+            >
               People & approvals
             </button>
           )}
-          <button onClick={() => runInBackground(run(load, 'Updated.'))}>Refresh</button>
+          <button disabled={busy} onClick={() => runInBackground(load())}>
+            Refresh
+          </button>
         </nav>
         {message && (
-          <p className="form-message" role="status">
+          <p
+            className={'form-message' + (messageFailed ? ' form-error' : '')}
+            role={messageFailed ? 'alert' : 'status'}
+          >
             {message}
           </p>
         )}
-        {tab === 'appearance' ? (
+        {loading && (
+          <p className="form-message" role="status">
+            Loading account details…
+          </p>
+        )}
+        {loadError && (
+          <div className="form-message" role="alert">
+            <span>Account details could not be loaded. {loadError}</span>{' '}
+            <button disabled={busy} onClick={() => runInBackground(load())}>
+              Retry
+            </button>
+          </div>
+        )}
+        {tab === 'voice' && state.user.status === 'approved' ? (
+          <div className="account-content" ref={voiceHostRef} />
+        ) : tab === 'appearance' ? (
           <AppearancePreferences />
         ) : tab === 'notifications' && state.user.status === 'approved' ? (
           <div className="account-content notification-settings-slot" ref={notificationHostRef} />
@@ -251,7 +345,11 @@ export function AccountPanel({
                 </button>
               </div>
             ))}
-            <button className="secondary" onClick={() => runInBackground(logout())}>
+            <button
+              className="secondary"
+              disabled={saving}
+              onClick={() => runInBackground(logout())}
+            >
               <LogOut size={16} /> Sign out of Rajcord
             </button>
             <p className="font-credits">
@@ -267,7 +365,7 @@ export function AccountPanel({
               Every approved member can review registrations. Only the platform owner can suspend or
               remove approved members.
             </p>
-            {users.length === 0 && (
+            {!loading && !loadError && users.length === 0 && (
               <p className="empty-accounts">No pending registrations. You’re all caught up.</p>
             )}
             {users.map((user) => (

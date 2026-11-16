@@ -8,7 +8,15 @@ import { ConversationDialog, type ConversationDialogMode } from './ConversationD
 import { channelCategories, channelFields } from '../features/channels';
 import { ApplicationSounds } from '../features/sounds';
 import { CommunitySidebar } from './CommunitySidebar';
-import { useCallback, useMemo, useEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from 'react';
 import { Hash, Users, Settings, MessageCircle, Menu, X } from 'lucide-react';
 import type {
   Conversation,
@@ -28,6 +36,9 @@ import './shell.css';
 import type { ScreenApplication } from '../features/screen-sharing';
 import { ScreenFeature } from './ScreenFeature';
 import { FeatureBoundary } from '../shared/FeatureBoundary';
+import { useCall } from '../shared/call';
+const noScreenSubscription = () => () => {};
+const noScreenSnapshot = () => false;
 export function App({ screenApplication }: { screenApplication?: ScreenApplication } = {}) {
   return (
     <AuthRoot screenApplication={screenApplication}>
@@ -44,6 +55,12 @@ function AccountCommunity() {
   );
 }
 function Community() {
+  const call = useCall();
+  const screenOpen = useSyncExternalStore(
+    call?.screens?.subscribe ?? noScreenSubscription,
+    () => call?.screens?.inspect().open ?? false,
+    noScreenSnapshot,
+  );
   const { state, connected, socket, request, openSettings } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]),
     [invites, setInvites] = useState<Invitation[]>([]),
@@ -413,8 +430,14 @@ function Community() {
     if (conversation) selectConversation(conversation);
   };
   return (
-    <div className={'shell live-shell' + (mobile ? ' mobile-open' : '')}>
-      <nav className="rail" aria-label="Primary navigation" inert={membersOpen}>
+    <div
+      className={
+        'shell live-shell' +
+        (mobile ? ' mobile-open' : '') +
+        (screenOpen ? ' screen-call-open' : '')
+      }
+    >
+      <nav className="rail" aria-label="Primary navigation" inert={membersOpen && !screenOpen}>
         <AppearanceBrand />
         <div className="rail-rule" />
         <button
@@ -438,7 +461,7 @@ function Community() {
         <div className="grow" />
       </nav>
       <CommunitySidebar
-        membersOpen={membersOpen}
+        membersOpen={membersOpen && !screenOpen}
         categories={categories}
         conversations={conversations}
         selected={selected}
@@ -468,7 +491,7 @@ function Community() {
           setError('');
         }}
       />
-      <section className="chat" inert={membersOpen}>
+      <section className="chat" inert={membersOpen && !screenOpen}>
         <header className="channel-header">
           <button
             className="mobile-menu"
@@ -511,7 +534,7 @@ function Community() {
             </button>
           )}
         </header>
-        <ScreenFeature />
+        <ScreenFeature voiceChannels={voiceChannels} />
         {error && (
           <div className="notice" role="alert">
             {error}
@@ -525,7 +548,7 @@ function Community() {
             <Messages
               key={current.id}
               conversation={current}
-              readingAllowed={!mobile && !modal && !membersOpen}
+              readingAllowed={!mobile && !modal && !membersOpen && !screenOpen}
               drafts={drafts.current}
               navigation={navigation?.conversationId === current.id ? navigation : null}
               onAccessLost={closeConversation}
@@ -571,7 +594,7 @@ function Community() {
         snapshot={presence.snapshot}
         connected={connected}
         userId={state.user.id}
-        drawer={membersOpen}
+        drawer={membersOpen && !screenOpen}
         close={() => setMembersOpen(false)}
         settings={() => openSettings('people')}
         retry={() => {

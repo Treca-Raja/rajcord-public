@@ -23,8 +23,9 @@ export type AuthContextValue = {
   logout: () => Promise<void>;
   openSettings: (tab?: SettingsTab) => void;
   notificationSettingsHost: HTMLDivElement | null;
+  voiceSettingsHost: HTMLDivElement | null;
 };
-export type SettingsTab = 'account' | 'people' | 'notifications' | 'appearance';
+export type SettingsTab = 'account' | 'people' | 'notifications' | 'appearance' | 'voice';
 const hotContext: { authContext?: ReactContext<AuthContextValue | null> } | undefined = import.meta
   .hot?.data;
 export const AuthContext = hotContext?.authContext ?? createContext<AuthContextValue | null>(null);

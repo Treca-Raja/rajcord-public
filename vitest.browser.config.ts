@@ -10,6 +10,7 @@ export default defineConfig({
       'apps/web/src/shared/feature-boundary.browser.integration.test.ts',
       'apps/web/src/app/conversation-dialog.browser.integration.test.ts',
       'apps/web/src/app/call-provider.integration.test.ts',
+      'apps/web/src/features/chat/chat-polish.browser.integration.test.ts',
       'apps/api/src/auth/cookie-race.browser.integration.test.ts',
       'apps/web/src/features/screen-sharing/screen-peer.browser.integration.test.ts',
       'apps/web/src/features/screen-sharing/screen-call.browser.integration.test.ts',

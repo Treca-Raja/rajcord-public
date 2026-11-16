@@ -298,7 +298,11 @@ export function CommunitySidebar({
       <div className="grow" />
       <div className="sidebar-dock">
         {voiceSession && (
-          <section className="voice-dock" aria-label="Voice connection">
+          <section
+            className="voice-dock"
+            aria-label="Voice connection"
+            data-voice-status={voiceSession.status}
+          >
             <div className="voice-dock-header">
               <span className="voice-dock-icon" aria-hidden="true">
                 <Radio size={20} />

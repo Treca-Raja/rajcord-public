@@ -118,6 +118,7 @@ export class CaptureSession {
     grant: ScreenPublishGrant,
     deadline: number,
     sourceGeneration: number,
+    quality: ScreenQuality = this.options.quality,
   ) {
     this.borrow();
     if (
@@ -126,10 +127,10 @@ export class CaptureSession {
       grant.share.sourceGeneration !== sourceGeneration ||
       grant.share.sound !== this.options.sound ||
       deadline <= Date.now() ||
-      grant.share.profile !== this.options.quality.profile ||
-      grant.share.videoBitrate !== this.options.quality.videoBitrate ||
-      grant.share.resolution !== this.options.quality.resolution ||
-      grant.share.frameRate !== this.options.quality.frameRate
+      grant.share.profile !== quality.profile ||
+      grant.share.videoBitrate !== quality.videoBitrate ||
+      grant.share.resolution !== quality.resolution ||
+      grant.share.frameRate !== quality.frameRate
     )
       throw new Error('Screen publication changed.');
     const previous = this.life,
