@@ -158,9 +158,9 @@ async function click(label: string) {
   );
 }
 async function showWorkspace(view: 'Channels' | 'Direct Messages') {
-  await js(
-    `document.querySelector(${JSON.stringify('button[aria-label="' + view + '"]')}).click()`,
-  );
+  const selector = JSON.stringify('button[aria-label="' + view + '"]');
+  await wait(`!!document.querySelector(${selector})`);
+  await js(`document.querySelector(${selector}).click()`);
   await wait(
     `document.querySelector('.sidebar')?.getAttribute('aria-label')===${JSON.stringify(view)}`,
   );
