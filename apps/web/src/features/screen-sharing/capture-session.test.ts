@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CaptureSession, ScreenLifetime } from './capture-session';
 import { WebScreenCapture } from './screen-capture';
 import { screenRenewalPermit } from './screen-renewal';
-import type { ScreenPublishGrant } from '@tricord/shared';
+import type { ScreenPublishGrant, ScreenQuality } from '@tricord/shared';
 
 const sessions: CaptureSession[] = [],
   adapters: WebScreenCapture[] = [],
@@ -86,6 +86,22 @@ it('atomically replaces preview supervision while retaining the same capture and
   f.session.stop();
   expect(f.video.stop).toHaveBeenCalledTimes(1);
   expect(f.ended).toHaveBeenCalledTimes(1);
+});
+it('validates the published grant against the selected quality while retaining the prepared capture', async () => {
+  const f = await fixture(),
+    quality: ScreenQuality = {
+      profile: 'high',
+      resolution: 480,
+      frameRate: 30,
+      videoBitrate: 2000000,
+    },
+    grant: ScreenPublishGrant = {
+      ...f.grant,
+      share: { ...f.grant.share, ...quality },
+    };
+  f.session.commitPublication(f.session.previewKey, grant, Date.now() + 10000, 1, quality);
+  expect(f.session.borrow().video).toBe(f.video);
+  f.session.stop();
 });
 it('cannot promote expired preview, another source generation or different source-sound consent', async () => {
   const f = await fixture();

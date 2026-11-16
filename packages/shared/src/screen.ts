@@ -62,7 +62,13 @@ export type ScreenShare = ScreenQuality & {
 export type ScreenPublishGrant = { share: ScreenShare; remainingMs: number };
 export type ScreenStopRequest = ScreenBoundRequest & { shareId: string };
 export type ScreenSelectRequest = ScreenBoundRequest &
-  ScreenQuality & { requestId: string; revision: number; shareId: string | null };
+  ScreenQuality & {
+    requestId: string;
+    revision: number;
+    shareId: string | null;
+    mode?: 'replace' | 'add' | 'remove' | 'clear';
+    removeShareId?: string;
+  };
 export type ScreenLink = {
   id: string;
   shareId: string;

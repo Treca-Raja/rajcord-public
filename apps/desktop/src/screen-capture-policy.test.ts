@@ -7,7 +7,7 @@ import {
   type NativeCaptureRequest,
 } from './screen-capture-policy.js';
 
-type Source = { id: string; name: string; thumbnail: object };
+type Source = { id: string; name: string; thumbnail: object; previewDataUrl?: string };
 const policies: DesktopCapturePolicy<Source>[] = [];
 const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
@@ -117,6 +117,13 @@ afterEach(() => {
 });
 
 describe('desktop capture consent boundary', () => {
+  it('passes local previews to the isolated picker without exposing native source IDs', async () => {
+    const f = fixture();
+    f.sources[0]!.previewDataUrl = 'data:image/jpeg;base64,AA==';
+    const { snapshot } = await f.ready();
+    expect(snapshot.sources[0]!.previewDataUrl).toBe('data:image/jpeg;base64,AA==');
+    expect(JSON.stringify(snapshot)).not.toContain('screen:1:0');
+  });
   it.each([
     { frame: null },
     { frame: {} },
@@ -243,6 +250,14 @@ describe('desktop capture consent boundary', () => {
         { id: 'screen:1:0', name: 'b', thumbnail: {} },
       ],
       [{ id: 'tab:1:0', name: 'Synthetic', thumbnail: {} }],
+      [
+        {
+          id: 'screen:3:0',
+          name: 'Synthetic',
+          thumbnail: {},
+          previewDataUrl: 'https://example.test/source.jpg',
+        },
+      ],
     ]) {
       const f = fixture();
       f.enumerate.mockResolvedValueOnce(sources);

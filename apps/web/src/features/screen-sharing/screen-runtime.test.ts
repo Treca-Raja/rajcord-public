@@ -3,6 +3,7 @@ import { ScreenRuntime, type ScreenRuntimeAttachment } from './screen-runtime';
 import { ScreenBindingOwner, type ScreenBindingDependency } from './screen-binding';
 import { ApprovedVoiceSession } from '../voice/voice-session';
 import { WebScreenCapture } from './screen-capture';
+import type { ScreenReceiveLane } from './screen-receiver';
 
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (cause: unknown) => void;
@@ -32,7 +33,7 @@ function session() {
   sessions.push(value);
   return value;
 }
-function fixture() {
+function fixture(incoming?: ScreenReceiveLane) {
   const created: {
     raw: ReturnType<typeof deferred<unknown>>;
     retired: ReturnType<typeof deferred<void>>;
@@ -56,6 +57,7 @@ function fixture() {
     binding: { create, onError: errors },
     capture,
     onError: errors,
+    incoming,
   });
   runtimes.push(runtime);
   function attach(s = session()) {
@@ -233,4 +235,37 @@ it('keeps incoming allocation unavailable without an exact current binding', () 
   expect(() =>
     a.attachment.openIncoming({} as Parameters<ScreenRuntimeAttachment['openIncoming']>[0]),
   ).toThrow('unavailable');
+});
+
+it('retires every incoming stream and binding even when one receiver stop fails', async () => {
+  const failed = new Error('Synthetic receiver cleanup failure');
+  const first = {
+    stop: vi.fn(() => {
+      throw failed;
+    }),
+    subscribe: vi.fn(() => () => {}),
+  };
+  const second = { stop: vi.fn(), subscribe: vi.fn(() => () => {}) };
+  const incoming = {
+    open: vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second),
+    inspect: vi.fn(),
+    dispose: vi.fn(),
+  } as unknown as ScreenReceiveLane;
+  const f = fixture(incoming),
+    a = f.attach();
+  const work = a.attachment.bind();
+  f.created[0]!.raw.resolve(reply());
+  const binding = await work;
+  const options = { endpoint: { epoch: binding.binding.epoch } } as Parameters<
+    ScreenRuntimeAttachment['openIncoming']
+  >[0];
+  a.attachment.openIncoming(options);
+  a.attachment.openIncoming(options);
+  const stopped = f.capture.stop.mock.calls.length;
+  a.attachment.stop();
+  expect(first.stop).toHaveBeenCalledTimes(1);
+  expect(second.stop).toHaveBeenCalledTimes(1);
+  expect(binding.inspect()).toBeNull();
+  expect(f.capture.stop).toHaveBeenCalledTimes(stopped + 1);
+  expect(f.errors).toHaveBeenCalledWith(failed);
 });

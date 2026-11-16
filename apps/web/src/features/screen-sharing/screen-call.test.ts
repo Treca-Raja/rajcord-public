@@ -161,6 +161,29 @@ it('rejects a bare share acknowledgement and never creates peers before a public
   expect(Object.isFrozen(f.call.inspect().shares)).toBe(true);
 });
 
+it('publishes the selected quality while retaining the capture sound consent', async () => {
+  const f = await fixture(),
+    quality = {
+      profile: 'high' as const,
+      resolution: 480 as const,
+      frameRate: 30 as const,
+      videoBitrate: 2000000 as const,
+    },
+    grant = {
+      ...f.grant,
+      share: { ...f.grant.share, ...quality },
+    },
+    publication = f.call.publish(quality);
+  f.published.resolve(grant);
+  await publication;
+  expect(f.command).toHaveBeenCalledWith(
+    'screen:publish',
+    expect.objectContaining({ ...quality, sound: f.settings.sound }),
+    undefined,
+  );
+  expect(f.call.inspect().phase).toBe('sharing');
+});
+
 it('retires the published share and keeps voice connected when capture disposal throws', async () => {
   const f = await fixture(true),
     work = f.call.publish();

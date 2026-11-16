@@ -730,6 +730,70 @@ describe('ephemeral screen authorization', () => {
     expect((await renew(2)).links).toHaveLength(8);
   });
 
+  it('adds and removes multiple stream selections without replacing their siblings', async () => {
+    const f = fixture(),
+      viewer = f.user(),
+      binding = await f.bind(viewer),
+      sources = await Promise.all(
+        Array.from({ length: 10 }, async () => {
+          const publisher = f.user(),
+            owner = await f.bind(publisher),
+            share = await f.publish(publisher.caller, owner.epoch);
+          return { publisher, owner, share };
+        }),
+      );
+    for (const [index, source] of sources.entries()) {
+      const request = {
+        ...selection(binding.epoch, source.share.id, index + 1),
+        mode: index === 0 ? ('replace' as const) : ('add' as const),
+      };
+      if (index < 9) await f.screen.select(viewer.caller, request);
+      else
+        await expect(f.screen.select(viewer.caller, request)).rejects.toMatchObject({
+          code: 'capacity',
+        });
+    }
+    const current = await f.screen.renew(viewer.caller, {
+      epoch: binding.epoch,
+      requestId: randomUUID(),
+      revision: 1,
+    });
+    expect(current.links.map(({ link }) => link.shareId)).toHaveLength(9);
+    const removed = sources[3]!.share.id;
+    await f.screen.select(viewer.caller, {
+      ...selection(binding.epoch, null, 11),
+      mode: 'remove',
+      removeShareId: removed,
+    });
+    const afterRemoval = await f.screen.renew(viewer.caller, {
+      epoch: binding.epoch,
+      requestId: randomUUID(),
+      revision: 2,
+    });
+    expect(afterRemoval.links.map(({ link }) => link.shareId)).toHaveLength(8);
+    expect(afterRemoval.links.some(({ link }) => link.shareId === removed)).toBe(false);
+    await f.screen.select(viewer.caller, {
+      ...selection(binding.epoch, sources[9]!.share.id, 12),
+      mode: 'add',
+    });
+    const refilled = await f.screen.renew(viewer.caller, {
+      epoch: binding.epoch,
+      requestId: randomUUID(),
+      revision: 3,
+    });
+    expect(refilled.links.map(({ link }) => link.shareId)).toHaveLength(9);
+    await f.screen.select(viewer.caller, {
+      ...selection(binding.epoch, sources[0]!.share.id, 13),
+      mode: 'replace',
+    });
+    const replaced = await f.screen.renew(viewer.caller, {
+      epoch: binding.epoch,
+      requestId: randomUUID(),
+      revision: 4,
+    });
+    expect(replaced.links.map(({ link }) => link.shareId)).toEqual([sources[0]!.share.id]);
+  });
+
   it('binds one transport per account and retries without replacing its epoch', async () => {
     const f = fixture(),
       person = f.user(),

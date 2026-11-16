@@ -43,7 +43,7 @@ type Binding = {
   requests: Map<string, string>;
   renewalRevision: number;
   share?: Share;
-  selection?: Link;
+  selections: Map<string, Link>;
   lastPublish?: string;
   lastSelection?: string;
   lastRenewal?: string;
@@ -265,7 +265,8 @@ export class ScreenService {
       this.links.delete(link.value.id);
       this.changed();
     }
-    if (link.viewer.selection === link) link.viewer.selection = undefined;
+    if (link.viewer.selections.get(link.share.value.id) === link)
+      link.viewer.selections.delete(link.share.value.id);
   }
   private dropShare(share: Share) {
     if (this.shares.get(share.value.id) === share) {
@@ -277,7 +278,7 @@ export class ScreenService {
   }
   private dropBinding(binding: Binding) {
     if (binding.share) this.dropShare(binding.share);
-    if (binding.selection) this.dropLink(binding.selection);
+    for (const link of binding.selections.values()) this.dropLink(link);
     if (this.bindings.get(binding.userId) === binding) this.bindings.delete(binding.userId);
   }
   private clear() {
@@ -301,7 +302,7 @@ export class ScreenService {
     );
     if (
       this.links.get(link.value.id) !== link ||
-      link.viewer.selection !== link ||
+      link.viewer.selections.get(link.share.value.id) !== link ||
       link.share.publisher.share !== link.share ||
       link.expires <= this.now()
     ) {
@@ -352,6 +353,7 @@ export class ScreenService {
           transportId: caller.transportId,
           isConnected: caller.isConnected,
           requests: new Map(),
+          selections: new Map(),
           epoch: randomUUID(),
           sourceGeneration: 0,
           selectionRevision: 0,
@@ -447,12 +449,33 @@ export class ScreenService {
       'videoBitrate',
       'resolution',
       'frameRate',
+      'mode',
+      'removeShareId',
     ]);
     const requestId = uuid(body.requestId),
       next = revision(body.revision),
       selected = quality(body);
     const shareId = body.shareId === null ? null : uuid(body.shareId);
-    const fingerprint = JSON.stringify(['select', requestId, next, shareId, selected]);
+    const mode = body.mode === undefined ? (shareId === null ? 'clear' : 'replace') : body.mode;
+    if (!['replace', 'add', 'remove', 'clear'].includes(mode as string))
+      throw new ScreenError('invalid', 400, 'Invalid screen selection mode.');
+    const removeShareId = body.removeShareId === undefined ? null : uuid(body.removeShareId);
+    if (
+      ((mode === 'replace' || mode === 'add') && !shareId) ||
+      ((mode === 'remove' || mode === 'clear') && shareId !== null) ||
+      (mode === 'remove' && !removeShareId) ||
+      (mode !== 'remove' && removeShareId !== null)
+    )
+      throw new ScreenError('invalid', 400, 'Invalid screen selection mode.');
+    const fingerprint = JSON.stringify([
+      'select',
+      requestId,
+      next,
+      shareId,
+      selected,
+      mode,
+      removeShareId,
+    ]);
     return this.run(async () => {
       const finish = (grant: ScreenLinkGrant | null) => {
         deliver?.(grant);
@@ -466,12 +489,28 @@ export class ScreenService {
       )
         throw stale();
       if (next === viewer.selectionRevision) {
-        if (shareId === null) return finish(null);
-        if (!viewer.selection) throw stale();
-        const link = viewer.selection;
+        if (mode === 'remove' || mode === 'clear') return finish(null);
+        if (!shareId) throw stale();
+        const link = viewer.selections.get(shareId);
+        if (!link) throw stale();
         await this.pair(viewer, link.share.publisher);
         this.checkLink(link);
         return finish(this.grant(link));
+      }
+      if (mode === 'remove') {
+        const old = viewer.selections.get(removeShareId!);
+        if (old) this.dropLink(old);
+        viewer.selectionRevision = next;
+        viewer.lastSelection = fingerprint;
+        this.request(viewer, requestId, fingerprint, true);
+        return finish(null);
+      }
+      if (mode === 'clear') {
+        for (const old of viewer.selections.values()) this.dropLink(old);
+        viewer.selectionRevision = next;
+        viewer.lastSelection = fingerprint;
+        this.request(viewer, requestId, fingerprint, true);
+        return finish(null);
       }
       const share = shareId ? this.shares.get(shareId) : undefined;
       if (
@@ -491,7 +530,11 @@ export class ScreenService {
         )
           throw new ScreenError('invalid', 400, 'Requested quality exceeds the publisher ceiling.');
       }
-      if (viewer.selection) this.dropLink(viewer.selection);
+      if (mode === 'replace') for (const old of viewer.selections.values()) this.dropLink(old);
+      else if (!viewer.selections.has(shareId!) && viewer.selections.size >= 9)
+        throw new ScreenError('capacity', 409, 'A viewer can watch up to nine streams.');
+      const existing = viewer.selections.get(shareId!);
+      if (existing) this.dropLink(existing);
       viewer.selectionRevision = next;
       viewer.lastSelection = fingerprint;
       this.request(viewer, requestId, fingerprint, true);
@@ -513,7 +556,7 @@ export class ScreenService {
           videoBitrate: caps.length ? (Math.min(...caps) as ScreenVideoBitrate) : null,
         },
       };
-      viewer.selection = link;
+      viewer.selections.set(share.value.id, link);
       this.links.set(link.value.id, link);
       this.changed();
       return finish(this.grant(link));

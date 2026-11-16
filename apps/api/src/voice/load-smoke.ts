@@ -216,7 +216,7 @@ try {
       tracks: await b.js(
         'window.__captures.map(t=>({readyState:t.readyState,enabled:t.enabled,muted:t.muted}))',
       ),
-      ui: await b.js("document.querySelector('.voice-controls')?.innerText"),
+      ui: await b.js("document.querySelector('.voice-connection')?.innerText"),
       button: await b.js(
         "document.querySelector('button[aria-label*=microphone]')?.getAttribute('aria-label')",
       ),

@@ -101,8 +101,13 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     assert.equal(
       await js("!!document.activeElement.closest('[role=dialog][aria-label=Members]')"),
       true,
+      'Opening Members must move focus into its drawer',
     );
-    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+    assert.equal(
+      await js('document.documentElement.scrollWidth<=innerWidth'),
+      true,
+      'Narrow desktop layout must not overflow horizontally',
+    );
     await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     await wait("!document.querySelector('[role=dialog][aria-label=Members]')");
     assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Members');
@@ -120,7 +125,8 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       await js(`window.originalDeviceEnumeration=navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
         window.deviceInventoryGate=new Promise(resolve=>window.releaseDeviceInventory=resolve);
         navigator.mediaDevices.enumerateDevices=async()=>{await window.deviceInventoryGate;return window.originalDeviceEnumeration()};void 0;`);
-      await js("document.querySelector('.voice-settings-toggle').click()");
+      await js("document.querySelector('.profile-settings').click()");
+      await click('Voice & audio');
       await wait(
         "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='loading'",
       );
@@ -160,9 +166,10 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
         true,
       );
       const probes = await js('window.deviceProbes.length');
-      await js("document.querySelector('.voice-settings-toggle').click()");
-      await wait("!document.querySelector('.voice-controls')");
-      await js("document.querySelector('.voice-settings-toggle').click()");
+      await js('document.querySelector(\'[aria-label="Close settings"]\').click()');
+      await wait("!document.querySelector('.voice-preferences')");
+      await js("document.querySelector('.profile-settings').click()");
+      await click('Voice & audio');
       await wait(
         "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
       );
@@ -176,17 +183,17 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       );
       assert.equal(
         await js(
-          "document.querySelector('.voice-controls').scrollWidth<=document.querySelector('.voice-controls').clientWidth",
+          "document.querySelector('.voice-preferences').scrollWidth<=document.querySelector('.voice-preferences').clientWidth",
         ),
         true,
       );
       win.setSize(720, 820);
       await wait('innerWidth<=720');
-      await js("document.querySelector('.voice-controls').scrollIntoView({block:'center'})");
+      await js("document.querySelector('.voice-preferences').scrollIntoView({block:'center'})");
       assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
       assert.equal(
         await js(
-          "document.querySelector('.voice-controls').scrollWidth<=document.querySelector('.voice-controls').clientWidth",
+          "document.querySelector('.voice-preferences').scrollWidth<=document.querySelector('.voice-preferences').clientWidth",
         ),
         true,
       );
@@ -202,10 +209,8 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
             "]');select.value=select.options[1].value;select.dispatchEvent(new Event('change',{bubbles:true}))})()",
         );
       }
-      await wait('!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled');
-      await js(
-        "(()=>{const select=document.querySelector('select[aria-label=\"Join voice channel\"]');select.value=select.options[1].value;select.dispatchEvent(new Event('change',{bubbles:true}))})()",
-      );
+      await js('document.querySelector(\'[aria-label="Close settings"]\').click()');
+      await js("document.querySelector('[data-voice-channel-id]').click()");
       await wait(
         "document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'",
       );
@@ -213,6 +218,8 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       await wait(
         "fetch('/test/voice-published').then(response=>response.json()).then(result=>result.published)",
       );
+      await js('document.querySelector(\'[aria-label="Back to chat"]\')?.click()');
+      await wait("!document.querySelector('#screen-panel')");
       await js(`(()=>{const field=document.querySelector('textarea[name=message]');window.permissionDraftField=field;
         window.permissionOriginalDraft=field.value;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'Microphone reset draft');
         field.dispatchEvent(new Event('input',{bubbles:true}));field.focus()})()`);
@@ -220,9 +227,6 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       assert.ok(reset);
       assert.equal(reset.enabled, true);
       reset.click();
-      await wait(
-        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='permission-needed'",
-      );
       await wait("!document.querySelector('[data-voice-status]')");
       await wait(
         "window.deviceProbes.every(stream=>stream.getTracks().every(track=>track.readyState==='ended'))",
@@ -235,6 +239,11 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
           "window.permissionDraftField===document.querySelector('textarea[name=message]')&&window.permissionDraftField.value==='Microphone reset draft'&&document.activeElement===window.permissionDraftField",
         ),
         true,
+      );
+      await js("document.querySelector('.profile-settings').click()");
+      await click('Voice & audio');
+      await wait(
+        "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='permission-needed'",
       );
       assert.equal(
         await js('document.querySelector(\'select[aria-label="Voice microphone"]\').value'),
@@ -259,7 +268,11 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       await js("window.tricordDesktop.notify({conversationId:'https://evil.test',mention:true})"),
       false,
     );
-    assert.equal(await js('window.tricordDesktop.enableNotifications()'), true);
+    assert.equal(
+      await js('window.tricordDesktop.enableNotifications()'),
+      true,
+      'Notification opt-in must succeed',
+    );
     assert.equal(
       await js('window.tricordDesktop.notify({conversationId:crypto.randomUUID(),mention:false})'),
       true,
@@ -283,6 +296,18 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     await checkLinks();
 
     if (!chatOnly) {
+      assert.equal(
+        await js(
+          "navigator.mediaDevices.getUserMedia({video:true}).then(s=>{s.getTracks().forEach(t=>t.stop());return false}).catch(e=>e.name==='NotAllowedError')",
+        ),
+        true,
+      );
+      await js("document.querySelector('.profile-settings').click()");
+      await click('Voice & audio');
+      await click('Find audio devices');
+      await wait(
+        'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
+      );
       for (const label of ['Voice microphone', 'Voice speakers']) {
         await js(
           "(()=>{const s=document.querySelector('select[aria-label=" +
@@ -290,7 +315,8 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
             "]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
         );
       }
-      await wait('!document.querySelector(\'select[aria-label="Join voice channel"]\').disabled');
+      await wait("!!document.querySelector('[data-voice-channel-id]')");
+      await js('document.querySelector(\'[aria-label="Close settings"]\').click()');
       await js(`window.soundCalls=[];window.nativeSoundPlay=HTMLMediaElement.prototype.play;
         HTMLMediaElement.prototype.play=async function(){await window.nativeSoundPlay.call(this);if(this.dataset.appSound)window.soundCalls.push({kind:this.dataset.appSound,sink:this.sinkId,volume:this.volume,at:Date.now()})};
         document.querySelector('.sound-settings').open=true`);
@@ -305,7 +331,7 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       assert.equal(await js('window.soundCalls[0].volume'), 0.35);
       await wait('Date.now()-window.soundCalls.at(-1).at>=300');
       await js(
-        "(()=>{const s=document.querySelector('select[aria-label=\"Join voice channel\"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()",
+        "document.querySelector('[aria-label=\"Close settings\"]')?.click();document.querySelector('[data-voice-channel-id]').click()",
       );
       await wait(
         "document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'",
@@ -318,10 +344,12 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       );
       await js('document.querySelector(\'button[aria-label="Unmute microphone"]\').click()');
       await wait("fetch('/test/voice-published').then(r=>r.json()).then(r=>r.published)");
-      await js("document.querySelector('button[aria-label=Deafen]').click()");
+      await js(
+        "document.querySelector('button[aria-label=Deafen],button[aria-label=Undeafen]').click()",
+      );
       assert.equal(
         await js(
-          "document.querySelector('button[aria-label=Deafen]').getAttribute('aria-pressed')",
+          "document.querySelector('button[aria-label=Deafen],button[aria-label=Undeafen]').getAttribute('aria-pressed')",
         ),
         'true',
       );
@@ -373,7 +401,7 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
   }
   assert.equal(
     await js(
-      "Object.keys(localStorage).every(key=>(key.startsWith('rajcord-sounds:')&&Object.keys(JSON.parse(localStorage.getItem(key))).sort().join(',')==='enabled,volume')||['tricord-notification','rajcord-appearance'].some(prefix=>key.startsWith(prefix)))",
+      "Object.keys(localStorage).every(key=>(key.startsWith('rajcord-sounds:')&&Object.keys(JSON.parse(localStorage.getItem(key))).sort().join(',')==='enabled,volume')||(key==='rajcord.voice.devices'&&Object.keys(JSON.parse(localStorage.getItem(key))).sort().join(',')==='input,output')||['tricord-notification','rajcord-appearance'].some(prefix=>key.startsWith(prefix)))",
     ),
     true,
   );

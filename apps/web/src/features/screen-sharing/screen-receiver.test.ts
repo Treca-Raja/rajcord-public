@@ -246,7 +246,7 @@ it('owns one direct recvonly peer and exposes a narrow lane with immutable local
     playback: null,
   });
   expect(Object.isFrozen(first.receiver.inspect())).toBe(true);
-  expect(() => f.lane.open(f.selection().request)).toThrowError(/outstanding|owned/);
+  expect(() => f.lane.open(first.request)).toThrowError(/receiver|outstanding|owned/);
   expect(f.rtcs).toHaveLength(1);
   first.receiver.stop();
   await flush();
@@ -255,6 +255,28 @@ it('owns one direct recvonly peer and exposes a narrow lane with immutable local
     'stopped',
     expect.any(AbortSignal),
   );
+});
+it('owns several distinct incoming links independently', async () => {
+  const f = fixture(),
+    first = f.open(),
+    second = f.open();
+  expect(f.lane.inspect()).toMatchObject({ activeCount: 2, capacity: 9, occupied: true });
+  await Promise.all([ready(first), ready(second)]);
+  first.receiver.stop();
+  await flush();
+  expect(first.request.cleanup).toHaveBeenCalledOnce();
+  expect(first.receiver.inspect().phase).toBe('closed');
+  expect(second.receiver.inspect().phase).toBe('ready');
+  expect(f.lane.inspect().activeCount).toBe(1);
+  second.receiver.dispose();
+});
+it('caps a viewer at nine receivers without weakening each link admission fence', () => {
+  const f = fixture();
+  Array.from({ length: 9 }, () => f.open());
+  expect(f.lane.inspect()).toMatchObject({ activeCount: 9, capacity: 9 });
+  expect(() => f.lane.open(f.selection().request)).toThrowError(/limit/);
+  expect(f.rtcs).toHaveLength(9);
+  f.lane.dispose();
 });
 it.each(['none', 'tab', 'system'] as const)(
   'collects exactly negotiated %s tracks without sound substitution',
@@ -378,7 +400,7 @@ it.each(['hide', 'stop', 'dispose', 'invalidate', 'ended'] as const)(
     expect(selected.receiver.inspect().phase).toBe(action === 'hide' ? 'paused-hidden' : 'closed');
     expect(selected.receiver.inspect().cleanup).toMatchObject({ status: 'pending', pending: true });
     expect(selected.listeners.size).toBe(0);
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     selected.receiver.stop();
     selected.receiver.dispose();
     selected.receiver.hide();
@@ -420,7 +442,7 @@ it.each(['sink', 'play'] as const)(
       await result;
       await flush();
       expect(f.lane.inspect().pending.playback).toBe(true);
-      for (let i = 0; i < 10; i++) expect(() => f.lane.open(f.selection().request)).toThrow();
+      for (let i = 0; i < 10; i++) expect(() => f.lane.open(selected.request)).toThrow();
       expect(f.rtcs).toHaveLength(1);
       if (late === 'resolve') raw.resolve();
       else raw.reject(new Error('Owned late native failure'));
@@ -451,7 +473,7 @@ it.each(['rtc', 'signal'] as const)(
     await result;
     await flush();
     expect(f.lane.inspect().pending[kind]).toBe(true);
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     raw.resolve();
     await flush();
     const next = f.open();
@@ -476,7 +498,7 @@ it.each(['resolve', 'reject'] as const)(
       pending: true,
     });
     expect(vi.mocked(selected.request.cleanup).mock.calls[0]![2].aborted).toBe(true);
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     if (late === 'resolve') raw.resolve();
     else raw.reject(new Error('Owned late cleanup failure'));
     await flush();
@@ -646,7 +668,7 @@ it.each(['resolve', 'reject'] as const)(
       expect(f.lane.inspect().pending.cleanup).toBe(true);
       f.lane.dispose();
       expect(selected.request.cleanup).toHaveBeenCalledOnce();
-      expect(() => f.lane.open(f.selection().request)).toThrow();
+      expect(() => f.lane.open(selected.request)).toThrow();
       if (late === 'resolve') raw.resolve();
       else raw.reject(lateError);
       await flush();
@@ -692,7 +714,7 @@ it.each(['throw', 'missing', 'expired'] as const)(
     });
     expect(selected.request.lifecycle.onInvalidated).not.toHaveBeenCalled();
     expect(f.options.createRtc).not.toHaveBeenCalled();
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     expect(f.options.onError).toHaveBeenCalledOnce();
     if (kind === 'throw') expect(f.options.onError).toHaveBeenCalledWith(failure);
     raw.resolve();
@@ -863,7 +885,7 @@ it('retains the native slot after playback timeout and local Stop, with no repla
   await expect(selected.receiver.play()).rejects.toMatchObject({ code: 'busy' });
   selected.receiver.stop();
   await flush();
-  expect(() => f.lane.open(f.selection().request)).toThrow();
+  expect(() => f.lane.open(selected.request)).toThrow();
   expect(f.rtcs).toHaveLength(1);
   raw.resolve();
   await flush();
@@ -876,13 +898,13 @@ it('rejects reentrant open during native construction and cleanup, without alloc
     selected = f.selection(),
     create = f.options.createRtc.getMockImplementation()!;
   f.options.createRtc.mockImplementationOnce((config) => {
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     return create(config);
   });
   const receiver = f.lane.open(selected.request);
   vi.mocked(selected.request.cleanup).mockImplementationOnce(async (reference) => {
     expect(Object.isFrozen(reference)).toBe(true);
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     expect(f.rtcs[0]!.close).toHaveBeenCalledOnce();
     expect(Object.keys(reference).sort()).toEqual(['epoch', 'linkId']);
   });

@@ -62,7 +62,7 @@ try {
   await a.wait('window.soundEvents.some(e=>e.kind==="leave")');
   await a.wait('Date.now()-window.soundEvents.at(-1).at>=300');
   await b.js(
-    `(()=>{const s=document.querySelector('select[aria-label="Join voice channel"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+    `document.querySelector('[aria-label="Close settings"]')?.click();document.querySelector('[data-voice-channel-id]').click()`,
   );
   await a.wait('window.soundEvents.length===2');
   assert.deepEqual(await a.js('window.soundEvents.map(e=>e.kind)'), ['leave', 'join']);
@@ -77,9 +77,16 @@ try {
       (p) => p.tracks.every((t) => t.source === 2),
     ),
   );
+  await b.js("document.querySelector('.voice-member:not([disabled])').click()");
+  await b.wait("!!document.querySelector('.voice-participant-popup input')");
   await b.js(
-    "(()=>{const slider=document.querySelector('.voice-members input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
+    "(()=>{const slider=document.querySelector('.voice-participant-popup input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
   );
+  await b.js(
+    "document.querySelector('[aria-label=\"Close user volume\"]')?.click();document.querySelector('.profile-settings').click()",
+  );
+  await b.click('Voice & audio');
+  await b.wait('!!document.querySelector(\'[aria-label="Voice output volume"]\')');
   const capturesBeforeBoost = await b.js('window.__captureCount');
   const selectedSpeaker = await b.js(
     'document.querySelector(\'select[aria-label="Voice speakers"]\').value',
@@ -153,7 +160,7 @@ try {
     capturesBeforeBoost,
     'Output volume must not open a microphone',
   );
-  await b.js("document.querySelector('button[aria-label=Deafen]').click()");
+  await b.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].every(e=>e.paused&&e.muted)",
   );
@@ -164,18 +171,18 @@ try {
     ),
     true,
   );
-  await b.js("document.querySelector('button[aria-label=Deafen]').click()");
+  await b.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].some(e=>!e.paused&&!e.muted)",
   );
 
   await a.js('document.querySelector(\'button[aria-label="Mute microphone"]\').click()');
   await b.wait(
-    "document.querySelector('.voice-members').innerText.includes('Voice owner · muted')",
+    "[...document.querySelectorAll('.voice-member')].some(button=>button.textContent.includes('Voice owner') && button.querySelector('[aria-label=Muted]'))",
   );
-  await a.js("document.querySelector('button[aria-label=Deafen]').click()");
+  await a.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
   await a.wait("[...document.querySelectorAll('audio[data-voice-audio]')].every(e=>e.paused)");
-  await a.js("document.querySelector('button[aria-label=Deafen]').click()");
+  await a.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
   const opened = await a.js('window.__voiceOpens');
   const cuesBeforeReconnect = await a.js('window.soundEvents.length');
   const lease = server.voice!.leases.get(owner.id)!;
@@ -209,8 +216,10 @@ try {
   await a.wait("document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'");
   await b.wait("document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'");
   await b.wait("document.querySelectorAll('.voice-members li').length===2");
+  await b.js("(()=>{document.querySelector('.voice-member:not([disabled])').click();})()");
+  await b.wait("!!document.querySelector('.voice-participant-popup input')");
   await b.js(
-    "(()=>{const slider=document.querySelector('.voice-members input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
+    "(()=>{const slider=document.querySelector('.voice-participant-popup input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
   );
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].some(e=>e.volume===0.25)",
@@ -225,6 +234,9 @@ try {
     "window.__boostedBeforeRestart.readyState==='ended'&&window.__voiceProcessed.getTracks()[0].readyState==='live'&&window.__gainContext===window.__gainContextBeforeRestart",
   );
 
+  await a.js("document.querySelector('.profile-settings').click()");
+  await a.click('Voice & audio');
+  await a.wait('!!document.querySelector(\'[aria-label="Voice microphone"]\')');
   const selectedInput = await a.js(
     'document.querySelector(\'select[aria-label="Voice microphone"]\').value',
   );
@@ -309,7 +321,9 @@ try {
     'true',
   );
   assert.equal(
-    await a.js("document.querySelector('button[aria-label=Deafen]').getAttribute('aria-pressed')"),
+    await a.js(
+      "document.querySelector('button[title=\"Toggle audio\"]').getAttribute('aria-pressed')",
+    ),
     'false',
   );
 

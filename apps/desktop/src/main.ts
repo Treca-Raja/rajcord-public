@@ -140,11 +140,21 @@ app
       enumerate: async (signal) => {
         const sources = await desktopCapturer.getSources({
           types: ['screen', 'window'],
-          thumbnailSize: { width: 0, height: 0 },
+          thumbnailSize: { width: 320, height: 180 },
           fetchWindowIcons: false,
         });
         if (signal.aborted) throw new Error('Screen enumeration cancelled.');
-        return sources.map((source) => ({ id: source.id, name: source.name, video: source }));
+        return sources.map((source) => {
+          const previewDataUrl = source.thumbnail.isEmpty()
+            ? undefined
+            : `data:image/jpeg;base64,${source.thumbnail.toJPEG(65).toString('base64')}`;
+          return {
+            id: source.id,
+            name: source.name,
+            ...(previewDataUrl ? { previewDataUrl } : {}),
+            video: source,
+          };
+        });
       },
       onError: (code) => console.warn('Display capture boundary unavailable:', code),
     });
