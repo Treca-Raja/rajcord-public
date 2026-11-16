@@ -14,7 +14,8 @@ export async function waitForDebuggingPort(profile: string, check: () => void) {
       )[0]!;
       if (/^\d+$/.test(port) && Number(port) > 0 && Number(port) <= 65535) return port;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'EBUSY') throw error;
     }
     await delay(100);
   }

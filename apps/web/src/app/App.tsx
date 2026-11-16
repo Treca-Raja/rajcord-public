@@ -12,6 +12,7 @@ import {
   useCallback,
   useMemo,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -332,7 +333,7 @@ function Community() {
       setCategoriesBusy(false);
     }
   }
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!modal) return;
     const previous = dialogTrigger.current;
     const dialog = document.querySelector<HTMLElement>('.chat-dialog');
