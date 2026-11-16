@@ -303,12 +303,16 @@ it('blocks blank and duplicate edits, preserves a failed draft and restores row 
     expect(
       await browser.js('document.activeElement===document.querySelector(".chat-message-row")'),
     ).toBe(true);
+    await browser.js(
+      "fixture.narrowResize=new Promise(resolve=>window.addEventListener('resize',()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)),{once:true}));void 0",
+    );
     await browser.call('Emulation.setDeviceMetricsOverride', {
       width: 390,
       height: 844,
       deviceScaleFactor: 1,
       mobile: false,
     });
+    await browser.js('fixture.narrowResize');
     await edit(browser);
     const screenshot = await browser.call('Page.captureScreenshot', { format: 'png' });
     await mkdir('artifacts', { recursive: true });
