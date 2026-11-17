@@ -60,6 +60,17 @@ export const sessions = pgTable(
     index('sessions_expiry_idx').on(table.expiresAt),
   ],
 );
+export const passwordRecoveryCodes = pgTable('password_recovery_codes', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+  issuedBy: uuid('issued_by')
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+});
 export const platform = pgTable(
   'platform',
   {

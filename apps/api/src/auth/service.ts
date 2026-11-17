@@ -176,11 +176,13 @@ export class AuthService {
         auth.user.id,
         action,
       ]);
-      if (['suspended', 'removed'].includes(next))
+      if (['suspended', 'removed'].includes(next)) {
         await db.query(
           'UPDATE sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',
           [targetId],
         );
+        await db.query('DELETE FROM password_recovery_codes WHERE user_id=$1', [targetId]);
+      }
       return next;
     });
   }
@@ -194,6 +196,7 @@ export class AuthService {
         .rows[0];
       if (target?.status !== 'approved') throw new HttpError(409, 'Choose an approved member.');
       await db.query('UPDATE platform SET owner_id=$1 WHERE id=1', [targetId]);
+      await db.query('DELETE FROM password_recovery_codes');
       await db.query(
         "INSERT INTO approval_history(target_id,actor_id,action) VALUES($1,$2,'transfer-owner')",
         [targetId, auth.user.id],

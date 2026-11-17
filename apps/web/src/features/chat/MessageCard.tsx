@@ -6,7 +6,6 @@ import { Avatar } from '@tricord/ui';
 import { MessageBody } from './MessageBody';
 import { GifPreviews } from './GifPreviews';
 import { MessageMenu, type MessageMenuAction } from './MessageMenu';
-import { authorAccent } from './chat-state';
 import { EmojiGlyph, EmojiText } from '../../shared/emoji/EmojiText';
 
 export function ReplyReference({
@@ -159,11 +158,7 @@ export const MessageCard = memo(function MessageCard({
           setMenu({ x: bounds.right - 220, y: bounds.top + 28 });
         }}
       >
-        <span
-          className="chat-message-avatar"
-          style={{ borderColor: authorAccent(item.author.id) }}
-          aria-hidden="true"
-        >
+        <span className="chat-message-avatar" aria-hidden="true">
           <Avatar>{[...item.author.displayName][0] ?? '?'}</Avatar>
         </span>
         <div className="chat-message-author">

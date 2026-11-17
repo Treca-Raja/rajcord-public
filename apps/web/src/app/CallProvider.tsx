@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { joinDevices } from '../features/voice/composition';
 import { CallPreviewLifetime, type CallPreviewDependency } from './call-preview';
 import { VoiceController, concreteDevices } from '../features/voice/composition';
+import { processingSettings, processingPreferenceKey } from '../features/voice/composition';
 import type { ApprovedVoiceSession } from '../features/voice/contracts';
 import type { ScreenRuntime, ScreenApplication } from '../features/screen-sharing/contracts';
 
@@ -37,6 +38,18 @@ export function CallProvider({
     const application = nextApplication.current;
     const screenAttachment = (nextScreens.current ?? application?.runtime)?.attachCall(session);
     const controller = new VoiceController(session.request, screenAttachment?.bindingDependency);
+    if (session.accountId) {
+      try {
+        const stored = localStorage.getItem(processingPreferenceKey(session.accountId));
+        if (stored !== null)
+          controller.update({ processing: processingSettings(JSON.parse(stored)) });
+      } catch {
+        controller.update({
+          processingError:
+            'Microphone processing preferences could not be loaded. Standard processing is selected.',
+        });
+      }
+    }
     if (permissionReset?.session === session)
       controller.update({
         devicesStatus: 'permission-needed',
@@ -141,6 +154,16 @@ export function CallProvider({
     const controls: VoiceControls = {
       refreshDevices: () => invoke(() => controller.refreshDevices()),
       setOutputVolume: (value) => invoke(() => controller.setOutputVolume(value)),
+      setProcessing: (value) =>
+        invoke(async () => {
+          await controller.setProcessing(value);
+          check();
+          if (session.accountId)
+            localStorage.setItem(
+              processingPreferenceKey(session.accountId),
+              JSON.stringify(controller.state.processing),
+            );
+        }),
       devices: () => invoke(() => controller.devices()),
       selectInput: (id) =>
         invoke(async () => {

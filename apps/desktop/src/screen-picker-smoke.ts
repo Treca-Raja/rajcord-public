@@ -4,7 +4,11 @@ import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { DesktopCapturePolicy, type CaptureGrant } from './screen-capture-policy.js';
+import {
+  DesktopCapturePolicy,
+  type CaptureGrant,
+  type CaptureSource,
+} from './screen-capture-policy.js';
 import { openScreenPicker, screenPickerUrl } from './screen-picker.js';
 import { trustedPickerCaller } from './picker-ipc-policy.js';
 
@@ -36,7 +40,7 @@ const server = createServer((_request, response) => {
   });
   response.end('<!doctype html><title>Synthetic Rajcord owner</title>Fixture owner');
 });
-type Source = { id: string; name: string };
+type Source = CaptureSource;
 const checks: string[] = [];
 const policies: DesktopCapturePolicy<Source>[] = [];
 const check = (value: unknown, label: string) => {
@@ -65,7 +69,7 @@ async function navigateFixture(f: Awaited<ReturnType<typeof fixture>>, script: s
   }
 }
 let target: string;
-async function fixture(qualified = false, pauseSelection = false) {
+async function fixture(qualified = false, pauseSelection = false, applicationAudio = false) {
   const owner = new BrowserWindow({
     show: false,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
@@ -73,9 +77,18 @@ async function fixture(qualified = false, pauseSelection = false) {
   await owner.loadURL(target);
   const grants: (CaptureGrant<Source> | null)[] = [];
   const errors: string[] = [];
-  const sources = [
+  const sources: Source[] = [
     { id: 'screen:1:0', name: 'Synthetic display · 1080p' },
-    { id: 'window:2:0', name: '<img src=x onerror="window.injected=true">' },
+    {
+      id: 'window:2:0',
+      name: '<img src=x onerror="window.injected=true">',
+      ...(applicationAudio
+        ? {
+            applicationAudioId: 'applicationLoopback:123' as const,
+            applicationIdentity: '123:1000',
+          }
+        : {}),
+    },
   ];
   let picker: BrowserWindow | undefined,
     calls = 0,
@@ -109,6 +122,7 @@ async function fixture(qualified = false, pauseSelection = false) {
       return port;
     },
     systemAudio: qualified ? 'qualified-windows-loopback' : 'unqualified',
+    applicationAudio,
     onError: (code) => errors.push(code),
     timeoutMs: 15000,
   });
@@ -120,6 +134,7 @@ async function fixture(qualified = false, pauseSelection = false) {
         securityOrigin: target,
         videoRequested: true,
         audioRequested: true,
+        ...(applicationAudio ? { sound: 'source' as const } : {}),
         userGesture: true,
       },
       (grant) => grants.push(grant),
@@ -153,6 +168,41 @@ async function run() {
   );
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   target = 'http://127.0.0.1:' + (server.address() as { port: number }).port;
+  const appAudio = await fixture(true, false, true);
+  try {
+    await appAudio.js("document.querySelector('#sources li:not([hidden]) .source').click()");
+    check(
+      await appAudio.js(
+        "getComputedStyle(document.getElementById('sound')).display==='none' && !document.getElementById('confirm').disabled && document.getElementById('audio-summary').textContent.includes('Selected app audio')",
+      ),
+      'application sound follows source without a second audio choice',
+    );
+    await appAudio.js(
+      "document.querySelector('[data-kind-tab=screen]').click();document.querySelector('#sources li:not([hidden]) .source').click()",
+    );
+    check(
+      await appAudio.js(
+        "!document.getElementById('confirm').disabled && document.getElementById('audio-summary').textContent.includes('System audio')",
+      ),
+      'entire display automatically uses system audio',
+    );
+    await appAudio.js(
+      "document.querySelector('[data-kind-tab=window]').click();document.querySelector('#sources li:not([hidden]) .source').click()",
+    );
+    await mkdir(path.join(root, 'artifacts'), { recursive: true });
+    await writeFile(
+      path.join(root, 'artifacts/screen-picker-application-audio.png'),
+      (await appAudio.win.webContents.capturePage()).toPNG(),
+    );
+    await appAudio.js("document.getElementById('confirm').click()");
+    await wait(() => appAudio.grants.length === 1, 'application audio grant');
+    check(
+      appAudio.grants[0]?.audio === 'applicationLoopback:123',
+      'application grant is bound to the chosen process without system loopback',
+    );
+  } finally {
+    appAudio.close();
+  }
   const f = await fixture();
   try {
     check(

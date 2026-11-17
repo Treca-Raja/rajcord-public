@@ -245,7 +245,7 @@ it('constructs only one direct peer with borrowed send-only tracks and no negoti
   expect(f.rtc.callbacks.size).toBe(0);
 });
 
-it.each(['none', 'tab', 'system'] as const)(
+it.each(['none', 'tab', 'system', 'application', 'source'] as const)(
   'publisher-only offer/answer uses the existing server envelope with %s sound',
   async (sound) => {
     const f = fixture('publisher', sound);

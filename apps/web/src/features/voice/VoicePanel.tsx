@@ -4,6 +4,7 @@ import { Mic, MicOff, Headphones, PhoneOff, Volume2, Plus, Settings } from 'luci
 import { useAuth } from '../account';
 import { useCall, type VoiceControls } from '../../shared/call';
 import { concreteDevices, type VoiceChannel } from './voice-controller';
+import { defaultProcessing, rawProcessing, processingKeys } from './voice-processing';
 import './styles.css';
 export type VoiceSessionDock = {
   status: 'connected' | 'joining' | 'reconnecting';
@@ -431,6 +432,92 @@ function VoiceSettings() {
           }
         />
       </label>
+      <fieldset
+        className="voice-processing"
+        disabled={busy || voice.processingBusy || voice.status === 'reconnecting'}
+      >
+        <legend>Microphone processing</legend>
+        <p>
+          Standard processing is recommended for voice chat. These settings affect your microphone,
+          not shared app or system audio.
+        </p>
+        <div className="voice-processing-presets">
+          <button
+            type="button"
+            aria-pressed={processingKeys.every((key) => voice.processing[key])}
+            onClick={() => runInBackground(run(() => controls.setProcessing(defaultProcessing)))}
+          >
+            Standard
+          </button>
+          <button
+            type="button"
+            aria-pressed={processingKeys.every((key) => !voice.processing[key])}
+            onClick={() => runInBackground(run(() => controls.setProcessing(rawProcessing)))}
+          >
+            Raw microphone
+          </button>
+        </div>
+        {(
+          [
+            [
+              'echoCancellation',
+              'Echo cancellation',
+              'Reduces speaker audio picked up by your microphone.',
+            ],
+            ['noiseSuppression', 'Noise suppression', 'Reduces steady background noise.'],
+            ['autoGainControl', 'Automatic gain', 'Helps keep your speaking volume consistent.'],
+          ] as const
+        ).map(([key, label, description]) => (
+          <label className="voice-processing-option" key={key}>
+            <input
+              type="checkbox"
+              checked={voice.processing[key]}
+              onChange={(event) => {
+                const enabled = event.target.checked;
+                runInBackground(
+                  run(() => controls.setProcessing({ ...voice.processing, [key]: enabled })),
+                );
+              }}
+            />
+            <span>
+              {label}
+              <small>{description}</small>
+            </span>
+            {voice.processingApplied && (
+              <small>
+                Applied:{' '}
+                {voice.processingApplied[key] === undefined
+                  ? 'Not reported'
+                  : voice.processingApplied[key]
+                    ? 'On'
+                    : 'Off'}
+              </small>
+            )}
+          </label>
+        ))}
+        <p role="status">
+          {voice.status === 'reconnecting'
+            ? 'Wait for voice to reconnect before changing microphone processing.'
+            : voice.processingBusy
+              ? 'Applying microphone processing…'
+              : voice.processingApplied
+                ? processingKeys.every(
+                    (key) => voice.processingApplied?.[key] === voice.processing[key],
+                  )
+                  ? 'The microphone reports the requested settings.'
+                  : 'The microphone did not apply or report every requested setting.'
+                : 'Settings apply when your microphone starts. Changing them in a call restarts the selected microphone and preserves mute.'}
+        </p>
+        <p>
+          Raw microphone disables these three controls. Use it with a hardware-processed microphone
+          or a headset when you want unprocessed sound.
+        </p>
+        {voice.processingError && (
+          <p role="alert" className="voice-error">
+            {voice.processingError}
+          </p>
+        )}
+      </fieldset>
       {voice.status !== 'idle' && (
         <button onClick={() => runInBackground(run(controls.resumeAudio))}>
           Enable audio playback

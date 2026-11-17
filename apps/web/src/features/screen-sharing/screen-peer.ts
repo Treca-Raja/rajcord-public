@@ -119,7 +119,7 @@ export class ScreenPeer {
     );
     if (
       !['publisher', 'viewer'].includes(options.endpoint.role) ||
-      !['none', 'tab', 'system'].includes(options.endpoint.sound)
+      !['none', 'tab', 'system', 'application', 'source'].includes(options.endpoint.sound)
     )
       throw failure('invalid endpoint.');
     const current = options.lifecycle.inspect();

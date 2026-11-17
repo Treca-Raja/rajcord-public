@@ -10,6 +10,13 @@ export const authContracts = [
     status: 201,
   }),
   contract('POST', '/auth/logout', s.ok),
+  contract('POST', '/auth/password/reset', s.ok, { body: s.request.passwordReset }),
+  contract(
+    'POST',
+    '/admin/password-recovery/:id',
+    s.object({ code: s.nonempty, expiresAt: s.date }),
+    { body: s.request.passwordRecovery },
+  ),
   contract(
     'GET',
     '/account/sessions',

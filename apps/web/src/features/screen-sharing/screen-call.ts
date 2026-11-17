@@ -112,7 +112,7 @@ function share(value: unknown): ScreenShare {
     !uuid(data.publisherId) ||
     !Number.isSafeInteger(data.sourceGeneration) ||
     (data.sourceGeneration as number) < 1 ||
-    !['none', 'tab', 'system'].includes(data.sound as string)
+    !['none', 'tab', 'system', 'application', 'source'].includes(data.sound as string)
   )
     throw new Error('Invalid screen share.');
   const quality = screenVideoRequest({
@@ -498,7 +498,9 @@ export class ScreenCall {
         const capabilities = await bridge.capabilities();
         if (
           capabilities.version !== 1 ||
-          (settings.sound === 'system' && !capabilities.systemSound)
+          (settings.sound === 'system' && !capabilities.systemSound) ||
+          (settings.sound === 'application' && !capabilities.applicationSound) ||
+          (settings.sound === 'source' && (!capabilities.sourceSound || !capabilities.systemSound))
         )
           throw new Error('This desktop version cannot capture the selected source sound.');
         if (!this.current(binding) || this.prepared?.tag !== tag)

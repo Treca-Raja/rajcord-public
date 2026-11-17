@@ -12,6 +12,7 @@
     "db:migrate": "tsx --env-file-if-exists=.env src/migrate.ts",
     "db:verify-persistence": "tsx --env-file-if-exists=.env src/db/verify-persistence.ts",
     "owner:bootstrap": "tsx --env-file-if-exists=.env src/auth/bootstrap.ts",
+    "owner:recovery": "tsx --env-file-if-exists=.env src/auth/bootstrap.ts --recovery",
     "test:desktop": "tsx --env-file-if-exists=.env src/auth/desktop-smoke.ts",
     "test:desktop:authority": "tsx --env-file-if-exists=.env src/screen/desktop-authority-smoke.ts",
     "test:browser": "tsx --env-file-if-exists=.env src/auth/browser-smoke.ts",

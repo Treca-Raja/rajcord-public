@@ -623,6 +623,76 @@ async function audioControls(browser: Awaited<ReturnType<typeof launch>>) {
   await browser.wait('!!document.querySelector(\'[aria-label="Voice microphone"]\')');
 }
 
+it('persists microphone processing per account without idle capture and distinguishes requested from applied settings', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call');
+      await audioControls(browser);
+      expect(await browser.js('fixture.captureCalls')).toBe(0);
+      await browser.click('Raw microphone');
+      await browser.wait(
+        "[...document.querySelectorAll('.voice-processing input[type=checkbox]')].every(input=>!input.checked)",
+      );
+      expect(
+        await browser.js(
+          "JSON.parse(localStorage.getItem('rajcord.voice.processing.account')).echoCancellation",
+        ),
+      ).toBe(false);
+      expect(await browser.js('fixture.captureCalls')).toBe(0);
+      await browser.js(
+        "fixture.previousCall=fixture.call;fixture.server=fixture.state('processing-replacement');fixture.auth.refresh()",
+      );
+      await browser.wait(
+        "fixture.auth.state.csrfToken==='processing-replacement' && fixture.call && fixture.call!==fixture.previousCall",
+      );
+      await browser.wait(
+        "document.querySelectorAll('.voice-processing input[type=checkbox]').length===3 && [...document.querySelectorAll('.voice-processing input[type=checkbox]')].every(input=>!input.checked)",
+      );
+      expect(await browser.js('fixture.captureCalls')).toBe(0);
+      await browser.click('Standard');
+      await browser.wait(
+        "[...document.querySelectorAll('.voice-processing input[type=checkbox]')].every(input=>input.checked)",
+      );
+      await browser.js("fixture.call.controls.join('lounge')");
+      await browser.wait('!!fixture.channelController');
+      await browser.js(
+        'fixture.channelController.update({processingApplied:{echoCancellation:false,noiseSuppression:true}})',
+      );
+      await browser.wait(
+        "document.querySelector('.voice-processing').textContent.includes('did not apply or report')",
+      );
+      expect(
+        await browser.js(
+          "document.querySelector('.voice-processing').textContent.includes('Applied: Not reported')",
+        ),
+      ).toBe(true);
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await browser.js(
+        "document.querySelector('.voice-processing').scrollIntoView({block:'center'})",
+      );
+      expect(
+        await browser.js(
+          "getComputedStyle(document.querySelector('.voice-processing-option')).display",
+        ),
+      ).toBe('grid');
+      const shot = await browser.call('Page.captureScreenshot', { format: 'png' });
+      await mkdir('artifacts', { recursive: true });
+      await writeFile(
+        'artifacts/microphone-processing.png',
+        Buffer.from(shot.data as string, 'base64'),
+      );
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    channelFixture,
+  );
+});
+
 async function discoverAudio(browser: Awaited<ReturnType<typeof launch>>) {
   await browser.js(
     "fixture.deviceList=[{kind:'audioinput',deviceId:'owned-mic',label:'Owned synthetic microphone',groupId:'private-group'},{kind:'audiooutput',deviceId:'owned-output',label:'Owned synthetic speakers',groupId:'private-group'}];fixture.observe(fixture.call.controls.devices(),'explicitDiscovery')",
@@ -1179,7 +1249,7 @@ it('owns one approved-session call across actual React mounts, logout, replaceme
     await browser.wait("!!document.querySelector('.voice-panel')");
     expect(await browser.js('fixture.created')).toBe(created);
     expect(await browser.js('Object.keys(fixture.call.controls).sort().join(",")')).toBe(
-      'deafen,devices,join,joinChannel,leave,mute,refreshDevices,resumeAudio,selectInput,selectOutput,setOutputVolume,volume',
+      'deafen,devices,join,joinChannel,leave,mute,refreshDevices,resumeAudio,selectInput,selectOutput,setOutputVolume,setProcessing,volume',
     );
     expect(
       await browser.js(
@@ -1336,6 +1406,145 @@ f.channelJoins=[];
 VoiceController.prototype.join=async function(id){ f.channelJoins.push(id);f.channelController=this;this.update({status:'connected',channelId:id,muted:true,participants:[{id:'account',name:'Fixture',muted:true,speaking:false,volume:1},{id:'friend',name:'Friend',muted:false,speaking:true,volume:1}]}); };
 VoiceController.prototype.volume=function(id,volume){ this.update({participants:this.state.participants.map(p=>p.id===id?{...p,volume}:p)}); };
 `;
+
+const sidebarFixture = channelFixture
+  .replace(
+    'import { VoicePanel }',
+    "import { CommunitySidebar } from '/src/app/CommunitySidebar.tsx';\nimport { ApplicationSounds } from '/src/features/sounds/index.ts';\nimport { VoicePanel }",
+  )
+  .replace(
+    'h(AuthRoot,null,h(View))',
+    "h(AuthRoot,{screenApplication:application},h(ApplicationSounds,{userId:'account'},h(View)))",
+  )
+  .replace(
+    "return panel?h('aside',{className:'sidebar',style:{width:340,height:'100vh'}},h(VoicePanel)):h('p',null,'View changed')",
+    `const [dock,setDock]=useState(null),[count,setCount]=useState(1),[view,setView]=useState('channels'),[callOpen,setCallOpen]=useState(false);
+    f.moreChannels=()=>setCount(40);f.setView=setView;f.setCallOpen=setCallOpen;
+    const conversations=Array.from({length:count},(_,i)=>({id:'channel-'+i,name:'general '+i,kind:'channel',category:null,unreadCount:0,mentionCount:0,archived:false,members:[]}));
+    return h('div',{className:'shell live-shell mobile-open'+(callOpen?' screen-call-open':'')},h('nav',{className:'rail'}),h(CommunitySidebar,{membersOpen:false,categories:[],conversations,selected:'channel-0',view,choose:()=>{},openDialog:()=>{},invites:[],busy:false,action:async work=>work(),connected:true,onlineIds:[],voiceSession:dock,onInviteAccepted:()=>{},setVoiceChannels:()=>{},setVoiceSession:setDock,voiceNavigation:null}),h('main',{className:'chat'}))`,
+  )
+  .replace(
+    'f.mount();',
+    `f.screenState={phase:'ready',open:false,prepared:false,viewers:0};
+    const screenListeners=new Set();
+    const setScreenOpen=open=>{f.screenState={...f.screenState,open};f.setCallOpen(open);for(const listener of screenListeners)listener()};
+    f.screens={inspect:()=>f.screenState,subscribe:listener=>{screenListeners.add(listener);return ()=>screenListeners.delete(listener)},connect:async()=>{},open:async()=>setScreenOpen(true),close:()=>setScreenOpen(false),stopSource:()=>{},stopWatching:()=>{}};
+    const application={runtime:{attachCall:()=>({connectVoice:()=>{},stop:()=>{},release:()=>{}})},createCall:()=>({controls:()=>f.screens,observeVoice:()=>{},stopSource:()=>{},stopWatching:()=>{},dispose:()=>{}})};
+    f.mount();`,
+  );
+
+it('keeps sidebar geometry and every dock control stable when opening and closing the call view', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait(
+        '!!window.fixture?.call?.screens && !!document.querySelector(".sidebar-dock")',
+      );
+      await browser.js("fixture.call.controls.join('lounge')");
+      await browser.wait('!!document.querySelector(".voice-dock")');
+      const geometry = () =>
+        browser.js(`(()=>{
+          const sidebar=document.querySelector('.sidebar'),dock=document.querySelector('.sidebar-dock'),s=sidebar.getBoundingClientRect();
+          const buttons=[...dock.querySelectorAll('button')].filter(button=>getComputedStyle(button).display!=='none');
+          const actions=[...dock.querySelectorAll('.voice-dock-actions button')].filter(button=>getComputedStyle(button).display!=='none').map(button=>button.getBoundingClientRect());
+          return {left:s.left,width:s.width,visible:buttons.length,inside:buttons.every(button=>{const r=button.getBoundingClientRect();return r.width>0 && r.left>=s.left && r.right<=s.right}),evenActions:actions.length===5 && actions.every(r=>Math.abs(r.width-actions[0].width)<1 && r.top===actions[0].top),overflow:sidebar.scrollWidth>sidebar.clientWidth};
+        })()`);
+      for (const width of [1440, 1200, 1000, 390]) {
+        await browser.call('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 1060,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        const before = await geometry();
+        expect(before).toMatchObject({ inside: true, evenActions: true, overflow: false });
+        await browser.js(
+          'document.querySelector(\'[aria-label="Browse shared screens"]\').click()',
+        );
+        await browser.wait(
+          "document.querySelector('.shell').classList.contains('screen-call-open')",
+        );
+        expect(await geometry()).toEqual(before);
+        if (width === 1000) {
+          const shot = await browser.call('Page.captureScreenshot', { format: 'png' });
+          await mkdir('artifacts', { recursive: true });
+          await writeFile(
+            'artifacts/sidebar-call-open.png',
+            Buffer.from(shot.data as string, 'base64'),
+          );
+        }
+        await browser.js('fixture.screens.close()');
+        await browser.wait(
+          "!document.querySelector('.shell').classList.contains('screen-call-open')",
+        );
+        expect(await geometry()).toEqual(before);
+      }
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    sidebarFixture,
+  );
+});
+
+it('anchors the profile and voice dock to the sidebar bottom without narrow-layout overflow', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!document.querySelector(".sidebar-dock") && !!fixture.call');
+      const geometry = () =>
+        browser.js(`(()=>{
+          const sidebar=document.querySelector('.sidebar'),dock=document.querySelector('.sidebar-dock'),profile=document.querySelector('.profile'),status=document.querySelector('.profile-identity small');
+          const s=sidebar.getBoundingClientRect(),d=dock.getBoundingClientRect(),p=profile.getBoundingClientRect();
+          return {bottom:Math.abs(s.bottom-d.bottom)<2,inside:p.left>=s.left && p.right<=s.right,overflow:sidebar.scrollWidth>sidebar.clientWidth,statusHeight:status.getBoundingClientRect().height};
+        })()`) as Promise<{
+          bottom: boolean;
+          inside: boolean;
+          overflow: boolean;
+          statusHeight: number;
+        }>;
+      for (const [width, height] of [
+        [1440, 1060],
+        [1000, 800],
+        [390, 844],
+      ]) {
+        await browser.call('Emulation.setDeviceMetricsOverride', {
+          width,
+          height,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        expect(await geometry()).toMatchObject({ bottom: true, inside: true, overflow: false });
+      }
+      await browser.js("fixture.call.controls.join('lounge')");
+      await browser.wait('!!document.querySelector(".voice-dock")');
+      for (const width of [1440, 1000, 390]) {
+        await browser.call('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 1060,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        expect(await geometry()).toMatchObject({ bottom: true, inside: true, overflow: false });
+        expect((await geometry()).statusHeight).toBeLessThan(18);
+      }
+      const shot = await browser.call('Page.captureScreenshot', { format: 'png' });
+      await mkdir('artifacts', { recursive: true });
+      await writeFile('artifacts/sidebar-bottom.png', Buffer.from(shot.data as string, 'base64'));
+      await browser.js('fixture.moreChannels()');
+      await browser.wait('document.querySelectorAll(".channel-category button").length===40');
+      expect(await geometry()).toMatchObject({ bottom: true, inside: true, overflow: false });
+      await browser.js("document.querySelector('.sidebar').scrollTop=10000");
+      expect(await geometry()).toMatchObject({ bottom: true, inside: true, overflow: false });
+      await browser.js("fixture.setView('direct')");
+      await browser.wait(
+        "document.querySelector('.sidebar').getAttribute('aria-label')==='Direct Messages'",
+      );
+      expect(await geometry()).toMatchObject({ bottom: true, inside: true, overflow: false });
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    sidebarFixture,
+  );
+});
+
 it('joins and switches with channel clicks, keeps device settings separate and exposes participant volume on click/right-click', async () => {
   await mountedFixture(
     async (browser) => {
@@ -1605,6 +1814,85 @@ async function saveCallScreenshot(browser: Awaited<ReturnType<typeof launch>>, n
     Buffer.from(shot.data as string, 'base64'),
   );
 }
+
+it.each([
+  { open: false, entry: 'sidebar' },
+  { open: true, entry: 'sidebar' },
+  { open: true, entry: 'toolbar' },
+])(
+  'automatically follows the selected Windows source audio from $entry with the call view open=$open',
+  async ({ open, entry }) => {
+    await mountedFixture(
+      async (browser) => {
+        await browser.wait('!!window.fixture?.call?.screens');
+        await browser.js(`fixture.call.controls.join('lounge');
+        window.tricordDesktop={platform:'win32'};
+        fixture.preparations=[];fixture.choices=0;
+        fixture.screens.prepare=async options=>{fixture.preparations.push(options);fixture.screenSet({prepared:true})};
+        fixture.screens.choose=async()=>{fixture.choices++};
+        fixture.screenSet({open:${open},watching:null,watchingShareIds:[],prepared:false,setupRequested:false});`);
+        await browser.wait(
+          '!!document.querySelector(".sidebar .screen-launcher button:not(:disabled)")',
+        );
+        const shareSelector =
+          entry === 'sidebar'
+            ? '.sidebar .screen-launcher > button'
+            : '.screen-call-toolbar [aria-label="Share Your Screen"]';
+        const clickShare = () =>
+          browser.js(`document.querySelector(${JSON.stringify(shareSelector)}).click()`);
+        await clickShare();
+        await browser.wait('document.querySelector("#screen-settings")?.hidden===false');
+        expect(await browser.js('fixture.preparations.length===0 && fixture.choices===0')).toBe(
+          true,
+        );
+        expect(
+          await browser.js('!document.querySelector(\'[aria-label="Screen source sound"]\')'),
+        ).toBe(true);
+        expect(
+          await browser.js(
+            "document.querySelector('#screen-settings').textContent.includes('Audio follows your source')",
+          ),
+        ).toBe(true);
+        await browser.js(
+          "[...document.querySelectorAll('button')].find(b=>b.textContent==='Prepare source').click()",
+        );
+        await browser.wait('fixture.preparations.length===1');
+        expect(await browser.js('fixture.preparations[0].sound')).toBe('source');
+        expect(await browser.js('fixture.choices')).toBe(0);
+        if (open)
+          await browser.js(
+            'document.querySelector(\'[aria-label="Close stream settings"]\').click()',
+          );
+        await browser.js(`fixture.screenSet({open:${open},setupRequested:false})`);
+        await browser.wait(
+          open
+            ? 'document.querySelector("#screen-settings")?.hidden===true'
+            : '!document.querySelector("#screen-settings")',
+        );
+        await clickShare();
+        await browser.wait('document.querySelector("#screen-settings")?.hidden===false');
+        expect(await browser.js('fixture.preparations.length===1 && fixture.choices===0')).toBe(
+          true,
+        );
+        await browser.wait(
+          "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Choose source')",
+        );
+        await browser.js(
+          "[...document.querySelectorAll('button')].find(b=>b.textContent==='Choose source').click()",
+        );
+        await browser.wait('fixture.choices===1');
+        expect(await browser.js('fixture.errors')).toEqual([]);
+      },
+      'approved',
+      screenUiFixture
+        .replace('import { ScreenPanel }', 'import { ScreenPanel, ScreenLauncher }')
+        .replace(
+          "h('aside',{className:'sidebar'},h(VoicePanel))",
+          "h('aside',{className:'sidebar'},h(VoicePanel),h(ScreenLauncher))",
+        ),
+    );
+  },
+);
 
 it('opens the call grid on a voice-channel click and opens source setup only on Share Your Screen', async () => {
   await mountedFixture(

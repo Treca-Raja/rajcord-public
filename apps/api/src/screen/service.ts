@@ -385,7 +385,7 @@ export class ScreenService {
     const requestId = uuid(body.requestId),
       generation = revision(body.sourceGeneration),
       selected = quality(body);
-    if (!['none', 'tab', 'system'].includes(body.sound as string))
+    if (!['none', 'tab', 'system', 'application', 'source'].includes(body.sound as string))
       throw new ScreenError('invalid', 400, 'Invalid source sound mode.');
     const fingerprint = JSON.stringify(['publish', requestId, generation, selected, body.sound]);
     return this.run(async () => {

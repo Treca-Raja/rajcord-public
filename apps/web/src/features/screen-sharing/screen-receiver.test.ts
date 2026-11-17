@@ -102,7 +102,7 @@ function deferred<T>() {
   drains.push(() => resolve(undefined as T));
   return { promise, resolve, reject };
 }
-function fixture(sound: 'none' | 'tab' | 'system' = 'tab') {
+function fixture(sound: 'none' | 'tab' | 'system' | 'application' | 'source' = 'tab') {
   const rtcs: Rtc[] = [],
     elements: Element[] = [];
   const outgoing = new Track(),
@@ -278,7 +278,7 @@ it('caps a viewer at nine receivers without weakening each link admission fence'
   expect(f.rtcs).toHaveLength(9);
   f.lane.dispose();
 });
-it.each(['none', 'tab', 'system'] as const)(
+it.each(['none', 'tab', 'system', 'application', 'source'] as const)(
   'collects exactly negotiated %s tracks without sound substitution',
   async (sound) => {
     const f = fixture(sound),

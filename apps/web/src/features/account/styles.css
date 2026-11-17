@@ -343,3 +343,15 @@
     padding-right: 20px;
   }
 }
+.password-recovery-issuer {
+  margin-block: 18px;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  background: var(--surface-inset);
+}
+.password-recovery-issuer input[readonly] {
+  width: 100%;
+  font-family: monospace;
+  overflow-wrap: anywhere;
+}

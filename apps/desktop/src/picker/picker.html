@@ -51,9 +51,14 @@
         <ul id="sources" aria-label="Available sources"></ul>
       </section>
       <div class="picker-bottom">
+        <p id="audio-summary" class="audio-summary" role="status" hidden></p>
         <fieldset id="sound" disabled>
           <legend>Share audio</legend>
           <label><input type="radio" name="sound" value="none" /> Video only</label>
+          <label
+            ><input id="application-sound" type="radio" name="sound" value="application" disabled />
+            Application audio</label
+          >
           <label
             ><input id="system-sound" type="radio" name="sound" value="system" disabled /> System
             audio</label
