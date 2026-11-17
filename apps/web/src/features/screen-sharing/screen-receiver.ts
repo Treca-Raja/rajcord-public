@@ -104,7 +104,7 @@ class ReceiveLane {
     if (
       !endpoint ||
       endpoint.role !== 'viewer' ||
-      !['none', 'tab', 'system'].includes(endpoint.sound) ||
+      !['none', 'tab', 'system', 'application', 'source'].includes(endpoint.sound) ||
       Object.keys(endpoint).some((key) => !['epoch', 'linkId', 'role', 'sound'].includes(key))
     )
       throw error('invalid', 'Expected a fixed viewer endpoint.');

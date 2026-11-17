@@ -119,6 +119,10 @@
   flex-shrink: 0;
 }
 :root[data-appearance='original'] {
+  .live-shell .chat {
+    --surface-chat: #1f1f1f;
+    --surface-raised: #2d2d2d;
+  }
   .logo {
     background: #c4e99c;
     color: #263321;
@@ -157,7 +161,7 @@
     color: #a7b6c9;
   }
   .composer.live-composer {
-    background: #282f39;
+    background: var(--surface-raised);
   }
   .composer.live-composer:focus-within {
     border-color: #839a72;

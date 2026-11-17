@@ -205,6 +205,17 @@ button:disabled {
   gap: 14px;
   margin-top: auto;
 }
+.picker-bottom > [hidden] {
+  display: none;
+}
+.audio-summary {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #484a53;
+  border-radius: 8px;
+  color: #dbdee1;
+  font-size: 12px;
+}
 fieldset {
   display: flex;
   min-width: 0;

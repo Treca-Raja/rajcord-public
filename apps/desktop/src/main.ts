@@ -6,6 +6,7 @@ import { MicrophonePermission, microphonePermissions } from './microphone-permis
 import { installNativeCapture } from './native-capture.js';
 import { createSessionCaptureAuthority } from './capture-authority-http.js';
 import { installScreenIpc } from './screen-ipc.js';
+import { applicationAudioSupported, applicationAudioSources } from './application-audio.js';
 import { app, BrowserWindow, session, dialog, ipcMain, shell, desktopCapturer } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -137,6 +138,7 @@ app
       enabled: true,
       qualification: 'native-provider',
       systemAudio: process.platform === 'win32' ? 'consented-windows-loopback' : 'unqualified',
+      applicationAudio: applicationAudioSupported(),
       enumerate: async (signal) => {
         const sources = await desktopCapturer.getSources({
           types: ['screen', 'window'],
@@ -144,6 +146,14 @@ app
           fetchWindowIcons: false,
         });
         if (signal.aborted) throw new Error('Screen enumeration cancelled.');
+        const applicationSources = ['application', 'source'].includes(
+          captureAuthority.inspect()?.sound ?? '',
+        )
+          ? await applicationAudioSources(
+              sources.map((source) => source.id),
+              signal,
+            )
+          : new Map();
         return sources.map((source) => {
           const previewDataUrl = source.thumbnail.isEmpty()
             ? undefined
@@ -151,6 +161,7 @@ app
           return {
             id: source.id,
             name: source.name,
+            ...applicationSources.get(source.id),
             ...(previewDataUrl ? { previewDataUrl } : {}),
             video: source,
           };
@@ -194,6 +205,7 @@ app
       authority: captureAuthority,
       trusted: trustedSender,
       systemSound: process.platform === 'win32',
+      applicationSound: applicationAudioSupported(),
     });
     const resetAvailability = (event: Electron.IpcMainEvent, ready: unknown) => {
       if (trustedSender(event) && typeof ready === 'boolean') setMicrophoneResetReady(ready);

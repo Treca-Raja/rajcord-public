@@ -23,7 +23,11 @@
 }
 
 .live-shell {
-  grid-template-columns: 72px 300px minmax(320px, 1fr) 280px;
+  --workspace-rail-width: 72px;
+  --workspace-sidebar-width: 300px;
+  grid-template-columns:
+    var(--workspace-rail-width) var(--workspace-sidebar-width)
+    minmax(320px, 1fr) 280px;
   background: var(--surface-chat);
 }
 
@@ -359,10 +363,12 @@
 }
 
 .live-shell .sidebar-dock {
+  order: 3;
   position: sticky;
   bottom: 0;
   z-index: 3;
   display: grid;
+  min-width: 0;
   flex-shrink: 0;
   gap: 8px;
   margin-top: auto;
@@ -433,7 +439,8 @@
 
 .live-shell .voice-dock-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 5px;
 }
 
@@ -448,6 +455,7 @@
 }
 
 .live-shell .voice-dock-actions > .screen-launcher {
+  display: contents;
   min-width: 0;
   margin: 0;
 }
@@ -538,6 +546,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .live-shell .profile-identity small.in-voice {
@@ -546,6 +555,7 @@
 
 .live-shell .profile-audio-controls {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 1px;
 }
@@ -835,11 +845,39 @@
 
 @media (max-width: 1200px) {
   .live-shell {
-    grid-template-columns: 60px 224px minmax(320px, 1fr);
+    --workspace-rail-width: 60px;
+    --workspace-sidebar-width: 224px;
+    grid-template-columns:
+      var(--workspace-rail-width) var(--workspace-sidebar-width)
+      minmax(320px, 1fr);
   }
 
   .live-shell .rail {
     padding-inline: 9px;
+  }
+
+  .live-shell .profile {
+    gap: 4px;
+    padding-inline: 6px;
+  }
+
+  .live-shell .profile-avatar,
+  .live-shell .profile-avatar .avatar {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+  }
+
+  .live-shell .profile .profile-control {
+    min-width: 30px;
+  }
+
+  .live-shell .profile-control > svg:last-child {
+    display: none;
+  }
+
+  .live-shell .profile .profile-settings {
+    padding: 5px;
   }
 }
 

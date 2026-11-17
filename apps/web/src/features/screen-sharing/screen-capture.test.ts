@@ -84,6 +84,26 @@ afterEach(() => {
   expect(vi.getTimerCount()).toBe(0);
   vi.useRealTimers();
 });
+it.each(['window', 'monitor', 'browser'] as const)(
+  'captures automatic desktop source sound from %s without an extra audio choice',
+  async (surface) => {
+    const f = fixture({ desktop: true });
+    const source = new Stream([new Track(), new Track('audio')]);
+    source.tracks[0]!.settings.displaySurface = surface;
+    const pending = f.adapter.start({ sound: 'source' });
+    expect(f.devices.getDisplayMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ audio: true, systemAudio: 'include', windowAudio: 'window' }),
+    );
+    f.resolve(source);
+    if (surface === 'browser') await expect(pending).rejects.toMatchObject({ code: 'unsupported' });
+    else {
+      const capture = await pending;
+      expect(capture.sound).toBe('source');
+      capture.dispose();
+    }
+    expect(source.tracks.every((track) => track.stop.mock.calls.length === 1)).toBe(true);
+  },
+);
 it('invokes the native chooser on the gesture stack with independently selected dimensions and fps', async () => {
   const f = fixture(),
     stream = new Stream();
@@ -98,6 +118,34 @@ it('invokes the native chooser on the gesture stack with independently selected 
   const capture = await work;
   capture.dispose();
 });
+
+it.each(['window', 'monitor', 'browser', 'missing-audio'] as const)(
+  'accepts app audio only with a desktop window and its audio track: %s',
+  async (surface) => {
+    const f = fixture({ desktop: true });
+    const source = new Stream([
+      new Track(),
+      ...(surface === 'missing-audio' ? [] : [new Track('audio')]),
+    ]);
+    source.tracks[0]!.settings.displaySurface = surface === 'missing-audio' ? 'window' : surface;
+    const pending = f.adapter.start({ sound: 'application' });
+    expect(f.devices.getDisplayMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ audio: true, systemAudio: 'exclude' }),
+    );
+    f.resolve(source);
+    if (surface === 'window') {
+      const capture = await pending;
+      expect(capture.sound).toBe('application');
+      expect(capture.audio).toBe(source.tracks[1]!.media);
+      capture.dispose();
+    } else
+      await expect(pending).rejects.toMatchObject({
+        code: surface === 'missing-audio' ? 'missing_sound' : 'unsupported',
+      });
+    expect(source.tracks.every((track) => track.stop.mock.calls.length === 1)).toBe(true);
+    expect(f.devices.getUserMedia).not.toHaveBeenCalled();
+  },
+);
 it('rejects incomplete video choices before invoking native capture', async () => {
   const f = fixture();
   await expect(f.adapter.start({ sound: 'none', resolution: 720 })).rejects.toMatchObject({

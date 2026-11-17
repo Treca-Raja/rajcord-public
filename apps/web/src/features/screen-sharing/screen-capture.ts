@@ -7,7 +7,7 @@ import {
 } from '@tricord/shared';
 
 export type WebCaptureDevices = Pick<MediaDevices, 'getDisplayMedia'>;
-export type CaptureSound = 'none' | 'tab' | 'system';
+export type CaptureSound = 'none' | 'tab' | 'system' | 'application' | 'source';
 export type CaptureEnd =
   'stopped' | 'cancelled' | 'disposed' | 'video-ended' | 'audio-ended' | 'stream-changed';
 export type CaptureErrorCode =
@@ -44,7 +44,7 @@ export type LocalScreenCapture = Readonly<{
 }>;
 type DisplayOptions = DisplayMediaStreamOptions & {
   systemAudio: 'exclude' | 'include';
-  windowAudio: 'exclude';
+  windowAudio: 'exclude' | 'window';
   selfBrowserSurface: 'exclude';
   surfaceSwitching: 'exclude';
 };
@@ -85,7 +85,12 @@ export class WebScreenCapture {
   }): Promise<LocalScreenCapture> {
     if (this.disposed)
       return Promise.reject(new ScreenCaptureError('disposed', 'Screen capture was disposed.'));
-    if (!request || !(this.desktop ? ['none', 'system'] : ['none', 'tab']).includes(request.sound))
+    if (
+      !request ||
+      !(this.desktop ? ['none', 'system', 'application', 'source'] : ['none', 'tab']).includes(
+        request.sound,
+      )
+    )
       return Promise.reject(
         new ScreenCaptureError('invalid', 'Choose source sound or video only explicitly.'),
       );
@@ -184,8 +189,8 @@ export class WebScreenCapture {
         };
       })(),
       audio: sound !== 'none',
-      systemAudio: sound === 'system' ? 'include' : 'exclude',
-      windowAudio: 'exclude',
+      systemAudio: sound === 'system' || sound === 'source' ? 'include' : 'exclude',
+      windowAudio: sound === 'source' ? 'window' : 'exclude',
       selfBrowserSurface: 'exclude',
       surfaceSwitching: 'exclude',
     };
@@ -257,6 +262,16 @@ export class WebScreenCapture {
             throw new ScreenCaptureError(
               'unsupported',
               'System sound requires a selected display.',
+            );
+          if (sound === 'application' && displaySurface !== 'window')
+            throw new ScreenCaptureError(
+              'unsupported',
+              'Application sound requires a selected application window.',
+            );
+          if (sound === 'source' && displaySurface !== 'window' && displaySurface !== 'monitor')
+            throw new ScreenCaptureError(
+              'unsupported',
+              'Automatic audio requires a selected application window or display.',
             );
           const listen = (target: EventTarget, event: string, handler: () => void) => {
             target.addEventListener(event, handler);

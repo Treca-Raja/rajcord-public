@@ -93,8 +93,14 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function stream() {
-  const media = Object.assign(new EventTarget(), { stop: vi.fn() });
+function stream(
+  settings: MediaTrackSettings = {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  },
+) {
+  const media = Object.assign(new EventTarget(), { stop: vi.fn(), getSettings: () => settings });
   return { media, getTracks: () => [media], getAudioTracks: () => [media] };
 }
 let controller: VoiceController;
@@ -140,6 +146,131 @@ it('late microphone permission after leave stops capture without publishing', as
   await joining;
   expect(capture.media.stop).toHaveBeenCalled();
   expect(sdk.rooms[0]!.localParticipant.publishTrack).not.toHaveBeenCalled();
+  expect(controller.state.status).toBe('idle');
+});
+
+it.each([
+  { muted: true, deafened: false },
+  { muted: false, deafened: false },
+  { muted: false, deafened: true },
+])(
+  'restarts only the exact microphone for processing changes while preserving mute=$muted deafen=$deafened',
+  async ({ muted, deafened }) => {
+    const { media } = setup();
+    await controller.join('room');
+    if (!muted) await controller.mute();
+    if (deafened) await controller.deafen();
+    const raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    media.getUserMedia.mockResolvedValueOnce(stream(raw));
+    await controller.setProcessing(raw);
+    expect(media.getUserMedia).toHaveBeenLastCalledWith({
+      video: false,
+      audio: { deviceId: { exact: 'mic' }, ...raw },
+    });
+    expect(controller.state).toMatchObject({
+      muted,
+      deafened,
+      status: 'connected',
+      processing: raw,
+      processingApplied: raw,
+      processingBusy: false,
+    });
+    expect(sdk.tracks[0]!.stop).toHaveBeenCalled();
+    expect(sdk.tracks[1]!.muted).toBe(muted || deafened);
+    expect(sdk.rooms[0]!.localParticipant.publishTrack).toHaveBeenCalledTimes(2);
+  },
+);
+it('stores idle processing without opening a microphone and reports missing applied settings honestly', async () => {
+  const { media } = setup();
+  const raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+  await controller.setProcessing(raw);
+  expect(media.getUserMedia).not.toHaveBeenCalled();
+  expect(controller.state.processingApplied).toBeNull();
+  media.getUserMedia.mockResolvedValueOnce(stream({}));
+  await controller.join('room');
+  expect(controller.state.processingApplied).toEqual({});
+  expect(controller.state.processing).toEqual(raw);
+});
+it('stops and mutes the old microphone after a failed processing change without falling back', async () => {
+  const { media } = setup();
+  await controller.join('room');
+  await controller.mute();
+  const raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+  media.getUserMedia.mockRejectedValueOnce(new Error('Synthetic microphone denial'));
+  await expect(controller.setProcessing(raw)).rejects.toThrow('Synthetic microphone denial');
+  expect(sdk.tracks[0]!.stop).toHaveBeenCalled();
+  expect(controller.state).toMatchObject({
+    muted: true,
+    status: 'connected',
+    processingBusy: false,
+    processingApplied: null,
+  });
+  expect(controller.state.processingError).toContain('muted');
+  expect(media.getUserMedia).toHaveBeenCalledTimes(2);
+  media.getUserMedia.mockResolvedValueOnce(stream(raw));
+  await controller.setProcessing(raw);
+  expect(controller.state.processingError).toBe('');
+  expect(controller.state.muted).toBe(true);
+});
+it('keeps active processing unchanged while voice reconnects', async () => {
+  const { media } = setup();
+  await controller.join('room');
+  const applied = controller.state.processingApplied;
+  sdk.rooms[0]!.emit('Reconnecting');
+  await expect(
+    controller.setProcessing({
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    }),
+  ).rejects.toThrow('reconnect');
+  expect(controller.state.processingApplied).toEqual(applied);
+  expect(controller.state.processing.echoCancellation).toBe(true);
+  expect(media.getUserMedia).toHaveBeenCalledTimes(1);
+});
+it('clears a processing failure after explicitly selecting a working replacement microphone', async () => {
+  const { media } = setup();
+  await controller.join('room');
+  media.getUserMedia.mockRejectedValueOnce(new Error('Synthetic capture failure'));
+  await expect(
+    controller.setProcessing({
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    }),
+  ).rejects.toThrow();
+  expect(controller.state.processingError).not.toBe('');
+  await controller.selectInput('replacement');
+  expect(controller.state.processingError).toBe('');
+  expect(controller.state.processingApplied).not.toBeNull();
+  expect(controller.state.muted).toBe(true);
+});
+it('clears applied processing when the captured microphone ends', async () => {
+  const { capture } = setup();
+  await controller.join('room');
+  expect(controller.state.processingApplied).not.toBeNull();
+  capture.media.dispatchEvent(new Event('ended'));
+  expect(controller.state.processingApplied).toBeNull();
+  expect(controller.state.inputMissing).toBe(true);
+});
+it('stops late processing capture after leave instead of reviving transmission', async () => {
+  const { media } = setup();
+  await controller.join('room');
+  const pending = deferred<ReturnType<typeof stream>>(),
+    replacement = stream();
+  media.getUserMedia.mockReturnValueOnce(pending.promise);
+  const changing = controller.setProcessing({
+    echoCancellation: false,
+    noiseSuppression: true,
+    autoGainControl: false,
+  });
+  await vi.waitFor(() => expect(media.getUserMedia).toHaveBeenCalledTimes(2));
+  await controller.leave();
+  pending.resolve(replacement);
+  await changing;
+  expect(replacement.media.stop).toHaveBeenCalled();
+  expect(sdk.rooms[0]!.localParticipant.publishTrack).toHaveBeenCalledTimes(1);
+  expect(controller.state.processingApplied).toBeNull();
   expect(controller.state.status).toBe('idle');
 });
 it('leaving during device replacement does not publish the late replacement', async () => {

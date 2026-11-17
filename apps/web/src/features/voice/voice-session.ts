@@ -10,6 +10,7 @@ export class ApprovedVoiceSession {
   constructor(
     private currentRequest: VoiceRequest,
     private screenFactory?: ScreenBindingDependency['create'],
+    readonly accountId?: string,
   ) {}
   openScreens: ScreenBindingDependency['create'] = (own) => {
     if (!this.active || !this.screenFactory) throw new Error('Screen session ended.');
@@ -70,7 +71,7 @@ export class VerifiedVoiceSessions {
     ) {
       this.invalidate();
       this.identity = { account: state.user.id, csrf: state.csrfToken };
-      this.session = new ApprovedVoiceSession(request, screenFactory);
+      this.session = new ApprovedVoiceSession(request, screenFactory, state.user.id);
     } else {
       this.session.updateRequest(request);
       this.session.updateScreenFactory(screenFactory);

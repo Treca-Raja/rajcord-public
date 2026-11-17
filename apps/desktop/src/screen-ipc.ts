@@ -22,6 +22,7 @@ export function installScreenIpc(options: {
   authority: ReturnType<typeof createSessionCaptureAuthority>;
   trusted(event: IpcMainInvokeEvent): boolean;
   systemSound: boolean;
+  applicationSound?: boolean;
 }) {
   const { owner, ipc, authority } = options;
   let current: { tag: string; phase: 'preparing' | 'ready' | 'sharing' } | undefined;
@@ -47,7 +48,12 @@ export function installScreenIpc(options: {
   };
   ipc.handle('screen:capabilities', (event) => {
     check(event);
-    return { version: 1, systemSound: options.systemSound };
+    return {
+      version: 1,
+      systemSound: options.systemSound,
+      sourceSound: options.systemSound,
+      ...(options.applicationSound ? { applicationSound: true } : {}),
+    };
   });
   ipc.handle('screen:prepare', async (event, value: unknown) => {
     check(event);
@@ -55,7 +61,10 @@ export function installScreenIpc(options: {
     if (
       !id(request.clientIntentRef) ||
       !id(request.epoch) ||
-      (request.sound !== 'none' && !(request.sound === 'system' && options.systemSound))
+      (request.sound !== 'none' &&
+        !(request.sound === 'system' && options.systemSound) &&
+        !(request.sound === 'application' && options.applicationSound) &&
+        !(request.sound === 'source' && options.systemSound))
     )
       throw new Error('Invalid screen preparation.');
     if (current) throw new Error('Stop the current screen source first.');
@@ -63,7 +72,10 @@ export function installScreenIpc(options: {
     current = owned;
     pending++;
     try {
-      const intent = await authority.prepare(request.sound as 'none' | 'system', request.epoch);
+      const intent = await authority.prepare(
+        request.sound as 'none' | 'system' | 'application' | 'source',
+        request.epoch,
+      );
       if (current !== owned || !options.trusted(event) || authority.inspect() !== intent)
         throw new Error('Screen preparation ended.');
       current = { tag: owned.tag, phase: 'ready' };

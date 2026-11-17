@@ -10,7 +10,7 @@ export const SCREEN_VIDEO_BITRATES = [
   2000000, 4000000, 6000000, 8000000, 12000000, 20000000,
 ] as const;
 export type ScreenVideoBitrate = (typeof SCREEN_VIDEO_BITRATES)[number] | null;
-export type ScreenSound = 'none' | 'tab' | 'system';
+export type ScreenSound = 'none' | 'tab' | 'system' | 'application' | 'source';
 export type ScreenQuality = {
   profile: ScreenProfile;
   videoBitrate: ScreenVideoBitrate;
