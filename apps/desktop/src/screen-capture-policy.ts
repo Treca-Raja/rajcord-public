@@ -3,6 +3,7 @@ import type {
   DesktopCaptureCode,
   DesktopPickerAck,
   DesktopPickerSnapshot,
+  DesktopCaptureSound,
 } from '@tricord/shared' with { 'resolution-mode': 'import' };
 
 export type CaptureDocument = {
@@ -23,10 +24,20 @@ export type NativeCaptureRequest = {
   videoRequested: boolean;
   audioRequested: boolean;
   userGesture: boolean;
+  sound?: DesktopCaptureSound;
 };
 export type PickerCaller = { webContents: object; frame: object };
-export type CaptureSource = { id: string; name: string; previewDataUrl?: string };
-export type CaptureGrant<T extends CaptureSource> = { video: T; audio?: 'loopback' };
+export type CaptureSource = {
+  id: string;
+  name: string;
+  previewDataUrl?: string;
+  applicationAudioId?: `applicationLoopback:${number}`;
+  applicationIdentity?: string;
+};
+export type CaptureGrant<T extends CaptureSource> = {
+  video: T;
+  audio?: 'loopback' | `applicationLoopback:${number}`;
+};
 export type CapturePicker = {
   inspect: () => CaptureDocument | null;
   close: () => void;
@@ -48,6 +59,7 @@ type Dependencies<T extends CaptureSource> = {
       | 'context_failed',
   ) => void;
   systemAudio?: 'unqualified' | 'qualified-windows-loopback' | 'consented-windows-loopback';
+  applicationAudio?: boolean;
   timeoutMs?: number;
   now?: () => number;
 };
@@ -56,6 +68,7 @@ type Pending<T extends CaptureSource> = {
   document: CaptureOwner;
   expires: number;
   audio: boolean;
+  sound?: DesktopCaptureSound;
   respond: (grant: CaptureGrant<T> | null) => void;
   handles: Map<string, T>;
   picker?: CapturePicker;
@@ -220,20 +233,35 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
       throw new Error('Unsupported source list.');
     return value;
   }
-  private sounds(p: Pending<T>, source: T): ('none' | 'system')[] {
-    return p.audio &&
+  private sounds(p: Pending<T>, source: T): DesktopCaptureSound[] {
+    let audioSound: 'application' | 'system' | undefined;
+    if (
+      p.audio &&
+      p.sound !== 'system' &&
+      this.deps.applicationAudio &&
+      source.id.startsWith('window:') &&
+      /^applicationLoopback:[1-9]\d*$/.test(source.applicationAudioId ?? '') &&
+      source.applicationIdentity
+    )
+      audioSound = 'application';
+    else if (
+      p.audio &&
+      p.sound !== 'application' &&
       source.id.startsWith('screen:') &&
       ['qualified-windows-loopback', 'consented-windows-loopback'].includes(
         this.deps.systemAudio ?? 'unqualified',
       )
-      ? ['none', 'system']
-      : ['none'];
+    )
+      audioSound = 'system';
+    if (p.sound === 'source') return audioSound ? [audioSound] : [];
+    return ['none', ...(audioSound ? [audioSound] : [])];
   }
   private snapshot(p: Pending<T>): DesktopPickerSnapshot {
     return {
       version: 1,
       requestId: p.id,
       remainingMs: Math.max(0, p.expires - this.now()),
+      ...(p.sound ? { sound: p.sound } : {}),
       sources: [...p.handles].map(([handle, source]) => ({
         handle,
         kind: source.id.startsWith('screen:') ? 'screen' : 'window',
@@ -287,6 +315,7 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
       document: { ...document },
       expires: this.now() + this.timeout,
       audio: request.audioRequested,
+      sound: request.sound,
       respond,
       handles: new Map(),
       controller: new AbortController(),
@@ -355,7 +384,7 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
     if (
       !identifier(requestId) ||
       !identifier(handle) ||
-      !['none', 'system'].includes(sound as string)
+      !['none', 'system', 'application'].includes(sound as string)
     )
       return denied('invalid');
     const p = this.pending;
@@ -364,7 +393,7 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
     if (this.working || p.selecting) return denied('busy');
     const source = p.handles.get(handle);
     if (!source) return denied('stale');
-    if (!this.sounds(p, source).includes(sound as 'none' | 'system')) return denied('invalid');
+    if (!this.sounds(p, source).includes(sound as DesktopCaptureSound)) return denied('invalid');
     p.selecting = true;
     p.handles.clear();
     this.working = true;
@@ -375,13 +404,19 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
         return denied('stale');
       }
       const fresh = sources.find((s) => s.id === source.id && s.name === source.name);
-      if (!fresh) {
+      if (
+        !fresh ||
+        (sound === 'application' &&
+          (fresh.applicationAudioId !== source.applicationAudioId ||
+            fresh.applicationIdentity !== source.applicationIdentity))
+      ) {
         this.finish(p);
         return denied('stale');
       }
       const granted = this.finish(p, {
         video: fresh,
         ...(sound === 'system' ? { audio: 'loopback' as const } : {}),
+        ...(sound === 'application' ? { audio: fresh.applicationAudioId } : {}),
       });
       return granted ? { ok: true, data: { selected: true } } : denied('unavailable');
     } catch {

@@ -206,7 +206,7 @@ export class CaptureAuthorizationService {
       requestId = uuid(body.requestId),
       epoch = uuid(body.epoch),
       sound = body.sound;
-    if (sound !== 'none' && sound !== 'system')
+    if (sound !== 'none' && sound !== 'system' && sound !== 'application' && sound !== 'source')
       throw new HttpError(400, 'Invalid capture sound choice.');
     return this.run(token, csrf, async (auth, current) => {
       const lease = await this.lease(token, auth);

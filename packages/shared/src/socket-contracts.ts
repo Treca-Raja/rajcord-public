@@ -47,7 +47,7 @@ const clientPayloads: Record<string, TSchema | undefined> = {
     epoch: id,
     requestId: id,
     sourceGeneration: Type.Integer({ minimum: 1 }),
-    sound: oneOf('none', 'tab', 'system'),
+    sound: oneOf('none', 'tab', 'system', 'application', 'source'),
   }),
   'screen:stop': object({ epoch: id, shareId: id }),
   'screen:select': object({

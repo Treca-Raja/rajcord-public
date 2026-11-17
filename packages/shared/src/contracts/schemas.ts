@@ -146,6 +146,8 @@ export const request = {
   }),
   account: requestObject({ displayName: text }),
   password: requestObject({ currentPassword: text, newPassword: text }),
+  passwordReset: requestObject({ username: text, code: text, newPassword: text }),
+  passwordRecovery: requestObject({ currentPassword: text }),
   adminAccount: requestObject({
     action: oneOf('approve', 'reject', 'suspend', 'remove', 'restore'),
   }),
@@ -197,7 +199,11 @@ export const request = {
   voiceChannel: requestObject({ name: text }),
   voiceJoin: requestObject({ channelId: uuid, leaseId: optional(uuid) }),
   voiceLease: requestObject({ leaseId: uuid }),
-  capturePrepare: requestObject({ requestId: uuid, sound: oneOf('none', 'system'), epoch: uuid }),
+  capturePrepare: requestObject({
+    requestId: uuid,
+    sound: oneOf('none', 'system', 'application', 'source'),
+    epoch: uuid,
+  }),
   captureVerify: requestObject({ id: uuid }),
   captureCancel: requestObject({ requestId: uuid }),
   captureHandoff: requestObject({

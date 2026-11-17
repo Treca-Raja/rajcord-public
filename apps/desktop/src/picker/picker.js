@@ -4,7 +4,9 @@
   const list = document.getElementById('sources');
   const sound = document.getElementById('sound');
   const system = document.getElementById('system-sound');
+  const application = document.getElementById('application-sound');
   const help = document.getElementById('sound-help');
+  const audioSummary = document.getElementById('audio-summary');
   const confirm = document.getElementById('confirm');
   const cancel = document.getElementById('cancel');
   const selectedLabel = document.getElementById('selected-label');
@@ -20,11 +22,32 @@
     busy = false,
     ended = false;
   const radios = [...document.querySelectorAll('input[name=sound]')];
+  const soundLabels = {
+    none: 'Video only',
+    application: 'Selected app audio, including its child processes and other windows',
+    system: 'System audio, including other apps and call playback',
+    source: 'Automatic — application audio for a window, system audio for an entire screen',
+  };
+  const selectedSound = () =>
+    snapshot?.sound === 'source'
+      ? selected?.kind === 'window'
+        ? 'application'
+        : 'system'
+      : (snapshot?.sound ?? radios.find((radio) => radio.checked)?.value);
   const message = (text) => {
     status.textContent = text;
   };
   const update = () => {
-    confirm.disabled = ended || busy || !selected || !radios.some((r) => r.checked);
+    const compatible = selected?.sounds.includes(selectedSound());
+    confirm.disabled = ended || busy || !selected || !compatible;
+    if (snapshot?.sound) {
+      audioSummary.textContent =
+        'Audio: ' +
+        soundLabels[selected ? selectedSound() : snapshot.sound] +
+        (selected && !compatible
+          ? '. This source cannot provide that audio. Choose another source.'
+          : '');
+    }
   };
   const clearSelection = () => {
     selected = undefined;
@@ -36,6 +59,7 @@
     });
     sound.disabled = true;
     system.disabled = true;
+    application.disabled = true;
     help.textContent = 'Select a source to see its audio options.';
     update();
   };
@@ -116,7 +140,7 @@
     const result = await bridge.select({
       requestId: snapshot.requestId,
       handle: selected.handle,
-      sound: radios.find((r) => r.checked).value,
+      sound: selectedSound(),
     });
     if (ended) return;
     end(
@@ -139,6 +163,12 @@
       return;
     }
     snapshot = result.data;
+    if (snapshot.sound !== undefined && !Object.hasOwn(soundLabels, snapshot.sound)) {
+      end('This capture audio mode is unsupported. Close this window and try again.');
+      return;
+    }
+    sound.hidden = snapshot.sound !== undefined;
+    audioSummary.hidden = snapshot.sound === undefined;
     counts.window.textContent = String(
       snapshot.sources.filter((source) => source.kind === 'window').length,
     );
@@ -182,14 +212,26 @@
         for (const other of list.querySelectorAll('button'))
           other.setAttribute('aria-pressed', String(other === button));
         selectedLabel.textContent = source.label;
+        if (snapshot.sound) {
+          message(
+            source.sounds.includes(selectedSound())
+              ? 'Confirm this source.'
+              : 'This source cannot provide the required audio. Choose another source.',
+          );
+          update();
+          return;
+        }
         radios.forEach((r) => {
           r.checked = false;
         });
         sound.disabled = false;
         system.disabled = !source.sounds.includes('system');
-        help.textContent = system.disabled
-          ? 'System sound is unavailable for this source. Choose video only explicitly.'
-          : 'System sound can include other applications and call playback. Check your audio routing.';
+        application.disabled = !source.sounds.includes('application');
+        help.textContent = !application.disabled
+          ? 'Application audio includes this app and its child processes, including its other windows.'
+          : !system.disabled
+            ? 'System sound can include other applications and call playback. Check your audio routing.'
+            : 'Requested audio is unavailable for this source. Choose a compatible source or prepare video only.';
         message('Choose sound, then confirm this source.');
         update();
       });

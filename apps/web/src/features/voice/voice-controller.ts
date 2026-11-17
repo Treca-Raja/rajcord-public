@@ -3,6 +3,12 @@ import { VoiceOutput } from './voice-output';
 import type { Room, LocalAudioTrack, RemoteTrack } from 'livekit-client';
 import { ScreenBindingOwner, type ScreenBindingDependency } from '../screen-sharing';
 import type { VoiceRequest } from './voice-session';
+import {
+  defaultProcessing,
+  processingSettings,
+  appliedProcessing,
+  type MicrophoneProcessing,
+} from './voice-processing';
 export type VoiceChannel = {
   id: string;
   name: string;
@@ -16,6 +22,10 @@ export type VoiceState = {
   input: string;
   output: string;
   outputVolume: number;
+  processing: MicrophoneProcessing;
+  processingApplied: Partial<MicrophoneProcessing> | null;
+  processingBusy: boolean;
+  processingError: string;
   inputMissing: boolean;
   outputMissing: boolean;
   error: string;
@@ -42,6 +52,10 @@ export class VoiceController {
     input: '',
     output: '',
     outputVolume: 1,
+    processing: defaultProcessing,
+    processingApplied: null,
+    processingBusy: false,
+    processingError: '',
     inputMissing: false,
     outputMissing: false,
     error: '',
@@ -244,9 +258,7 @@ export class VoiceController {
         video: false,
         audio: {
           deviceId: { exact: input },
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          ...this.state.processing,
         },
       })
       .catch((error: unknown) => {
@@ -282,6 +294,7 @@ export class VoiceController {
           void room.localParticipant.unpublishTrack(track).catch(() => {});
           this.update({
             inputMissing: true,
+            processingApplied: null,
             error: 'Microphone disconnected. Choose a replacement; voice remains connected.',
           });
         },
@@ -301,6 +314,11 @@ export class VoiceController {
       } else {
         this.publishing.delete(track);
         await this.applyMute();
+        if (current())
+          this.update({
+            processingApplied: appliedProcessing(media.getSettings()),
+            processingError: '',
+          });
       }
     } catch (error) {
       track.stop();
@@ -308,6 +326,38 @@ export class VoiceController {
       if (current()) throw error;
     } finally {
       this.publishing.delete(track);
+    }
+  }
+  async setProcessing(value: MicrophoneProcessing) {
+    if (this.disposed) throw new Error('Voice controller was disposed.');
+    if (this.state.status === 'reconnecting')
+      throw new Error('Wait for voice to reconnect before changing microphone processing.');
+    const processing = processingSettings(value);
+    const generation = this.generation;
+    this.update({ processing, processingApplied: null, processingError: '', processingBusy: true });
+    try {
+      if (this.state.status === 'connected' || this.state.status === 'joining')
+        await this.capture(generation);
+    } catch (cause) {
+      if (
+        !this.disposed &&
+        this.state.processing === processing &&
+        generation === this.generation
+      ) {
+        const microphone = this.microphone;
+        this.microphone = undefined;
+        microphone?.stop();
+        this.update({
+          muted: true,
+          processingError:
+            'Microphone processing could not be applied. The microphone is muted. Retry or check the selected microphone.',
+        });
+        if (microphone && this.room) await this.room.localParticipant.unpublishTrack(microphone);
+      }
+      throw cause;
+    } finally {
+      if (!this.disposed && this.state.processing === processing)
+        this.update({ processingBusy: false });
     }
   }
   async join(channelId: string) {
@@ -519,6 +569,7 @@ export class VoiceController {
     this.captureAttempt++;
     this.microphone?.stop();
     this.microphone = undefined;
+    this.update({ processingApplied: null });
     for (const element of this.elements.values()) {
       element.muted = true;
       element.pause();
@@ -540,7 +591,7 @@ export class VoiceController {
     this.lease = undefined;
     room?.removeAllListeners();
     this.clearMedia();
-    this.update({ status: 'idle', channelId: null, participants: [] });
+    this.update({ status: 'idle', channelId: null, participants: [], processingApplied: null });
     try {
       await this.outputAudio.close();
     } catch (error) {
@@ -690,6 +741,7 @@ export class VoiceController {
       this.microphone = undefined;
       this.update({
         inputMissing: true,
+        processingApplied: null,
         error: 'Selected microphone is missing. Choose a replacement.',
       });
     }

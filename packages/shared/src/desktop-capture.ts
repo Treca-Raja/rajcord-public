@@ -1,7 +1,7 @@
 // Picker-only DTOs. Raw IDs, NativeImage, and frame identity stay in main; bounded local previews
 // may cross this bridge as data URLs for the isolated source picker only.
 export const DESKTOP_CAPTURE_PROTOCOL_VERSION = 1;
-export type DesktopCaptureSound = 'none' | 'system';
+export type DesktopCaptureSound = 'none' | 'system' | 'application' | 'source';
 export type DesktopCaptureChoice = {
   requestId: string;
   handle: string;
@@ -12,6 +12,7 @@ export type DesktopPickerSnapshot = {
   version: typeof DESKTOP_CAPTURE_PROTOCOL_VERSION;
   requestId: string;
   remainingMs: number;
+  sound?: DesktopCaptureSound;
   sources: {
     handle: string;
     label: string;
@@ -31,7 +32,7 @@ export interface DesktopCapturePickerBridge {
 export type DesktopScreenPreparation = {
   clientIntentRef: string;
   epoch: string;
-  sound: 'none' | 'system';
+  sound: DesktopCaptureSound;
 };
 export type DesktopScreenStatus = {
   clientIntentRef: string;
@@ -40,7 +41,12 @@ export type DesktopScreenStatus = {
   error?: string;
 };
 export interface DesktopScreenBridge {
-  capabilities(): Promise<{ version: 1; systemSound: boolean }>;
+  capabilities(): Promise<{
+    version: 1;
+    systemSound: boolean;
+    applicationSound?: boolean;
+    sourceSound?: boolean;
+  }>;
   prepare(request: DesktopScreenPreparation): Promise<DesktopScreenStatus>;
   handoff(request: {
     clientIntentRef: string;

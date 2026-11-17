@@ -33,7 +33,9 @@
   color: #ffb9af !important;
 }
 .live-shell.screen-call-open {
-  grid-template-columns: 68px 238px minmax(320px, 1fr);
+  grid-template-columns:
+    var(--workspace-rail-width, 68px) var(--workspace-sidebar-width, 238px)
+    minmax(320px, 1fr);
 }
 .live-shell.screen-call-open > .members {
   display: none;
@@ -45,7 +47,7 @@
   position: relative;
   overflow: hidden;
 }
-.live-shell.screen-call-open .screen-launcher {
+.live-shell.screen-call-open .voice-panel .screen-launcher {
   display: none;
 }
 .live-shell.screen-call-open .voice-panel > .voice-settings-toggle,
@@ -1225,11 +1227,6 @@
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-@media (max-width: 1200px) {
-  .live-shell.screen-call-open {
-    grid-template-columns: 60px 210px minmax(320px, 1fr);
   }
 }
 @media (max-width: 750px) {

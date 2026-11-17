@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { installScreenIpc } from './screen-ipc';
 
-function fixture() {
+function fixture(applicationSound = false) {
   type Options = Parameters<typeof installScreenIpc>[0];
   const handlers = new Map<string, (event: unknown, value?: unknown) => unknown>();
   let visible = true;
@@ -40,6 +40,7 @@ function fixture() {
     ipc,
     trusted: (event: unknown) => event === trusted,
     systemSound: true,
+    applicationSound,
   } as unknown as Options);
   const invoke = (event: string, body?: unknown, sender: unknown = trusted) =>
     handlers.get('screen:' + event)!(sender, body);
@@ -69,6 +70,32 @@ it('denies foreign senders and unexpected request fields before native authority
   expect(f.authority.prepare).toHaveBeenCalledWith('none', request.epoch);
   f.owner.emit('closed');
   expect(f.handlers.size).toBe(0);
+});
+it.each([false, true])(
+  'gates application audio preparation on main capability: %s',
+  async (enabled) => {
+    const f = fixture(enabled);
+    const request = { clientIntentRef: randomUUID(), epoch: randomUUID(), sound: 'application' };
+    if (enabled) {
+      expect(await f.invoke('capabilities')).toMatchObject({ applicationSound: true });
+      await f.invoke('prepare', request);
+      expect(f.authority.prepare).toHaveBeenCalledWith('application', request.epoch);
+    } else {
+      await expect(async () => f.invoke('prepare', request)).rejects.toThrow(
+        'Invalid screen preparation',
+      );
+      expect(f.authority.prepare).not.toHaveBeenCalled();
+    }
+    f.owner.emit('closed');
+  },
+);
+it('advertises and prepares automatic source audio without a renderer audio selection', async () => {
+  const f = fixture(true);
+  expect(await f.invoke('capabilities')).toMatchObject({ sourceSound: true });
+  const request = { clientIntentRef: randomUUID(), epoch: randomUUID(), sound: 'source' };
+  await f.invoke('prepare', request);
+  expect(f.authority.prepare).toHaveBeenCalledWith('source', request.epoch);
+  f.owner.emit('closed');
 });
 it('scopes cancellation and handoff to the exact current intent and never exposes main grants/frame identity', async () => {
   const f = fixture(),

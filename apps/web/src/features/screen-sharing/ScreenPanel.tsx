@@ -61,19 +61,6 @@ function ScreenButton({ controls, connected }: { controls: ScreenControls; conne
           if (state.phase === 'sharing') {
             if (state.open) controls.close();
             else void controls.open().catch(() => {});
-          } else if (state.prepared && state.phase === 'ready') {
-            void controls.choose().catch(() => {});
-          } else if (window.tricordDesktop && !state.open) {
-            void controls
-              .open()
-              .then(() => controls.prepare({ ...defaultScreenQuality, sound: 'none' }))
-              .then(() => controls.choose())
-              .catch(() => {});
-          } else if (window.tricordDesktop && state.open && !state.prepared) {
-            void controls
-              .prepare({ ...defaultScreenQuality, sound: 'none' })
-              .then(() => controls.choose())
-              .catch(() => {});
           } else void controls.open(true).catch(() => {});
         }}
       >
@@ -142,6 +129,8 @@ function ConnectedScreenPanel({
     videoBitrate: 4000000,
   });
   const [sound, setSound] = useState<ScreenSound>('none');
+  const automaticAudio = window.tricordDesktop?.platform === 'win32';
+  const sourceSound: ScreenSound = automaticAudio ? 'source' : sound;
   const [error, setError] = useState('');
   const currentControls = useRef(controls);
   currentControls.current = controls;
@@ -666,31 +655,29 @@ function ConnectedScreenPanel({
                     </select>
                   </label>
                 </div>
-                <label>
-                  Source sound
-                  <select
-                    aria-label="Screen source sound"
-                    disabled={state.prepared}
-                    value={sound}
-                    onChange={(event) => setSound(event.target.value as ScreenSound)}
-                  >
-                    <option value="none">Video only</option>
-                    {window.tricordDesktop ? (
-                      window.tricordDesktop.platform === 'win32' && (
-                        <option value="system">System sound — all applications</option>
-                      )
-                    ) : (
-                      <option value="tab">Selected browser tab sound</option>
-                    )}
-                  </select>
-                </label>
+                {automaticAudio ? (
+                  <p className="screen-help" role="note">
+                    Audio follows your source: an application window shares that app's audio; an
+                    entire display shares system audio, including other apps and call playback. App
+                    audio includes its child processes and may include its other windows.
+                  </p>
+                ) : (
+                  <label>
+                    Source sound
+                    <select
+                      aria-label="Screen source sound"
+                      disabled={state.prepared}
+                      value={sound}
+                      onChange={(event) => setSound(event.target.value as ScreenSound)}
+                    >
+                      <option value="none">Video only</option>
+                      {!window.tricordDesktop && (
+                        <option value="tab">Selected browser tab sound</option>
+                      )}
+                    </select>
+                  </label>
+                )}
               </fieldset>
-              {sound === 'system' && (
-                <p className="screen-help">
-                  System sound may include Rajcord and other applications. Use a separate playback
-                  route to avoid feeding the call back into your share.
-                </p>
-              )}
               {sound === 'tab' && (
                 <p className="screen-help">
                   Choose a browser tab and enable its audio in the browser picker.
@@ -702,7 +689,7 @@ function ConnectedScreenPanel({
                   disabled={busy}
                   onClick={() => {
                     setSettingsVisible(true);
-                    run(() => controls.prepare({ ...quality, sound }));
+                    run(() => controls.prepare({ ...quality, sound: sourceSound }));
                   }}
                 >
                   Prepare source
@@ -957,13 +944,7 @@ function ConnectedScreenPanel({
               disabled={busy}
               onClick={() => {
                 if (state.phase === 'sharing') controls.stopSource();
-                else if (state.phase === 'preview' || !window.tricordDesktop)
-                  setSettingsVisible(true);
-                else
-                  run(async () => {
-                    if (!state.prepared) await controls.prepare({ ...quality, sound });
-                    await controls.choose();
-                  });
+                else setSettingsVisible(true);
               }}
             >
               {state.phase === 'sharing' ? <Square size={18} /> : <MonitorUp size={19} />}

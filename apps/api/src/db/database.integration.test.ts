@@ -83,7 +83,7 @@ describe('real PostgreSQL foundation', () => {
       'suspended',
       'removed',
     ]);
-    expect(snapshot.journal).toHaveLength(8);
+    expect(snapshot.journal).toHaveLength(9);
     const tables = await database.pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name",
     );
@@ -100,6 +100,7 @@ describe('real PostgreSQL foundation', () => {
       'message_pins',
       'message_reactions',
       'messages',
+      'password_recovery_codes',
       'platform',
       'sender_alert_preferences',
       'sessions',

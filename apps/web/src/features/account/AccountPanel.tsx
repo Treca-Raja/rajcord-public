@@ -4,6 +4,7 @@ import type { AuthUser } from '@tricord/shared';
 import { X, LogOut } from 'lucide-react';
 import { AppearancePreferences } from '../appearance';
 import { useAuth, type SettingsTab } from './context';
+import { PasswordRecoveryIssuer } from './PasswordRecovery';
 type Device = {
   id: string;
   device_label: string;
@@ -82,6 +83,8 @@ export function AccountPanel({
   const currentRequest = useRef(requestContract);
   currentRequest.current = requestContract;
   const busy = loading || saving;
+  const [recoveryTarget, setRecoveryTarget] = useState<AuthUser | null>(null);
+  const recoveryTrigger = useRef<HTMLButtonElement>(null);
   const load = useCallback(async () => {
     loadRequest.current?.abort();
     const controller = new AbortController();
@@ -380,6 +383,18 @@ export function AccountPanel({
                   </small>
                 </div>
                 <div className="account-actions">
+                  {state.user.isOwner && user.status === 'approved' && !user.isOwner && (
+                    <button
+                      className="secondary"
+                      disabled={busy}
+                      onClick={(event) => {
+                        recoveryTrigger.current = event.currentTarget;
+                        setRecoveryTarget(user);
+                      }}
+                    >
+                      Reset password
+                    </button>
+                  )}
                   {user.id !== state.user.id && !user.isOwner && (
                     <>
                       {(user.status === 'pending'
@@ -434,6 +449,21 @@ export function AccountPanel({
                 </div>
               </div>
             ))}
+            {state.user.isOwner &&
+              recoveryTarget &&
+              users.some(
+                (user) =>
+                  user.id === recoveryTarget.id && user.status === 'approved' && !user.isOwner,
+              ) && (
+                <PasswordRecoveryIssuer
+                  key={recoveryTarget.id}
+                  target={recoveryTarget}
+                  close={() => {
+                    setRecoveryTarget(null);
+                    if (recoveryTrigger.current?.isConnected) recoveryTrigger.current.focus();
+                  }}
+                />
+              )}
             <h3>Recent account decisions</h3>
             {history.map((row) => (
               <p className="audit-row" key={row.id}>

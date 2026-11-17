@@ -229,7 +229,8 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
       this.cancelRequest
     )
       throw new Error('Capture authority is unavailable or busy.');
-    if (sound !== 'none' && sound !== 'system') throw new Error('Invalid capture sound choice.');
+    if (sound !== 'none' && sound !== 'system' && sound !== 'application' && sound !== 'source')
+      throw new Error('Invalid capture sound choice.');
     if (!validId(epoch)) throw new Error('Invalid screen binding reference.');
     const context = this.options.context();
     if (!context?.alive || !Number.isSafeInteger(context.navigation))
