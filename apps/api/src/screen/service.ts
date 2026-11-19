@@ -245,7 +245,7 @@ export class ScreenService {
   private async pair(caller: Binding, peer: Binding) {
     await this.endpoints(caller, new Set([peer]));
   }
-  private async endpoints(caller: Binding, peers: Set<Binding>, renewalContinuation = false) {
+  private async endpoints(caller: Binding, peers: Set<Binding>, dropUnauthorizedPeers = false) {
     const endpoints = [...peers].filter((peer) => peer !== caller);
     endpoints.push(caller);
     let results: Awaited<ReturnType<VoiceService['authorizeBatch']>>;
@@ -260,22 +260,26 @@ export class ScreenService {
       this.clear();
       throw error;
     }
-    let peerAuthorizationLost = false;
+    let droppedPeer = false;
     for (const [index, binding] of endpoints.entries()) {
       const lease = results[index];
+      if (
+        dropUnauthorizedPeers &&
+        binding !== caller &&
+        (lease instanceof HttpError || !this.current(binding))
+      ) {
+        this.dropBinding(binding);
+        droppedPeer = true;
+        continue;
+      }
       if (lease instanceof HttpError) {
         this.dropBinding(binding);
-        if (renewalContinuation && binding !== caller) {
-          peerAuthorizationLost = true;
-          continue;
-        }
         throw new ScreenError('not_authorized', lease.statusCode, 'Screen authorization ended.');
       }
       this.check(binding);
       if (lease !== binding.lease || caller.channelId !== binding.channelId) throw denied();
     }
-    // A stale continuation can restart only after the caller's own check succeeds.
-    if (peerAuthorizationLost) throw stale();
+    return droppedPeer;
   }
   private shareValue(share: Share): ScreenShare {
     return { ...share.value };
@@ -706,7 +710,10 @@ export class ScreenService {
         peers.add(link.share.publisher);
       }
       peers.delete(binding);
-      await this.endpoints(binding, peers);
+      const droppedPeer = await this.endpoints(binding, peers, knownRevision !== undefined);
+      // A refresh can rebuild its directory after pruning, including any legacy entries
+      // that move into view. Leave the transport's delivered revision unchanged.
+      if (droppedPeer) return null;
       this.check(binding);
       for (const peer of peers) this.check(peer);
       for (const share of shares) if (share.publisher.share !== share) throw stale();
@@ -833,18 +840,26 @@ export class ScreenService {
         throw stale();
       const end = binding.renewalPages ? offset + SCREEN_RENEWAL_PAGE_SIZE : undefined;
       const own = replay ? binding.renewal!.publication?.share : binding.share;
-      const links = replay
+      const requestedLinks = replay
         ? binding.renewal!.links.slice(offset, end).map((item) => item.link)
         : [...this.links.values()].filter(
             (link) => link.viewer === binding || link.share.publisher === binding,
           );
-      await this.endpoints(
+      const droppedPeer = await this.endpoints(
         binding,
         new Set(
-          links.map((link) => (link.viewer === binding ? link.share.publisher : link.viewer)),
+          requestedLinks.map((link) =>
+            link.viewer === binding ? link.share.publisher : link.viewer,
+          ),
         ),
-        offset > 0,
+        true,
       );
+      // Replayed pages must keep their original offsets. Only a fresh renewal
+      // can drop revoked links and build a new set of pages.
+      if (droppedPeer && replay) throw stale();
+      const links = droppedPeer
+        ? requestedLinks.filter((link) => this.links.get(link.value.id) === link)
+        : requestedLinks;
       this.check(binding);
       if (
         own &&

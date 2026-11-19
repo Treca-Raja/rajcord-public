@@ -94,8 +94,17 @@ it('skips unchanged snapshot delivery while still authorizing the polling recipi
   f.publisher.auth.revoked = true;
   await expect(
     f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver, first.revision),
-  ).rejects.toMatchObject({ code: 'not_authorized' });
+  ).resolves.toBeNull();
   expect(deliver).not.toHaveBeenCalled();
+  await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver, first.revision);
+  expect(deliver).toHaveBeenCalledExactlyOnceWith({
+    directory: {
+      epoch: f.v.epoch,
+      revision: expect.any(Number),
+      shares: [expect.objectContaining({ publisherId: another.lease.userId })],
+    },
+    links: [],
+  });
 });
 it('skips the voice lock on the second poll after a change in another channel', async () => {
   const f = await signalingFixture(),
@@ -921,6 +930,7 @@ describe('ephemeral screen authorization', () => {
     await expect(
       f.screen.renew(publisher.caller, { ...cursor, requestId: randomUUID() }, send),
     ).rejects.toMatchObject({ code: 'stale' });
+    viewers[0]!.auth.revoked = true;
     viewers.at(-1)!.auth.revoked = true;
     await expect(f.screen.renew(publisher.caller, cursor, send)).rejects.toMatchObject({
       code: 'stale',
@@ -933,7 +943,7 @@ describe('ephemeral screen authorization', () => {
     const freshLast = await f.screen.renew(publisher.caller, freshCursor);
     expect(freshFirst.publication?.share).toEqual(share);
     expect([...freshFirst.links, ...freshLast.links].map(({ link }) => link.id)).toEqual(
-      ids.slice(0, -1),
+      ids.slice(1, -1),
     );
 
     // Even after the initial caller check succeeds, revocation during the batch
@@ -1308,7 +1318,7 @@ describe('ephemeral screen authorization', () => {
     await expect(pending).rejects.toMatchObject({ code: 'stale' });
   });
 
-  it('rechecks all links after asynchronous fan-out renewal authorization', async () => {
+  it('renews healthy links when a viewer is revoked during asynchronous authorization', async () => {
     const f = fixture(),
       peers = await linked(f),
       other = f.user(),
@@ -1332,12 +1342,20 @@ describe('ephemeral screen authorization', () => {
     await started.promise;
     f.voice.invalidate(peers.viewer.lease);
     release.resolve();
-    await expect(pending).rejects.toMatchObject({ code: 'stale' });
+    const renewed = await pending;
+    expect(renewed.publication?.share).toEqual(peers.share);
+    expect(renewed.links.map(({ link }) => link.id)).toEqual([second.link.id]);
     f.setHook();
     expect(
       (await f.screen.authorizeLink(other.caller, { epoch: b.epoch, linkId: second.link.id }))
         .remainingMs,
-    ).toBe(44000);
+    ).toBe(54000);
+    await expect(
+      f.screen.authorizeLink(peers.viewer.caller, {
+        epoch: peers.v.epoch,
+        linkId: peers.link.link.id,
+      }),
+    ).rejects.toMatchObject({ code: 'stale' });
   });
 
   it('removes grants synchronously before failed LiveKit removal and notifies only once', async () => {

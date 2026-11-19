@@ -149,6 +149,8 @@ Local regressions cover version 2 publication and selection validation, admissio
 
 A service regression created 200 screen link grants. The single acknowledgement exceeded the 64 KiB output budget. Pages of 128 and 72 grants each fit, and revoking a viewer on the second page prevented its delivery. This check exercised signaling with fixture leases. Media capacity still depends on the workload.
 
+Follow-up regressions revoked viewers on both pages. The stale continuation delivered no grants and a fresh renewal kept the publisher and all authorized links. A background directory refresh also discarded its snapshot when it found a revoked peer, then delivered the updated directory on the next refresh. Revoking the renewal caller still prevented delivery. A database integration case suspended one of two publishers and confirmed that the authorized viewer could renew its other watch while access to the suspended link was denied.
+
 The native Edge ICE-restart test used the application's receive lane and observed incoming RTP statistics, new video frames and decoded source audio after recovery. A separate receiver unit test rotated synthetic TURN credentials during an outstanding statistics read and confirmed that the receiver applied the new configuration and answered the restart offer.
 
 # Earlier six-person voice calls with adaptive gameplay sharing — 2026-11-19
