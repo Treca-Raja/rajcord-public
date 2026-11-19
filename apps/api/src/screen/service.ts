@@ -245,7 +245,7 @@ export class ScreenService {
   private async pair(caller: Binding, peer: Binding) {
     await this.endpoints(caller, new Set([peer]));
   }
-  private async endpoints(caller: Binding, peers: Set<Binding>) {
+  private async endpoints(caller: Binding, peers: Set<Binding>, renewalContinuation = false) {
     const endpoints = [...peers].filter((peer) => peer !== caller);
     endpoints.push(caller);
     let results: Awaited<ReturnType<VoiceService['authorizeBatch']>>;
@@ -260,15 +260,22 @@ export class ScreenService {
       this.clear();
       throw error;
     }
+    let peerAuthorizationLost = false;
     for (const [index, binding] of endpoints.entries()) {
       const lease = results[index];
       if (lease instanceof HttpError) {
         this.dropBinding(binding);
+        if (renewalContinuation && binding !== caller) {
+          peerAuthorizationLost = true;
+          continue;
+        }
         throw new ScreenError('not_authorized', lease.statusCode, 'Screen authorization ended.');
       }
       this.check(binding);
       if (lease !== binding.lease || caller.channelId !== binding.channelId) throw denied();
     }
+    // A stale continuation can restart only after the caller's own check succeeds.
+    if (peerAuthorizationLost) throw stale();
   }
   private shareValue(share: Share): ScreenShare {
     return { ...share.value };
@@ -836,6 +843,7 @@ export class ScreenService {
         new Set(
           links.map((link) => (link.viewer === binding ? link.share.publisher : link.viewer)),
         ),
+        offset > 0,
       );
       this.check(binding);
       if (

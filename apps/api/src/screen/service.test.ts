@@ -878,7 +878,7 @@ describe('ephemeral screen authorization', () => {
     const { epoch } = await f.bind(publisher);
     const share = await f.publish(publisher.caller, epoch);
     const ids: string[] = [];
-    let lastViewer: ReturnType<typeof f.user> | undefined;
+    const viewers: ReturnType<typeof f.user>[] = [];
     for (let i = 0; i < (paged ? 200 : SCREEN_RENEWAL_PAGE_SIZE + 1); i++) {
       const viewer = f.user(),
         binding = await f.bind(viewer);
@@ -891,7 +891,7 @@ describe('ephemeral screen authorization', () => {
         await expect(work).rejects.toMatchObject({ code: 'capacity' });
       } else {
         ids.push((await work)!.link.id);
-        lastViewer = viewer;
+        viewers.push(viewer);
       }
     }
     const request = { epoch, revision: 1, requestId: randomUUID() };
@@ -921,8 +921,29 @@ describe('ephemeral screen authorization', () => {
     await expect(
       f.screen.renew(publisher.caller, { ...cursor, requestId: randomUUID() }, send),
     ).rejects.toMatchObject({ code: 'stale' });
-    lastViewer!.auth.revoked = true;
+    viewers.at(-1)!.auth.revoked = true;
     await expect(f.screen.renew(publisher.caller, cursor, send)).rejects.toMatchObject({
+      code: 'stale',
+    });
+    expect(send).not.toHaveBeenCalled();
+
+    const fresh = { ...request, revision: 2, requestId: randomUUID() };
+    const freshFirst = await f.screen.renew(publisher.caller, fresh);
+    const freshCursor = { ...fresh, offset: freshFirst.nextOffset };
+    const freshLast = await f.screen.renew(publisher.caller, freshCursor);
+    expect(freshFirst.publication?.share).toEqual(share);
+    expect([...freshFirst.links, ...freshLast.links].map(({ link }) => link.id)).toEqual(
+      ids.slice(0, -1),
+    );
+
+    // Even after the initial caller check succeeds, revocation during the batch
+    // must still be reported as a caller authorization failure.
+    const nextViewer = viewers.at(-2)!;
+    nextViewer.auth.revoked = true;
+    f.setHook(async (token) => {
+      if (token === nextViewer.caller.token) publisher.auth.revoked = true;
+    });
+    await expect(f.screen.renew(publisher.caller, freshCursor, send)).rejects.toMatchObject({
       code: 'not_authorized',
     });
     expect(send).not.toHaveBeenCalled();

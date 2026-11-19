@@ -146,6 +146,7 @@ export class ScreenCall {
   private active = true;
   private connecting?: Promise<void>;
   private renewing?: Set<string>;
+  private renewalPending = false;
   private renewalFailures = 0;
   private publishing = false;
   private preparing = false;
@@ -691,6 +692,10 @@ export class ScreenCall {
   };
   private requestRenewal() {
     if (!this.current() || this.renewalTimer) return;
+    if (this.renewing) {
+      this.renewalPending = true;
+      return;
+    }
     this.renewalTimer = setTimeout(() => {
       this.renewalTimer = undefined;
       runInBackground(this.renew());
@@ -877,7 +882,13 @@ export class ScreenCall {
         }
       }
     } finally {
-      if (this.renewing === closedLinks) this.renewing = undefined;
+      if (this.renewing === closedLinks) {
+        this.renewing = undefined;
+        if (this.renewalPending) {
+          this.renewalPending = false;
+          this.requestRenewal();
+        }
+      }
     }
   }
   private linkGrant(value: unknown, started: number) {
@@ -1402,6 +1413,7 @@ export class ScreenCall {
   private disconnect() {
     this.generation++;
     this.renewing = undefined;
+    this.renewalPending = false;
     this.renewalFailures = 0;
     clearInterval(this.interval);
     clearTimeout(this.renewalTimer);
