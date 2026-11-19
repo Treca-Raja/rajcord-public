@@ -122,6 +122,10 @@ function ConnectedScreenPanel({
   const [quality, setQuality] = useState<ScreenQuality>({
     ...defaultScreenQuality,
   });
+  const [adaptiveCapture, setAdaptiveCapture] = useState(false);
+  const publishQuality: ScreenQuality = adaptiveCapture
+    ? { profile: quality.profile, videoBitrate: quality.videoBitrate }
+    : quality;
   const [watchQuality, setWatchQuality] = useState<ScreenQuality>({
     profile: 'smooth',
     resolution: 1080,
@@ -357,14 +361,8 @@ function ConnectedScreenPanel({
         : element.requestFullscreen(),
     );
   };
-  const displayQuality = activeShare
-    ? state.watching
-      ? requested(activeShare, watchQuality)
-      : {
-          resolution: activeShare.resolution ?? quality.resolution,
-          frameRate: activeShare.frameRate ?? quality.frameRate,
-        }
-    : null;
+  const displayQuality =
+    activeShare && (state.watching ? requested(activeShare, watchQuality) : activeShare);
   const renderStream = (item: Readonly<ScreenShare>) => {
     const watched = state.watchingShareIds.includes(item.id);
     const publisher =
@@ -457,7 +455,9 @@ function ConnectedScreenPanel({
         <div className="screen-call-indicators">
           {displayQuality && (
             <span className="screen-quality-badge">
-              {displayQuality.resolution}p {displayQuality.frameRate} FPS
+              {displayQuality.resolution
+                ? `${displayQuality.resolution}p ${displayQuality.frameRate} FPS`
+                : 'Adaptive'}
             </span>
           )}
           <span className={live ? 'screen-live-badge is-live' : 'screen-live-badge'}>
@@ -597,45 +597,63 @@ function ConnectedScreenPanel({
             <div className="screen-options">
               <fieldset disabled={busy || (state.prepared && state.phase !== 'preview')}>
                 <legend>Your screen</legend>
+                {!window.tricordDesktop && (
+                  <label className="screen-capture-mode">
+                    Capture mode
+                    <select
+                      aria-label="Screen capture mode"
+                      disabled={state.prepared}
+                      value={adaptiveCapture ? 'adaptive' : 'fixed'}
+                      onChange={(event) => setAdaptiveCapture(event.target.value === 'adaptive')}
+                    >
+                      <option value="fixed">Fixed</option>
+                      <option value="adaptive">Adaptive</option>
+                    </select>
+                  </label>
+                )}
                 <div className="screen-quality">
-                  <label>
-                    Resolution
-                    <select
-                      aria-label="Screen resolution"
-                      value={quality.resolution}
-                      onChange={(event) =>
-                        setQuality({
-                          ...quality,
-                          resolution: Number(event.target.value) as ScreenQuality['resolution'],
-                        })
-                      }
-                    >
-                      {SCREEN_RESOLUTIONS.map((value) => (
-                        <option key={value} value={value}>
-                          {value}p
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Frame rate
-                    <select
-                      aria-label="Screen frame rate"
-                      value={quality.frameRate}
-                      onChange={(event) =>
-                        setQuality({
-                          ...quality,
-                          frameRate: Number(event.target.value) as ScreenQuality['frameRate'],
-                        })
-                      }
-                    >
-                      {SCREEN_FRAME_RATES.map((value) => (
-                        <option key={value} value={value}>
-                          {value} fps
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {!adaptiveCapture && (
+                    <>
+                      <label>
+                        Resolution
+                        <select
+                          aria-label="Screen resolution"
+                          value={quality.resolution}
+                          onChange={(event) =>
+                            setQuality({
+                              ...quality,
+                              resolution: Number(event.target.value) as ScreenQuality['resolution'],
+                            })
+                          }
+                        >
+                          {SCREEN_RESOLUTIONS.map((value) => (
+                            <option key={value} value={value}>
+                              {value}p
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Frame rate
+                        <select
+                          aria-label="Screen frame rate"
+                          value={quality.frameRate}
+                          onChange={(event) =>
+                            setQuality({
+                              ...quality,
+                              frameRate: Number(event.target.value) as ScreenQuality['frameRate'],
+                            })
+                          }
+                        >
+                          {SCREEN_FRAME_RATES.map((value) => (
+                            <option key={value} value={value}>
+                              {value} fps
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  )}
                   <label>
                     Video bitrate per viewer
                     <select
@@ -690,7 +708,7 @@ function ConnectedScreenPanel({
                   disabled={busy}
                   onClick={() => {
                     setSettingsVisible(true);
-                    run(() => controls.prepare({ ...quality, sound: sourceSound }));
+                    run(() => controls.prepare({ ...publishQuality, sound: sourceSound }));
                   }}
                 >
                   Prepare source
@@ -712,7 +730,7 @@ function ConnectedScreenPanel({
                   className="screen-action-primary"
                   onClick={() => {
                     setSettingsVisible(false);
-                    run(() => controls.publish(quality));
+                    run(() => controls.publish(publishQuality));
                   }}
                 >
                   Start sharing
@@ -724,8 +742,11 @@ function ConnectedScreenPanel({
                 </p>
               )}
               <p className="screen-help">
-                Capture uses the selected resolution and frame rate. Each viewer has a separate
-                video bitrate allowance. Upload capacity and encoder speed affect playback.
+                {adaptiveCapture
+                  ? 'The browser can adjust resolution and frame rate up to 1080p and 60 fps.'
+                  : 'Capture uses the selected resolution and frame rate.'}{' '}
+                Each viewer has a separate video bitrate allowance. Upload capacity and encoder
+                speed affect playback.
               </p>
             </div>
             <div className="screen-settings-divider" />

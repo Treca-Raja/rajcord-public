@@ -821,6 +821,7 @@ export class ScreenCall {
           screenRenewalPermit(life.generation, Math.min(deadline, proof.deadline), revision),
         );
       }
+      const newPublishers: { link: ScreenLinkGrant['link']; deadline: number }[] = [];
       for (const grant of links.values()) {
         if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
         if (closedLinks.has(grant.link.id)) continue;
@@ -849,10 +850,16 @@ export class ScreenCall {
             const permit = screenRenewalPermit(existing.life.generation, peerDeadline, revision);
             existing.life.renew(permit);
             existing.peer.adoptRenewal(permit);
-          } else {
-            await this.openPublisher(grant.link, peerDeadline, source, own);
-            if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
-          }
+          } else newPublishers.push({ link: grant.link, deadline: peerDeadline });
+        }
+      }
+      // Existing media must adopt its new deadline before signaling a new peer.
+      if (own && source) {
+        for (const { link, deadline } of newPublishers) {
+          if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
+          if (closedLinks.has(link.id) || deadline <= Date.now()) continue;
+          await this.openPublisher(link, deadline, source, own);
+          if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
         }
       }
       for (const id of this.outgoing.keys()) if (!links.has(id)) this.closeOutgoing(id);
@@ -1194,7 +1201,13 @@ export class ScreenCall {
           )
             return;
           recovery.attempts++;
-          await this.selectShare(shareId, qualityOnly(incoming.selection), 'add', recovery);
+          await this.selectShare(shareId, qualityOnly(incoming.selection), 'add', recovery).catch(
+            (cause: unknown) => {
+              if ((cause as { code?: string } | undefined)?.code !== 'throttled') throw cause;
+              if (this.watchRecoveries.get(shareId) === recovery && this.current(binding))
+                this.recoverWatching(incoming, binding);
+            },
+          );
         } catch (cause) {
           if (this.watchRecoveries.get(shareId) === recovery && this.current(binding))
             this.error(cause);

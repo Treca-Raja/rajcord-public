@@ -153,22 +153,24 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         await choose(a, 'Screen video bitrate', '4000000');
         if (sound === 'tab') await choose(a, 'Screen source sound', 'tab');
         if (sound === 'none') {
-          await a.js(`void (window.__restoreScreenEncoder = (() => {
+          await a.js(`(() => {
             const setParameters = RTCRtpSender.prototype.setParameters;
             RTCRtpSender.prototype.setParameters = function (parameters) {
               if (parameters.degradationPreference === 'maintain-framerate-and-resolution')
                 throw new TypeError('Unsupported degradation preference');
               return setParameters.call(this, parameters);
             };
-            return () => { RTCRtpSender.prototype.setParameters = setParameters; };
-          })())`);
+          })()`);
           await a.click('Prepare source');
           await a.wait(
-            "document.querySelector('.screen-error')?.textContent.includes('This browser cannot publish screen shares at a fixed resolution and frame rate.')",
+            "document.querySelector('.screen-error')?.textContent.includes('Choose Adaptive capture in the browser')",
           );
           expect(await a.js('window.__screenTest.calls')).toBe(0);
           expect(commandDiagnostics.some(({ event }) => event === 'screen:publish')).toBe(false);
-          await a.js('window.__restoreScreenEncoder()');
+          await choose(a, 'Screen capture mode', 'adaptive');
+          expect(await a.js('!document.querySelector(\'[aria-label="Screen resolution"]\')')).toBe(
+            true,
+          );
         }
         expect(await a.js('window.__screenTest.calls')).toBe(0);
         await a.click('Prepare source');
@@ -177,10 +179,11 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         await a.click('Choose source');
         await a.wait("document.querySelector('#screen-panel')?.dataset.phase==='preview'");
         expect(await a.js('window.__screenTest.options[0].video')).toEqual({
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: sound === 'none' ? 1920 : 1280 },
+          height: { ideal: sound === 'none' ? 1080 : 720 },
           frameRate: { ideal: 60, max: 60 },
         });
+        expect(await a.js('window.__screenTest.options[0].audio')).toBe(sound === 'tab');
         expect(
           await a.js('document.querySelector(\'[aria-label="Local screen preview"]\').muted'),
         ).toBe(true);

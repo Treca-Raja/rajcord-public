@@ -14,6 +14,10 @@ To isolate the recurring 51 fps result, a separate reader counted timestamps and
 
 With this change, both gameplay viewers decoded a median 59.86 fps and presented a median 58.19 fps. All 26 observations were 1920×1080. The native sender input median was 60 fps, and the strict all-interval playback requirement still failed. Edge and the pinned Electron accepted and retained the combined encoder preference. Firefox 160.0.1 rejected both the combined preference and the older disabled value in a standalone sender probe. Fixed-format publishing now checks for support during preparation and reports the limitation before opening the source picker. An Edge app regression test simulated the rejected preference and confirmed visible feedback with no picker invocation or publication request. After restoring native Edge behavior, the same test shared and played synthetic video.
 
+The PR #80 follow-up adds an explicit browser Adaptive mode. In Edge, the full app rejected an injected fixed-format failure before opening the picker, then published and renewed video in Adaptive mode with the same rejection still active. The Fixed tab-audio scenario also passed. A native Firefox 160.0.1 probe used a synthetic 640×360 canvas track with its known frame rate supplied to the application encoder policy because Firefox omitted it from canvas metadata. The receiver displayed video with no audio tracks, and the sender confirmed the 2 Mb/s and 15 fps viewer limits. The Firefox OS picker and WAN playback still require manual verification.
+
+Lifecycle regressions hold a new publisher offer past an existing watch's former deadline, and exercise a successful second recovery selection and exhaustion after two throttled selections. Existing links adopt their renewed deadlines before new offers are sent.
+
 ## H.264 bitrate comparison at 1080p60
 
 The 17 Mb/s result records the earlier experimental run. The live version 2 signaling contract uses the original bitrate choices so older clients can still parse directories and renewal grants. The standalone feasibility probe still accepts 17 Mb/s.

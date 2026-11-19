@@ -751,6 +751,48 @@ it('preserves a watch selected while renewal waits for an outgoing offer', async
   open.mockRestore();
 });
 
+it('renews an existing watch before waiting for a new publisher offer', async () => {
+  const f = await fixture();
+  const gate = deferred();
+  const watched = f.notice().grant;
+  const lifetime = f.openIncoming.mock.calls[0]![0].lifecycle;
+  const life = new ScreenLifetime(Date.now() + 45000);
+  const own = { ...f.share, id: crypto.randomUUID(), publisherId: crypto.randomUUID() };
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
+  f.command.mockResolvedValueOnce({
+    remainingMs: 45000,
+    publication: { share: own, remainingMs: 45000 },
+    links: [
+      {
+        remainingMs: 45000,
+        link: {
+          ...watched.link,
+          id: crypto.randomUUID(),
+          shareId: own.id,
+          publisherId: own.publisherId,
+        },
+      },
+      watched,
+    ],
+  });
+  const open = vi
+    .spyOn(f.call as unknown as { openPublisher(): Promise<void> }, 'openPublisher')
+    .mockImplementation(() => gate.promise);
+  const originalDeadline = lifetime.inspect()!.deadline;
+  vi.setSystemTime(originalDeadline - 1000);
+  const renewal = (f.call as unknown as { renew(): Promise<void> }).renew();
+  await flush();
+  expect(open).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1001);
+  const stillWatching = lifetime.inspect();
+  gate.resolve();
+  await renewal;
+  open.mockRestore();
+  expect(stillWatching?.deadline).toBeGreaterThan(originalDeadline);
+  expect(f.binding.release).not.toHaveBeenCalled();
+});
+
 it.each(['stop', 'hide', 'binding', 'source', 'dispose'] as const)(
   'cancels incoming recovery on %s',
   async (action) => {
@@ -788,6 +830,29 @@ it('bounds automatic reselection and leaves other watched streams and focus inta
   expect(f.call.inspect().error).toContain('recovery failed');
   expect(f.call.inspect().watching).toBe(other.id);
 });
+
+it.each([1, 2])(
+  'handles %s throttled recovery selections within the retry budget',
+  async (failures) => {
+    const f = await fixture();
+    const command = f.command.getMockImplementation()!;
+    let attempts = 0;
+    f.command.mockImplementation(async (event, request) => {
+      if (event === 'screen:select' && request.shareId === f.share.id && ++attempts <= failures)
+        throw Object.assign(new Error('Screen authorization is busy.'), { code: 'throttled' });
+      return command(event, request);
+    });
+    f.openIncoming.mock.results[0]!.value.update({ phase: 'closed', reason: 'failed' });
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(attempts).toBe(2);
+    if (failures === 1) {
+      expect(f.call.inspect()).toMatchObject({ watching: f.share.id, error: '' });
+    } else {
+      expect(f.call.inspect().watching).toBeNull();
+      expect(f.call.inspect().error).toContain('recovery failed');
+    }
+  },
+);
 
 it.each(['before retry', 'during selection'] as const)(
   'keeps the user’s latest view when they change it %s',

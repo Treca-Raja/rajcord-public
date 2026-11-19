@@ -56,7 +56,7 @@ export async function requireFixedScreenFormat() {
   } catch (cause) {
     throw new ScreenVideoQualityError(
       'unsupported',
-      'This browser cannot publish screen shares at a fixed resolution and frame rate. Use the Rajcord desktop app or a browser that supports fixed-format sharing.',
+      'This browser cannot publish screen shares at a fixed resolution and frame rate. Choose Adaptive capture in the browser, or use a version of Rajcord that supports fixed-format sharing.',
       { cause },
     );
   } finally {
