@@ -121,6 +121,8 @@ Ten isolated Edge clients on one Ryzen 5 5600 / RTX 3060 Ti PC joined voice, wit
 
 Every scored link stayed direct at 1920×1080 and all ten clients continued receiving voice. Both calls passed cleanup. Playback fell below the cadence floor in some windows in each call. There was one run per workload, all endpoints shared the same hardware, and neither run exercised a WAN path.
 
+A follow-up ten-person run used the same high-motion recording, one publisher, two direct 1080p60 viewers and two synthetic microphones. The fixture tracked each listener's incoming microphones separately. All 18 expected microphone-to-listener paths advanced in every five-second window and again after Stop. Both screen links closed at both endpoints, capture ended, all ten voice sessions stayed connected, and fixture cleanup passed. The two viewers had median presentation rates of 58.02 and 57.64 fps with zero new freezes. Both reached the 57 fps floor together in 11 of 13 windows, so the sustained playback check failed.
+
 ### Two viewers sharing one publisher uplink
 
 Six local Edge clients joined voice. One sent a synthetic microphone and file-backed 1080p60 gameplay at 12 Mb/s per viewer. A single Chromium upload rule on the publisher covered both P2P connections and its microphone. Viewer 1 watched alone for three five-second windows, then viewer 2 joined. The capped run released the 18 Mb/s limit 30 seconds after the join and observed another 90 seconds. The control followed the same sequence with unrestricted upload. Both viewers retained direct 1920×1080 throughout the scored intervals.

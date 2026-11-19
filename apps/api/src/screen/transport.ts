@@ -1,10 +1,12 @@
 import type { Server, Socket } from 'socket.io';
+import { SCREEN_DIRECTORY_PAGE_SIZE } from '@tricord/shared';
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
   ScreenAck,
   ScreenBinding,
   ScreenDirectory,
+  ScreenDirectoryReply,
 } from '@tricord/shared';
 import { HttpError } from '../auth/validation.js';
 import { ScreenService, ScreenError, type ScreenCaller, type ScreenSnapshot } from './service.js';
@@ -16,6 +18,7 @@ type Connection = {
   caller: ScreenCaller;
   epoch?: string;
   snapshotBatch: boolean;
+  directoryPending: boolean;
   revision: number;
   completeRevision: number;
   links: Set<string>;
@@ -24,6 +27,34 @@ type Connection = {
   refreshing: boolean;
   output: ScreenOutput;
 };
+function sendDirectoryChanges(c: Connection, directory: ScreenDirectory) {
+  const { epoch, revision, shares } = directory;
+  const current = new Set(shares.map((share) => share.id));
+  const removed = [...c.shares].filter((id) => !current.has(id));
+  const added = shares.filter((share) => !c.shares.has(share.id));
+  // Recompute each unsent delta from a freshly authorized snapshot on every refresh.
+  c.directoryPending = true;
+  let addIndex = 0,
+    removeIndex = 0;
+  do {
+    const removePage = removed.slice(removeIndex, removeIndex + SCREEN_DIRECTORY_PAGE_SIZE);
+    const addPage = added.slice(
+      addIndex,
+      addIndex + SCREEN_DIRECTORY_PAGE_SIZE - removePage.length,
+    );
+    removeIndex += removePage.length;
+    addIndex += addPage.length;
+    const complete = addIndex === added.length && removeIndex === removed.length;
+    const page = { epoch, revision, removed: removePage, added: addPage, complete };
+    if (!c.output.take(false, [page])) return false;
+    c.socket.emit('screen:directoryChanges', page);
+    for (const id of removePage) c.shares.delete(id);
+    for (const share of addPage) c.shares.add(share.id);
+  } while (addIndex < added.length || removeIndex < removed.length);
+  c.directoryPending = false;
+  c.revision = revision;
+  return true;
+}
 function failure(error: unknown): ScreenAck<never> {
   if (error instanceof ScreenError)
     return {
@@ -69,42 +100,51 @@ export function registerScreen(
       revision: directory.revision,
       grant,
     }));
-    const needsDirectory = c.revision !== directory.revision;
+    const needsDirectory = c.revision !== directory.revision || c.directoryPending;
+    const largeDirectory =
+      c.caller.directoryChanges && directory.shares.length > SCREEN_DIRECTORY_PAGE_SIZE;
     const sendDirectory = () => {
       c.socket.emit('screen:directory', directory);
       c.shares = new Set(directory.shares.map((share) => share.id));
       c.revision = directory.revision;
+      c.directoryPending = false;
     };
     const defer = () => {
       c.dirty = true;
     };
+    c.output.take(c.socket.conn.transport.writable, []);
     if (
-      c.output.take(c.socket.conn.transport.writable, [
-        ...closed,
-        ...(needsDirectory ? [directory] : []),
-        ...notices,
-      ])
+      !largeDirectory &&
+      c.output.take(false, [...closed, ...(needsDirectory ? [directory] : []), ...notices])
     ) {
       for (const notice of closed) c.socket.emit('screen:closed', notice);
       if (needsDirectory) sendDirectory();
       for (const notice of notices) c.socket.emit('screen:link', notice);
-    } else if (c.snapshotBatch) {
-      const batch = { directory, links: added, closed: closed.map((notice) => notice.linkId) };
-      if (!c.output.take(false, [batch])) return defer();
-      c.socket.emit('screen:snapshot', batch);
-      c.shares = new Set(directory.shares.map((share) => share.id));
-      c.revision = directory.revision;
     } else {
-      // Older tabs only understand individual events. Keep their progress so a
-      // snapshot larger than one output window can finish on the next refresh.
+      if (c.snapshotBatch && !largeDirectory) {
+        const batch = { directory, links: added, closed: closed.map((notice) => notice.linkId) };
+        if (c.output.take(false, [batch])) {
+          c.socket.emit('screen:snapshot', batch);
+          c.shares = new Set(directory.shares.map((share) => share.id));
+          c.revision = c.completeRevision = directory.revision;
+          c.directoryPending = false;
+          c.links = current;
+          return;
+        }
+      }
+      // Preserve progress when an entire batch exceeds even a drained output window.
       for (const notice of closed) {
         if (!c.output.take(false, [notice])) return defer();
         c.socket.emit('screen:closed', notice);
         c.links.delete(notice.linkId);
       }
       if (needsDirectory) {
-        if (!c.output.take(false, [directory])) return defer();
-        sendDirectory();
+        if (largeDirectory) {
+          if (!sendDirectoryChanges(c, directory)) return defer();
+        } else {
+          if (!c.output.take(false, [directory])) return defer();
+          sendDirectory();
+        }
       }
       for (const notice of notices) {
         if (!c.output.take(false, [notice])) return defer();
@@ -128,7 +168,7 @@ export function registerScreen(
         { epoch },
         (snapshot) => sendSnapshot(c, snapshot),
         c.completeRevision,
-        c.revision > 0 ? c : undefined,
+        c.revision > 0 && !c.directoryPending ? c : undefined,
       );
       if (c.epoch === epoch && unchangedRevision !== null)
         c.completeRevision = Math.max(c.completeRevision, unchangedRevision);
@@ -179,15 +219,19 @@ export function registerScreen(
       if (disposed) return;
       const wave = [...connections.values()].filter((c) => c.epoch);
       if (!wave.length) return;
-      const start = refreshOffset++ % wave.length;
+      const start = refreshOffset % wave.length;
       refreshing = true;
       // Admit one directory refresh at a time so polling cannot fill the
       // shared voice authorization queue ahead of interactive commands.
       rejectUnexpected(
         (async () => {
           try {
-            for (let i = 0; i < wave.length && !disposed; i++)
-              await refreshConnection(wave[(start + i) % wave.length]!);
+            for (let i = 0; i < wave.length && !disposed; i++) {
+              refreshOffset = (start + i) % wave.length;
+              if (!budget.snapshotAvailable()) break;
+              await refreshConnection(wave[refreshOffset]!);
+              refreshOffset++;
+            }
           } finally {
             refreshing = false;
           }
@@ -204,9 +248,11 @@ export function registerScreen(
         transportId: socket.id,
         supportsMoreThanNineViewers: socket.handshake.auth.screenMoreThanNineViewers === true,
         renewalPages: socket.handshake.auth.screenRenewalPages === true,
+        directoryChanges: socket.handshake.auth.screenDirectoryChanges === true,
         isConnected: () => socket.connected && !disposed,
       },
       snapshotBatch: socket.handshake.auth.screenSnapshotBatch === true,
+      directoryPending: false,
       revision: 0,
       completeRevision: 0,
       links: new Set(),
@@ -258,6 +304,7 @@ export function registerScreen(
           if (c.epoch !== binding.epoch) {
             c.revision = 0;
             c.completeRevision = 0;
+            c.directoryPending = false;
             c.links.clear();
             c.shares.clear();
           }
@@ -287,10 +334,22 @@ export function registerScreen(
     );
     socket.on('screen:directory', (data, ack) =>
       rejectUnexpected(
-        handle<ScreenDirectory>('control', data, ack, (reply) =>
+        handle<ScreenDirectoryReply>('control', data, ack, (reply) =>
           service.snapshot(c.caller, data, (snapshot) => {
+            const directory = snapshot.directory;
+            if (c.caller.directoryChanges && directory.shares.length > SCREEN_DIRECTORY_PAGE_SIZE) {
+              // A request awaiting this revision also needs a completion event if a
+              // superseding update restores the membership from the previous directory.
+              if (c.completeRevision !== directory.revision && c.revision !== directory.revision)
+                c.directoryPending = true;
+              reply({
+                epoch: directory.epoch,
+                revision:
+                  c.completeRevision === directory.revision ? c.revision : directory.revision,
+                streamed: true,
+              });
+            } else reply(directory);
             sendSnapshot(c, snapshot);
-            reply(snapshot.directory);
           }),
         ),
       ),

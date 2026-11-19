@@ -5,6 +5,15 @@ const wire = vi.hoisted(() => ({ io: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: wire.io }));
 const sockets: ScreenSocket[] = [],
   drains: (() => void)[] = [];
+const oldShare = {
+  id: '00000000-0000-4000-8000-000000000001',
+  publisherId: '00000000-0000-4000-8000-000000000002',
+  sourceGeneration: 1,
+  profile: 'smooth',
+  videoBitrate: 8000000,
+  sound: 'none',
+};
+const currentShare = { ...oldShare, id: '00000000-0000-4000-8000-000000000003' };
 const flush = async () => {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 };
@@ -74,6 +83,91 @@ it('unpacks a bounded snapshot batch in the same lifecycle order as individual e
     { event: 'directory', value: directory },
     { event: 'link', value: { epoch: directory.epoch, revision: 3, grant } },
   ]);
+});
+it.each([true, false])(
+  'resolves a streamed ACK only after a complete directory (ACK first: %s)',
+  async (ackFirst) => {
+    const f = fixture(),
+      epoch = 'bound',
+      observed: unknown[] = [];
+    const page = (
+      revision: number,
+      added: { id: string }[],
+      removed: string[],
+      complete: boolean,
+    ) => f.raw.emit('screen:directoryChanges', { epoch, revision, added, removed, complete });
+    const marker = { ok: true, data: { epoch, revision: 2, streamed: true } };
+    const done = vi.fn();
+    if (!ackFirst) page(2, [oldShare], [], false);
+    const request = f.socket.command('screen:directory', { epoch }).then((value) => {
+      done();
+      return value;
+    });
+    f.socket.subscribe((event, data) => observed.push([event, data]));
+    if (ackFirst) {
+      f.pending[0]!.resolve(marker);
+      await flush();
+      page(2, [oldShare], [], false);
+    }
+    await flush();
+    expect(done).not.toHaveBeenCalled();
+    expect(observed).toEqual([]);
+    page(3, [currentShare], [oldShare.id], true);
+    if (!ackFirst) f.pending[0]!.resolve(marker);
+    const expected = { epoch, revision: 3, shares: [currentShare] };
+    expect(await request).toEqual(expected);
+    expect(observed).toEqual([['directory', expected]]);
+  },
+);
+it.each([
+  ['screen:directory', { epoch: 'bound', revision: 2, shares: [currentShare, null] }],
+  [
+    'screen:directoryChanges',
+    {
+      epoch: 'bound',
+      revision: 2,
+      added: [currentShare, null],
+      removed: [oldShare.id],
+      complete: true,
+    },
+  ],
+  [
+    'screen:directoryChanges',
+    { epoch: 'bound', revision: 2, added: [currentShare], removed: [], complete: 'yes' },
+  ],
+  ['screen:snapshot', { directory: null, links: [], closed: [oldShare.id] }],
+])(
+  'retires a malformed %s packet before delivering any partial changes',
+  async (event, payload) => {
+    const f = fixture(),
+      observed = vi.fn();
+    f.socket.subscribe(observed);
+    f.raw.emit(event as string, payload);
+    expect(observed.mock.calls.map(([name]) => name)).toEqual(['disconnect']);
+    expect(f.raw.connected).toBe(false);
+    await expect(f.socket.command('screen:directory', { epoch: 'bound' })).rejects.toThrow(
+      'unavailable',
+    );
+  },
+);
+it('recovers a whole directory sent before subscription or acknowledgement, and cancels an incomplete transfer on retirement', async () => {
+  const f = fixture(),
+    epoch = 'bound';
+  f.raw.emit('screen:directoryChanges', {
+    epoch,
+    revision: 4,
+    added: [currentShare],
+    removed: [],
+    complete: true,
+  });
+  const request = f.socket.command('screen:directory', { epoch });
+  f.pending[0]!.resolve({ ok: true, data: { epoch, revision: 4, streamed: true } });
+  await expect(request).resolves.toEqual({ epoch, revision: 4, shares: [currentShare] });
+  const newer = f.socket.command('screen:directory', { epoch }).catch((cause) => cause);
+  f.pending[1]!.resolve({ ok: true, data: { epoch, revision: 5, streamed: true } });
+  await flush();
+  await f.socket.retire();
+  expect(await newer).toBeInstanceOf(Error);
 });
 it('cancels queued commands and retains active raw admission after logical cancellation', async () => {
   const f = fixture(),

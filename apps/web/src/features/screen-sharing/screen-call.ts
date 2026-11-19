@@ -24,8 +24,8 @@ import { ScreenPeer } from './screen-peer';
 import type { ScreenReceiveHandle } from './screen-receiver';
 import { publicScreenIceServers, screenIceServers } from './screen-ice';
 import { requireFixedScreenFormat, screenVideoRequest } from './screen-quality';
-import { screenVideoBudget } from './screen-adaptation';
 import { screenRenewalPermit } from './screen-renewal';
+import { record, share, uuid } from './screen-share';
 
 export type ScreenSettings = ScreenQuality & { sound: ScreenSound };
 export type ScreenCallState = Readonly<{
@@ -80,14 +80,6 @@ export type ScreenControls = Pick<
   | 'close'
 >;
 
-const uuid = (value: unknown): value is string =>
-  typeof value === 'string' &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-const record = (value: unknown) => {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('Invalid screen response.');
-  return value as Record<string, unknown>;
-};
 const lifetime = (value: unknown, started: number) => {
   if (!Number.isSafeInteger(value) || (value as number) <= 0 || (value as number) > 45000)
     throw new Error('Invalid screen authority deadline.');
@@ -95,48 +87,6 @@ const lifetime = (value: unknown, started: number) => {
   if (deadline <= Date.now()) throw new Error('Screen authority expired.');
   return deadline;
 };
-function share(value: unknown): ScreenShare {
-  const data = record(value);
-  if (
-    Object.keys(data).some(
-      (key) =>
-        ![
-          'id',
-          'publisherId',
-          'sourceGeneration',
-          'profile',
-          'videoBitrate',
-          'resolution',
-          'frameRate',
-          'sound',
-        ].includes(key),
-    ) ||
-    !uuid(data.id) ||
-    !uuid(data.publisherId) ||
-    !Number.isSafeInteger(data.sourceGeneration) ||
-    (data.sourceGeneration as number) < 1 ||
-    !['none', 'tab', 'system', 'application', 'source'].includes(data.sound as string)
-  )
-    throw new Error('Invalid screen share.');
-  const quality = screenVideoRequest({
-    revision: 1,
-    publisher: {
-      profile: data.profile,
-      videoBitrate: data.videoBitrate,
-      ...(data.resolution !== undefined || data.frameRate !== undefined
-        ? { resolution: data.resolution, frameRate: data.frameRate }
-        : {}),
-    },
-    viewer: { profile: 'smooth', videoBitrate: 8000000 },
-  }).publisher;
-  return Object.freeze({
-    ...quality,
-    id: data.id,
-    publisherId: data.publisherId,
-    sourceGeneration: data.sourceGeneration as number,
-    sound: data.sound as ScreenSound,
-  });
-}
 function publication(value: unknown, started: number) {
   const data = record(value);
   if (Object.keys(data).sort().join() !== 'remainingMs,share')
@@ -215,6 +165,7 @@ export class ScreenCall {
   private iceServers: RTCIceServer[] = screenIceServers(publicScreenIceServers);
   private outgoing = new Map<string, Outgoing>();
   private watchRecoveries = new Map<string, WatchRecovery>();
+  private preferredWatch?: string;
   private publisherLinks = new Map<string, ScreenLinkGrant['link']>();
   private removals: (() => void)[] = [];
   private bindingRemovals: (() => void)[] = [];
@@ -964,10 +915,9 @@ export class ScreenCall {
       socket = this.socket!,
       binding = this.binding!,
       epoch = binding.binding.epoch;
-    const capture = source.borrow();
-    this.publisherLinks.set(link.id, link);
     let peer: ScreenPeer | undefined;
     try {
+      const capture = source.borrow();
       peer = new ScreenPeer({
         endpoint: { epoch, linkId: link.id, role: 'publisher', sound: own.sound },
         lifecycle: life,
@@ -982,17 +932,6 @@ export class ScreenCall {
           publisher: qualityOnly(own),
           viewer: qualityOnly(link.quality),
         },
-        videoBudget: () => {
-          if (own.resolution !== undefined || link.quality.resolution !== undefined)
-            return Math.min(own.videoBitrate!, link.quality.videoBitrate!);
-          const links = [...this.publisherLinks.values()];
-          const index = links.findIndex((item) => item.id === link.id);
-          if (index < 0) throw new Error('Screen viewer budget retired.');
-          return screenVideoBudget(
-            links.map((item) => Math.min(own.videoBitrate!, item.quality.videoBitrate!)),
-            own.videoBitrate!,
-          )[index]!;
-        },
         send: async (signal, abort) => ({
           ok: true,
           data: await socket.command('screen:signal', signal, abort),
@@ -1005,27 +944,14 @@ export class ScreenCall {
           }
         },
       });
-    } catch (cause) {
-      this.publisherLinks.delete(link.id);
-      life.stop();
-      throw cause;
-    }
-    this.outgoing.set(link.id, { peer, life, shareId: own.id });
-    try {
-      await Promise.all(
-        [...this.outgoing.values()]
-          .filter((item) => item.peer !== peer && own.resolution === undefined)
-          .map((item) => item.peer.refreshVideoLimits()),
-      );
-      if (
-        this.outgoing.get(link.id)?.peer !== peer ||
-        this.source !== source ||
-        this.ownShare !== own
-      )
-        return;
+      this.publisherLinks.set(link.id, link);
+      this.outgoing.set(link.id, { peer, life, shareId: own.id });
       await peer.offer();
     } catch (cause) {
-      if (this.outgoing.get(link.id)?.peer === peer) {
+      if (!peer) {
+        life.stop();
+        if (this.current(binding) && this.source === source) this.error(cause);
+      } else if (this.outgoing.get(link.id)?.peer === peer) {
         this.closeOutgoing(link.id);
         this.error(cause);
       }
@@ -1172,7 +1098,12 @@ export class ScreenCall {
       this.receiving.set(shareId, incoming);
       this.selectionCleanup = undefined;
       this.selectionShareId = undefined;
-      this.updateWatching({ watching: shareId, layout: 'focus', playback: 'Connecting…' });
+      if (!recovery) {
+        this.preferredWatch = shareId;
+        this.updateWatching({ watching: shareId, layout: 'focus', playback: 'Connecting…' });
+      } else if (!this.state.watching || this.preferredWatch === shareId) {
+        this.updateWatching({ watching: shareId, playback: 'Connecting…' });
+      } else this.updateWatching({});
       handle.subscribe((state) => {
         if (this.receiving.get(shareId) !== incoming) return;
         if (state.phase === 'closed' || state.phase === 'paused-hidden') {
@@ -1186,7 +1117,7 @@ export class ScreenCall {
             playback: focused ? '' : this.state.playback,
           });
           if (state.reason === 'failed' || state.reason === 'tracks-timeout')
-            this.recoverWatching(incoming, binding, focused);
+            this.recoverWatching(incoming, binding);
           return;
         }
         const recovery = this.watchRecoveries.get(shareId);
@@ -1227,7 +1158,7 @@ export class ScreenCall {
     clearTimeout(this.watchRecoveries.get(shareId)?.timer);
     this.watchRecoveries.delete(shareId);
   }
-  private recoverWatching(incoming: Incoming, binding: OwnedScreenBinding, focused: boolean) {
+  private recoverWatching(incoming: Incoming, binding: OwnedScreenBinding) {
     const shareId = incoming.shareId;
     const recovery = this.watchRecoveries.get(shareId) ?? { attempts: 0, readyAt: 0 };
     if (recovery.readyAt && Date.now() - recovery.readyAt >= 30000) recovery.attempts = 0;
@@ -1252,13 +1183,7 @@ export class ScreenCall {
           )
             return;
           recovery.attempts++;
-          const previousFocus = this.state.watching,
-            previousLayout = this.state.layout;
           await this.selectShare(shareId, qualityOnly(incoming.selection), 'add', recovery);
-          if (this.watchRecoveries.get(shareId) !== recovery) return;
-          if (!focused && previousFocus && this.receiving.has(previousFocus))
-            this.updateWatching({ watching: previousFocus, layout: previousLayout });
-          else this.update({ layout: previousLayout });
         } catch (cause) {
           if (this.watchRecoveries.get(shareId) === recovery && this.current(binding))
             this.error(cause);
@@ -1283,10 +1208,14 @@ export class ScreenCall {
   }
   focusWatch = (shareId: string) => {
     if (!this.receiving.has(shareId)) return;
+    this.preferredWatch = shareId;
     this.updateWatching({ watching: shareId, layout: 'focus' });
   };
   zoomOutWatch = () => {
-    if (this.receiving.size > 0) this.update({ layout: 'grid' });
+    if (this.receiving.size > 0) {
+      this.preferredWatch = this.state.watching ?? undefined;
+      this.update({ layout: 'grid' });
+    }
   };
   stopWatchingShare = (shareId: string) => {
     this.cancelWatchRecovery(shareId);
@@ -1318,6 +1247,7 @@ export class ScreenCall {
     } else this.updateWatching({});
   };
   stopWatching = (forget = true) => {
+    this.preferredWatch = undefined;
     for (const shareId of this.watchRecoveries.keys()) this.cancelWatchRecovery(shareId);
     if (forget) this.resume = undefined;
     const pending = this.selectionCleanup,
@@ -1377,9 +1307,10 @@ export class ScreenCall {
           await this.watchMultiple(previousSelection.shareId, previousSelection.quality);
         else await this.watch(previousSelection.shareId, previousSelection.quality);
       }
-      if (this.receiving.has(previous.focused))
+      if (this.receiving.has(previous.focused)) {
+        this.preferredWatch = previous.focused;
         this.updateWatching({ watching: previous.focused, layout: previous.layout });
-      else if (this.receiving.size) this.update({ layout: previous.layout });
+      } else if (this.receiving.size) this.update({ layout: previous.layout });
       if (this.resume === previous) this.resume = undefined;
     } catch (cause) {
       retry = cause instanceof Error && cause.message === 'Screen selection ended.';

@@ -328,6 +328,52 @@ it('admits more than nineteen receivers while retaining exact-link admission fen
   expect(f.rtcs).toHaveLength(21);
   f.lane.dispose();
 });
+it('bounds retired work across distinct links and readmits after a raw operation settles', async () => {
+  const f = fixture('none');
+  const active = f.open();
+  await ready(active);
+  const stopped = f.open();
+  await ready(stopped);
+  const stats = deferred<RTCStatsReport>();
+  stopped.rtc.getStats.mockReturnValueOnce(stats.promise);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(stopped.rtc.getStats).toHaveBeenCalledOnce();
+  stopped.receiver.stop();
+  for (let i = 0; i < 8; i++) {
+    const selected = f.open();
+    const cleanup = deferred<void>();
+    vi.mocked(selected.request.cleanup).mockReturnValueOnce(cleanup.promise);
+    selected.receiver.stop();
+  }
+  await vi.advanceTimersByTimeAsync(5000);
+  const replacement = f.selection().request;
+  expect(() => f.lane.open(replacement)).toThrow(/outstanding work on stopped screen links/);
+  expect(f.rtcs).toHaveLength(10);
+  expect(active.receiver.inspect().phase).toBe('ready');
+  stats.resolve(new Map() as RTCStatsReport);
+  await flush();
+  f.lane.open(replacement);
+  expect(f.lane.inspect().activeCount).toBe(2);
+});
+it('keeps a closing receiver registered when a close observer reenters before cleanup', async () => {
+  const f = fixture();
+  const selected = f.open();
+  const cleanup = deferred<void>();
+  vi.mocked(selected.request.cleanup).mockReturnValueOnce(cleanup.promise);
+  let checked = false;
+  selected.receiver.subscribe((state) => {
+    if (state.phase === 'closed' && !checked) {
+      checked = true;
+      expect(() => f.lane.open(selected.request)).toThrow(/already has a receiver/);
+    }
+  });
+  selected.receiver.stop();
+  expect(checked).toBe(true);
+  expect(() => f.lane.open(selected.request)).toThrow(/already has a receiver/);
+  cleanup.resolve();
+  await flush();
+  f.lane.open(selected.request);
+});
 it.each(['none', 'tab', 'system', 'application', 'source'] as const)(
   'collects exactly negotiated %s tracks without sound substitution',
   async (sound) => {

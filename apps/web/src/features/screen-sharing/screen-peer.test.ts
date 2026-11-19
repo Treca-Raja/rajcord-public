@@ -1107,7 +1107,7 @@ it('inspection invalidates readback after external source resize without changin
   await f.peer.setVideoQuality(videoRequest());
   f.video.settings.height = 2160;
   expect(f.peer.inspectVideoQuality()).toMatchObject({ applied: null, closed: false });
-  await f.peer.refreshVideoLimits();
+  await vi.advanceTimersByTimeAsync(2000);
   expect(f.peer.inspectVideoQuality()).toMatchObject({
     applied: { encoding: { scaleResolutionDownBy: 2 } },
     closed: false,
@@ -1332,12 +1332,10 @@ it('keeps stats errors visible without ending healthy media and retains admissio
   expect(f.peer.inspectMedia()).toMatchObject({ statistics: 'closed', sample: null });
 });
 
-it('maintains source, content and budget limits even while native statistics remain hung', async () => {
-  let content: 'motion' | 'detail' = 'motion',
-    budget = 4000000;
+it('maintains source and content limits even while native statistics remain hung', async () => {
+  let content: 'motion' | 'detail' = 'motion';
   const f = fixture('publisher', 'none', (options) => {
     options.content = () => content;
-    options.videoBudget = () => budget;
   });
   const raw = deferred<RTCStatsReport>();
   drains.push(() => raw.resolve(mediaReport(1000)));
@@ -1346,12 +1344,11 @@ it('maintains source, content and budget limits even while native statistics rem
   await f.peer.setVideoQuality(videoRequest());
   await vi.advanceTimersByTimeAsync(3000);
   content = 'detail';
-  budget = 2000000;
   f.video.settings.width = 3840;
   await vi.advanceTimersByTimeAsync(1000);
   expect(f.rtc.senders[0]!.parameters).toMatchObject({
     degradationPreference: 'maintain-resolution',
-    encodings: [{ maxBitrate: 2000000, scaleResolutionDownBy: 2 }],
+    encodings: [{ maxBitrate: 4000000, scaleResolutionDownBy: 2 }],
   });
   expect(f.rtc.boundary.getStats).toHaveBeenCalledTimes(1);
   expect(f.peer.inspectMedia().statistics).toBe('pending');
@@ -1360,20 +1357,16 @@ it('maintains source, content and budget limits even while native statistics rem
   expect(f.peer.inspect().phase).toBe('stable');
 });
 
-it('installs the publisher budget before negotiation and waits for existing negotiation before rebalancing', async () => {
-  let budget = 2000000;
+it('installs the link bitrate before negotiation and keeps it across a sender refresh', async () => {
   const quality = videoRequest();
   const f = fixture('publisher', 'none', (options) => {
     options.initialVideoQuality = quality;
-    options.videoBudget = () => budget;
   });
   expect(f.video.contentHint).toBe('motion');
-  expect(f.rtc.addTransceiver.mock.calls[0]![1].sendEncodings?.[0]?.maxBitrate).toBe(2000000);
+  expect(f.rtc.addTransceiver.mock.calls[0]![1].sendEncodings?.[0]?.maxBitrate).toBe(4000000);
   await f.peer.offer();
-  budget = 1000000;
-  const refresh = f.peer.refreshVideoLimits();
   expect(f.rtc.senders[0]!.setParameters).not.toHaveBeenCalled();
   await f.peer.receive(f.message({ type: 'answer', sdp: screenSdp('answer', false) }));
-  await refresh;
-  expect(f.peer.inspectVideoQuality().applied?.encoding.maxBitrate).toBe(1000000);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.peer.inspectVideoQuality().applied?.encoding.maxBitrate).toBe(4000000);
 });

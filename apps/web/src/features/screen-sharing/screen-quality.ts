@@ -142,8 +142,7 @@ export function screenVideoPlan(value: unknown, settings: MediaTrackSettings): S
     height: Math.min(publisher.height, viewer.height),
     frameRate: Math.min(publisher.frameRate, viewer.frameRate),
   });
-  const fixed =
-    request.publisher.resolution !== undefined || request.viewer.resolution !== undefined;
+  const fixed = request.publisher.resolution !== undefined;
   if (fixed && (source.height < ceiling.height || source.frameRate < ceiling.frameRate))
     throw new ScreenVideoQualityError(
       'unqualified',

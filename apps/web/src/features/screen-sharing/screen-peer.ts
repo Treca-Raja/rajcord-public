@@ -26,7 +26,6 @@ import { screenIceServers, sameScreenIceServers } from './screen-ice';
 import { adoptScreenRenewal, type ScreenRenewalPermit } from './screen-renewal';
 import { ScreenStatistics, type ScreenMediaSample } from './screen-statistics';
 import { screenCodecContentType } from './screen-codec';
-import { screenAdaptiveVideoPlan } from './screen-adaptation';
 import type { ScreenContentKind } from './screen-content';
 
 // A local revocation/deadline seam, never a bearer grant. The signaling transport must
@@ -112,7 +111,6 @@ export class ScreenPeer {
   private videoTransceiver?: RTCRtpTransceiver;
   private preferredCodec: string | null = null;
   private codecPreferenceError = false;
-  private stableWaiters = new Set<() => void>();
   private statisticsPending = false;
   private statisticsTimeout?: ReturnType<typeof setTimeout>;
 
@@ -129,7 +127,6 @@ export class ScreenPeer {
       iceServers?: readonly RTCIceServer[];
       currentIceServers?: () => readonly RTCIceServer[];
       initialVideoQuality?: unknown;
-      videoBudget?: () => number;
       content?: () => ScreenContentKind;
       codecPreference?: () => Promise<string | null>;
     },
@@ -497,11 +494,7 @@ export class ScreenPeer {
     this.begin();
     return this.enqueue(async () => {
       const request = this.qualityRequested ?? this.initialRequest;
-      if (
-        request &&
-        this.videoSender &&
-        (request.publisher.resolution !== undefined || request.viewer.resolution !== undefined)
-      ) {
+      if (request?.publisher.resolution !== undefined && this.videoSender) {
         await applyScreenVideoPlan(
           this.videoSender,
           this.videoPlan(request),
@@ -650,8 +643,6 @@ export class ScreenPeer {
       }
       this.phase = 'stable';
       clearTimeout(this.negotiation);
-      for (const resolve of this.stableWaiters) resolve();
-      this.stableWaiters.clear();
       this.scheduleMonitoring();
     });
   }
@@ -716,30 +707,12 @@ export class ScreenPeer {
   }
   private videoPlan(request: ScreenVideoRequest) {
     const plan = screenVideoPlan(request, this.source!.video.getSettings());
-    const budget = this.options.videoBudget?.() ?? plan.encoding.maxBitrate;
-    if (!Number.isFinite(budget) || budget <= 0) throw failure('invalid video budget.');
-    return screenAdaptiveVideoPlan(
-      plan,
-      budget,
-      this.options.content?.() ?? (plan.ceiling.frameRate > 30 ? 'motion' : 'detail'),
-    );
+    return Object.freeze({
+      ...plan,
+      content: this.options.content?.() ?? (plan.ceiling.frameRate > 30 ? 'motion' : 'detail'),
+    });
   }
-  async refreshVideoLimits(): Promise<void> {
-    const request = this.qualityRequested ?? this.initialRequest;
-    if (!request || !this.source || !this.videoSender || this.phase === 'idle') return;
-    this.check();
-    if (this.phase !== 'stable') {
-      let ready!: () => void;
-      const stable = new Promise<void>((resolve) => {
-        ready = resolve;
-        this.stableWaiters.add(resolve);
-      });
-      try {
-        await this.wait(stable);
-      } finally {
-        this.stableWaiters.delete(ready);
-      }
-    }
+  private async refreshVideoLimits(request: ScreenVideoRequest): Promise<void> {
     return this.enqueue(async () => {
       this.check();
       const current = this.videoPlan(this.qualityRequested ?? request);
@@ -840,7 +813,7 @@ export class ScreenPeer {
       )
     )
       return;
-    await this.refreshVideoLimits();
+    await this.refreshVideoLimits(request);
   }
   inspectMedia() {
     return Object.freeze({
@@ -980,7 +953,6 @@ export class ScreenPeer {
     clearTimeout(this.monitoring);
     clearTimeout(this.recovery);
     clearTimeout(this.statisticsTimeout);
-    this.stableWaiters.clear();
     for (const task of this.tasks.splice(0)) task.reject(this.closed);
     for (const cancel of this.cancellations) cancel(this.closed);
     this.cancellations.clear();

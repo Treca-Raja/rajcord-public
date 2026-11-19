@@ -138,6 +138,7 @@ class ReceiveLane {
     this.active?.inspect();
     return Object.freeze({
       occupied: !!this.active,
+      retiring: this.ending,
       disposed: this.disposed,
       pending: Object.freeze(
         Object.fromEntries(
@@ -618,22 +619,31 @@ export type ScreenReceiveLane = Readonly<{
 }>;
 export function createScreenReceiveLane(options: LaneOptions): ScreenReceiveLane {
   const lanes = new Map<string, ReceiveLane>();
+  const maxRetiredPending = 9;
   let disposed = false;
   const prune = () => {
+    let retiredPending = 0;
     for (const [linkId, lane] of lanes) {
       const state = lane.inspect();
-      if (!state.occupied && !Object.values(state.pending).some(Boolean)) {
+      // A close observer can reenter before the cleanup promise has registered its slot.
+      if (state.retiring) retiredPending++;
+      else if (state.occupied) continue;
+      else if (Object.values(state.pending).some(Boolean)) retiredPending++;
+      else {
         lane.dispose();
         lanes.delete(linkId);
       }
     }
+    return retiredPending;
   };
   return Object.freeze({
     open: (request: ScreenReceiveOptions) => {
       if (disposed) throw error('closed', 'Receive lane was disposed.');
-      prune();
+      const retiredPending = prune();
       const linkId = request.endpoint.linkId;
       if (lanes.has(linkId)) throw error('busy', 'This screen link already has a receiver.');
+      if (retiredPending >= maxRetiredPending)
+        throw error('busy', 'Wait for outstanding work on stopped screen links to finish.');
       const lane = new ReceiveLane(options);
       lanes.set(linkId, lane);
       try {

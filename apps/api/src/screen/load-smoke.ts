@@ -18,11 +18,13 @@ import { tracePublisherPacing } from './load-pacing.js';
 import {
   screenLoadInterval,
   screenLoadWorkload,
+  screenMicrophoneFailures,
   screenPublisherInterval,
   screenRecoveryResults,
   screenSharedUplinkResults,
   sharedUplinkIntervals,
   type ScreenLoadSample,
+  type ScreenLoadMicrophone,
   type ScreenPublisherCounters,
 } from './load-metrics.js';
 
@@ -207,34 +209,42 @@ server.io.on('connection', (socket) =>
 );
 server.io.on('connection', (socket) =>
   socket.onAnyOutgoing((event, value) => {
-    const directory =
+    const shares =
       event === 'screen:directory'
-        ? value
+        ? value.shares
         : event === 'screen:snapshot'
-          ? value.directory
-          : undefined;
-    if (directory)
-      for (const share of directory.shares) {
-        const index = accounts.indexOf(share.publisherId);
-        if (index >= 0) owners[share.id] = index;
-      }
+          ? value.directory.shares
+          : event === 'screen:directoryChanges'
+            ? value.added
+            : [];
+    for (const share of shares) {
+      const index = accounts.indexOf(share.publisherId);
+      if (index >= 0) owners[share.id] = index;
+    }
   }),
 );
 type Client = {
   sampledAt: number;
   streams: ScreenLoadSample[];
   outgoing: ScreenPublisherCounters[];
-  voiceBytes: number;
+  voice: ScreenLoadMicrophone[];
   draws: number;
   liveSources: number;
 };
+const collectExpression = () =>
+  'window.screenLoad.collect(' + JSON.stringify(owners) + ',' + JSON.stringify(accounts) + ')';
 const collect = () =>
-  Promise.all(
-    browsers.map(
-      async (browser) =>
-        (await browser.js('window.screenLoad.collect(' + JSON.stringify(owners) + ')')) as Client,
-    ),
+  Promise.all(browsers.map(async (browser) => (await browser.js(collectExpression())) as Client));
+function checkMicrophones(before: readonly Client[], after: readonly Client[]) {
+  const failures = after.flatMap((client, listener) =>
+    screenMicrophoneFailures(activeMicrophones, listener, before[listener]!.voice, client.voice),
   );
+  assert.deepEqual(
+    failures,
+    [],
+    'Every expected remote microphone must advance: ' + failures.join(' '),
+  );
+}
 const samples: {
   networkPhase?:
     | 'baseline'
@@ -265,6 +275,7 @@ let failed: string | undefined,
   diagnostics: unknown,
   cancelled = false;
 let setupStreams: number | null = null;
+let screenStopPassed: boolean | null = null;
 let sustainedFpsPassed: boolean | null = null;
 let cadenceWindows: { minimumFps: number; passed: number; total: number } | null = null;
 let recoveryResults: ReturnType<typeof screenRecoveryResults> = null;
@@ -321,6 +332,7 @@ async function run() {
     if (index === impairedViewer) await setViewerConditions(browser, false);
     if (sharedUplink && index === 0) await setPublisherUplink(browser, uplinkMode === '1');
     await setup(browser, account.token, origin);
+    await browser.js('window.screenLoad.markVoicePeers()');
     // A single identifiable voice source lets every remote receiver measure the publisher's audio.
     if (index < activeMicrophones)
       await browser.js(
@@ -479,13 +491,10 @@ async function run() {
       hostBusyPercent: elapsed > 0 ? 100 * (1 - (cpu.idle - cpuBefore.idle) / elapsed) : null,
     });
     cpuBefore = cpu;
+    checkMicrophones(before, clients);
     assert.ok(
-      clients.every(
-        (client, index) =>
-          ((sharedUplink && index === 0) || client.voiceBytes > before[index]!.voiceBytes) &&
-          client.liveSources === Number(publishers.has(index)),
-      ),
-      'Every original source and microphone voice must continue.',
+      clients.every((client, index) => client.liveSources === Number(publishers.has(index))),
+      'Every original screen source must remain live.',
     );
     console.log(
       subscriptions +
@@ -524,18 +533,24 @@ async function run() {
       .length,
     0,
   );
+  screenStopPassed = false;
   for (const publisher of publishers)
     await browsers[publisher]!.js(
       'document.querySelector(\'[aria-label="Stop screen sharing"]\').click()',
     );
   for (const browser of browsers) {
-    await browser.wait("!document.querySelector('[data-screen-playback]')");
-    assert.equal(await browser.js('window.screenLoad.stopped()'), true);
+    await browser.wait(
+      "!document.querySelector('[data-screen-playback]') && window.screenLoad.stopped()",
+    );
     assert.equal(
       await browser.js("document.querySelector('[data-voice-status]')?.dataset.voiceStatus"),
       'connected',
     );
   }
+  const afterStop = await collect();
+  await delay(1000);
+  checkMicrophones(afterStop, await collect());
+  screenStopPassed = true;
   console.log(
     'Media measurements',
     JSON.stringify({
@@ -593,11 +608,7 @@ try {
 } catch (cause) {
   failed = cause instanceof Error ? cause.message : 'Unknown stress failure.';
   diagnostics = await Promise.allSettled(
-    browsers.map((browser) =>
-      browser.js(
-        'window.screenLoad ? window.screenLoad.collect(' + JSON.stringify(owners) + ') : null',
-      ),
-    ),
+    browsers.map((browser) => browser.js('window.screenLoad ? ' + collectExpression() + ' : null')),
   );
   process.exitCode = 1;
 } finally {
@@ -669,6 +680,7 @@ try {
         commands,
         voiceQueue: { wait: timings(queueWait), work: timings(commitTime) },
         diagnostics,
+        screenStopPassed,
         cleanupPassed: cleanup.every((item) => item.status === 'fulfilled'),
       },
       null,

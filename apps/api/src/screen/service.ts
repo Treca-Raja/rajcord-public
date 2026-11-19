@@ -31,6 +31,7 @@ export type ScreenCaller = {
   isConnected: () => boolean;
   supportsMoreThanNineViewers?: boolean;
   renewalPages?: boolean;
+  directoryChanges?: boolean;
 };
 type Voice = Pick<
   VoiceService,
@@ -666,9 +667,19 @@ export class ScreenService {
       // Unchanged polls authorize the recipient but deliver nothing. A changed
       // snapshot still freshly authorizes every source and link below.
       if (knownRevision === this.stateRevision) return knownRevision;
-      const shares = [...this.shares.values()].filter(
+      let shares = [...this.shares.values()].filter(
         (s) => s.publisher.channelId === binding.channelId,
       );
+      if (!caller.directoryChanges && shares.length > 10) {
+        // Released clients reject an entire directory with more than ten entries.
+        // Keep active watches and the caller's publication, then fill in publication order.
+        const active = (share: Share) =>
+          binding.share === share || binding.selections.has(share.value.id);
+        shares = [...shares.filter(active), ...shares.filter((share) => !active(share))].slice(
+          0,
+          10,
+        );
+      }
       const links = [...this.links.values()].filter(
         (l) => l.viewer === binding || l.share.publisher === binding,
       );

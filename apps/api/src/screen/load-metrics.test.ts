@@ -3,11 +3,35 @@ import {
   screenLoadInterval,
   screenLoadRounds,
   screenLoadWorkload,
+  screenMicrophoneFailures,
   screenPublisherInterval,
   screenRecoveryResults,
   screenSharedUplinkResults,
   type ScreenLoadSample,
 } from './load-metrics';
+
+it('checks each expected remote microphone independently of the other inbound audio', () => {
+  const before = [
+    { publisher: 0, trackId: 'mic-0', bytesReceived: 200 },
+    { publisher: 1, trackId: 'mic-1', bytesReceived: 100 },
+  ];
+  const after = before.map((row) => ({ ...row, bytesReceived: row.bytesReceived + 500 }));
+  expect(screenMicrophoneFailures(2, 2, before, after.toReversed())).toEqual([]);
+  for (const silent of [
+    [],
+    [before[1]!],
+    [{ ...after[1]!, bytesReceived: 10 }],
+    [{ ...after[1]!, trackId: 'replaced' }],
+    [{ ...after[1]!, publisher: null }],
+    [after[1]!, after[1]!],
+  ])
+    expect(screenMicrophoneFailures(2, 2, before, [after[0]!, ...silent])).toEqual([
+      'Microphone 1 did not advance on the same track at listener 2.',
+    ]);
+  expect(screenMicrophoneFailures(2, 2, [before[0]!], after)).toHaveLength(1);
+  expect(screenMicrophoneFailures(2, 0, [before[1]!], [after[1]!])).toEqual([]);
+  expect(screenMicrophoneFailures(1, 0, [], [])).toEqual([]);
+});
 
 it('defaults to ten voice participants, one publisher and two direct viewers', () => {
   expect(screenLoadWorkload({})).toEqual({

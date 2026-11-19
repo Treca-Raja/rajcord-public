@@ -1,6 +1,7 @@
 export const SCREEN_PROTOCOL_VERSION = 2;
 // With the bounded link fields below, a page fits the 64 KiB socket output window.
 export const SCREEN_RENEWAL_PAGE_SIZE = 128;
+export const SCREEN_DIRECTORY_PAGE_SIZE = 128;
 export const SCREEN_RESOLUTIONS = [480, 720, 1080] as const;
 export const SCREEN_FRAME_RATES = [15, 30, 60] as const;
 export type ScreenResolution = (typeof SCREEN_RESOLUTIONS)[number];
@@ -114,6 +115,15 @@ export type ScreenDirectory = {
   revision: number;
   shares: ScreenShare[];
 };
+export type ScreenDirectoryChanges = {
+  epoch: string;
+  revision: number;
+  added: ScreenShare[];
+  removed: string[];
+  complete: boolean;
+};
+export type ScreenDirectoryReply =
+  ScreenDirectory | { epoch: string; revision: number; streamed: true };
 export type ScreenLinkNotice = { epoch: string; revision: number; grant: ScreenLinkGrant };
 export type ScreenClosed = {
   epoch: string;
@@ -142,7 +152,7 @@ export interface ScreenClientEvents {
   ) => void;
   'screen:directory': (
     data: ScreenBoundRequest,
-    ack: (result: ScreenAck<ScreenDirectory>) => void,
+    ack: (result: ScreenAck<ScreenDirectoryReply>) => void,
   ) => void;
   'screen:signal': (
     data: ScreenSignal,
@@ -150,6 +160,7 @@ export interface ScreenClientEvents {
   ) => void;
 }
 export interface ScreenServerEvents {
+  'screen:directoryChanges': (data: ScreenDirectoryChanges) => void;
   'screen:snapshot': (data: {
     directory: ScreenDirectory;
     links: ScreenLinkGrant[];

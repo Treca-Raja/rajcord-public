@@ -7,6 +7,7 @@ import type { ScreenSocket } from './screen-socket';
 import type { OwnedScreenBinding } from './screen-binding';
 import type { ScreenReceiveOptions, ScreenReceiveState } from './screen-receiver';
 import type { VoiceState } from '../voice/contracts';
+import { screenSdp } from '../../../../api/src/screen/signaling-fixture';
 
 const wire = vi.hoisted(() => ({ current: undefined as unknown as ScreenSocket }));
 vi.mock('./screen-socket', () => ({ screenSocket: () => wire.current }));
@@ -554,6 +555,83 @@ it('does not tear down watching when a stopped publication interrupts outgoing r
   open.mockRestore();
 });
 
+it('opens independent profile-only senders and isolates a viewer whose peer cannot be constructed', async () => {
+  const f = await fixture();
+  const quality = { profile: 'smooth' as const, videoBitrate: 8000000 as const };
+  const own = {
+    ...quality,
+    id: crypto.randomUUID(),
+    publisherId: crypto.randomUUID(),
+    sound: 'none',
+    sourceGeneration: 1,
+  };
+  const life = new ScreenLifetime(Date.now() + 45000);
+  const video = Object.assign(new EventTarget(), {
+    enabled: true,
+    readyState: 'live',
+    kind: 'video',
+    getSettings: () => ({ width: 1600, height: 900, frameRate: 30 }),
+  });
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', {
+    lifecycle: () => life,
+    stop: () => life.stop(),
+    borrow: () => ({ video, audio: null, sound: 'none' }),
+    content: () => ({ kind: 'detail' }),
+    codecPreference: async () => null,
+  });
+  const addTransceiver = vi.fn((_track: MediaStreamTrack, _init: RTCRtpTransceiverInit) => ({}));
+  let nativePeers = 0;
+  vi.stubGlobal(
+    'RTCPeerConnection',
+    class extends EventTarget {
+      connectionState = 'new';
+      constructor(private readonly config: RTCConfiguration) {
+        super();
+        if (++nativePeers === 2) throw new Error('Peer construction failed');
+      }
+      getConfiguration = () => this.config;
+      getTransceivers = () => [];
+      addTransceiver = addTransceiver;
+      createOffer = async () => ({ type: 'offer', sdp: screenSdp('offer', false) });
+      setLocalDescription = async () => {};
+      close = () => {};
+    },
+  );
+  const command = f.command.getMockImplementation()!;
+  f.command.mockImplementation(async (event, request) => {
+    if (event === 'screen:signal') return { delivered: true } as never;
+    if (event !== 'screen:renew') return command(event, request);
+    return {
+      publication: { share: own, remainingMs: 45000 },
+      remainingMs: 45000,
+      links: [
+        f.notice().grant,
+        ...Array.from({ length: 3 }, () => ({
+          remainingMs: 45000,
+          link: {
+            ...f.notice().grant.link,
+            id: crypto.randomUUID(),
+            shareId: own.id,
+            publisherId: own.publisherId,
+            quality,
+          },
+        })),
+      ],
+    } as never;
+  });
+  await vi.advanceTimersByTimeAsync(10100);
+  expect(addTransceiver.mock.calls.map(([, init]) => init.sendEncodings?.[0]?.maxBitrate)).toEqual([
+    8000000, 8000000,
+  ]);
+  expect(f.call.inspect()).toMatchObject({
+    watching: f.share.id,
+    viewers: 2,
+    error: 'Peer construction failed',
+  });
+  expect(f.binding.release).not.toHaveBeenCalled();
+});
+
 it('preserves a watch selected while renewal waits for an outgoing offer', async () => {
   const f = await fixture(),
     next = f.addShare(),
@@ -632,6 +710,39 @@ it('bounds automatic reselection and leaves other watched streams and focus inta
   expect(f.call.inspect().error).toContain('recovery failed');
   expect(f.call.inspect().watching).toBe(other.id);
 });
+
+it.each(['before retry', 'during selection'] as const)(
+  'keeps the user’s latest view when they change it %s',
+  async (timing) => {
+    const f = await fixture();
+    const other = f.addShare();
+    await f.call.watchMultiple(other.id, f.quality);
+    const gate = deferred();
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (event, request) => {
+      if (event === 'screen:select' && request.shareId === other.id) await gate.promise;
+      return command(event, request);
+    });
+    f.openIncoming.mock.results[1]!.value.update({ phase: 'closed', reason: 'failed' });
+    if (timing === 'during selection') {
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(f.call.inspect().selectingShareId).toBe(other.id);
+    }
+    f.call.focusWatch(f.share.id);
+    f.call.zoomOutWatch();
+    const views: (string | null)[] = [];
+    const unsubscribe = f.call.subscribe(() => views.push(f.call.inspect().watching));
+    gate.resolve();
+    await vi.advanceTimersByTimeAsync(1000);
+    unsubscribe();
+    expect(f.call.inspect()).toMatchObject({
+      watching: f.share.id,
+      layout: 'grid',
+      watchingShareIds: [f.share.id, other.id],
+    });
+    expect(views).not.toContain(other.id);
+  },
+);
 
 it.each([18, 38, 64])(
   'renews combined incoming and outgoing links without a fixed room-count cap: %s',

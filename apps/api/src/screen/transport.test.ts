@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
-import type { ScreenAck } from '@tricord/shared';
+import type { ScreenAck, ScreenDirectoryChanges, ScreenShare } from '@tricord/shared';
 import type { ScreenCaller, ScreenSnapshot } from './service.js';
 import { registerScreen } from './transport.js';
 
@@ -57,6 +57,7 @@ async function withConnection(
           screenSnapshotBatch: batch,
           screenMoreThanNineViewers: viewerCapability,
           screenRenewalPages: renewalPages,
+          screenDirectoryChanges: batch,
         },
       },
       conn: { transport: { writable: true } },
@@ -97,6 +98,53 @@ it('carries an unchanged membership revision into the next scheduled poll', asyn
     vi.useRealTimers();
   }
 });
+it('spends consecutive snapshot windows on different connections when the aggregate budget fills', async () => {
+  vi.useFakeTimers();
+  const io = new EventEmitter(),
+    visited: string[] = [];
+  const stop = registerScreen(
+    io as unknown as Parameters<typeof registerScreen>[0],
+    {
+      onChange: () => () => {},
+      bind: async (caller: ScreenCaller) => ({ epoch: caller.transportId }),
+      snapshot: async (caller: ScreenCaller) => {
+        visited.push(caller.transportId);
+        return 1;
+      },
+      disconnect: () => {},
+    } as unknown as Parameters<typeof registerScreen>[1],
+  );
+  try {
+    for (let i = 0; i < 60; i++) {
+      const id = String(i),
+        inbound = new EventEmitter();
+      io.emit('connection', {
+        id,
+        connected: true,
+        data: { token: id, auth: { user: { id } } },
+        handshake: { auth: {} },
+        conn: { transport: { writable: true } },
+        on: inbound.on.bind(inbound),
+        once: inbound.once.bind(inbound),
+        emit: vi.fn(),
+      });
+      await new Promise<void>((resolve, reject) =>
+        inbound.emit('screen:bind', {}, (ack: ScreenAck<unknown>) =>
+          ack.ok ? resolve() : reject(new Error(ack.error)),
+        ),
+      );
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    visited.length = 0;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(new Set(visited).size).toBe(30);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(new Set(visited).size).toBe(60);
+  } finally {
+    stop();
+    vi.useRealTimers();
+  }
+});
 
 const snapshot: ScreenSnapshot = {
   directory: { epoch: 'epoch', revision: 2, shares: [] },
@@ -118,6 +166,77 @@ it('sends a large snapshot as a single event when the client opted in', async ()
   await withConnection(true, async ({ emit, update }) => {
     await update(snapshot);
     expect(emit.mock.calls).toEqual([['screen:snapshot', { ...snapshot, closed: [] }]]);
+  });
+});
+it('resumes individual delivery when a batch with many new links exceeds 64 KiB', async () => {
+  await withConnection(true, async ({ emit, update }) => {
+    const links = Array.from({ length: 240 }, (_, index) => ({
+      ...snapshot.links[0]!,
+      link: {
+        ...snapshot.links[0]!.link,
+        id: index.toString().padStart(36, '0'),
+        shareId: 's'.repeat(36),
+        publisherId: 'p'.repeat(36),
+        viewerId: 'v'.repeat(36),
+      },
+    }));
+    const large = { ...snapshot, links };
+    expect(Buffer.byteLength(JSON.stringify(large))).toBeGreaterThan(65536);
+    await update(large);
+    expect(emit.mock.calls.length).toBe(32);
+    for (let i = 0; i < 7; i++) await update(large);
+    const delivered = emit.mock.calls.flatMap(([event, data]) =>
+      event === 'screen:snapshot'
+        ? data.links.map((grant: (typeof links)[number]) => grant.link.id)
+        : event === 'screen:link'
+          ? [data.grant.link.id]
+          : [],
+    );
+    expect(delivered).toEqual(links.map((grant) => grant.link.id));
+    expect(
+      emit.mock.calls.every(([, data]) => Buffer.byteLength(JSON.stringify(data)) + 64 <= 65536),
+    ).toBe(true);
+  });
+});
+it('acknowledges a large directory and supersedes unsent pages from freshly authorized membership', async () => {
+  await withConnection(true, async ({ emit, update }) => {
+    const shares: ScreenShare[] = Array.from({ length: 590 }, (_, i) => ({
+      id: String(i).padStart(36, '0'),
+      publisherId: 'p'.repeat(36),
+      sourceGeneration: 1,
+      profile: 'smooth',
+      videoBitrate: 8000000,
+      resolution: 1080,
+      frameRate: 60,
+      sound: 'none',
+    }));
+    const directory = { ...snapshot.directory, shares };
+    expect(await update({ directory, links: [] })).toEqual({
+      epoch: directory.epoch,
+      revision: 2,
+      streamed: true,
+    });
+    const pages = () =>
+      emit.mock.calls
+        .filter(([event]) => event === 'screen:directoryChanges')
+        .map(([, data]) => data as ScreenDirectoryChanges);
+    expect(pages().length).toBeGreaterThan(0);
+    expect(pages().at(-1)?.complete).toBe(false);
+    const replacement = { ...directory, revision: 3, shares: shares.slice(1, 450) };
+    await update({ directory: replacement, links: [] });
+    await update({ directory: replacement, links: [] });
+    const seen = new Set<string>();
+    for (const page of pages()) {
+      expect(Buffer.byteLength(JSON.stringify(page)) + 64).toBeLessThanOrEqual(65536);
+      for (const id of page.removed) seen.delete(id);
+      for (const share of page.added) seen.add(share.id);
+    }
+    expect(
+      pages()
+        .filter((page) => page.complete)
+        .map((page) => page.revision),
+    ).toEqual([3]);
+    expect([...seen]).toEqual(replacement.shares.map((item) => item.id));
   });
 });
 

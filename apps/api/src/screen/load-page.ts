@@ -2,6 +2,7 @@
 export function installScreenLoadSource(index: number, fileSource = false) {
   const peers: RTCPeerConnection[] = [],
     captures: MediaStreamTrack[] = [];
+  let voicePeerCount: number | undefined;
   const NativePeer = window.RTCPeerConnection;
   window.RTCPeerConnection = class extends NativePeer {
     constructor(configuration?: RTCConfiguration) {
@@ -89,6 +90,10 @@ export function installScreenLoadSource(index: number, fileSource = false) {
   observer.observe(document, { childList: true, subtree: true });
   Object.assign(window, {
     screenLoad: {
+      // The room creates its LiveKit peers during voice setup, before the screen controls open.
+      markVoicePeers() {
+        voicePeerCount = peers.length;
+      },
       traceFrames(active: boolean) {
         const result = traceStamps;
         traceStamps = active ? [] : null;
@@ -97,8 +102,17 @@ export function installScreenLoadSource(index: number, fileSource = false) {
       start: (at: number) => {
         for (const start of starters) start(at);
       },
-      async collect(owners: Record<string, number>) {
+      async collect(owners: Record<string, number>, accounts: readonly string[]) {
         observe();
+        const microphones = new Map<string, number>();
+        for (const element of document.querySelectorAll<HTMLAudioElement>(
+          'audio[data-voice-audio]',
+        )) {
+          const publisher = accounts.indexOf(element.dataset.voiceAudio ?? '');
+          if (publisher < 0) continue;
+          for (const track of (element.srcObject as MediaStream | null)?.getAudioTracks() ?? [])
+            microphones.set(track.id, publisher);
+        }
         const streams = [],
           outgoing = [];
         let voiceBytes = 0;
@@ -118,6 +132,9 @@ export function installScreenLoadSource(index: number, fileSource = false) {
             if (row.type === 'inbound-rtp' && row.kind === 'audio') {
               voiceBytes += row.bytesReceived ?? 0;
               voice.push({
+                publisher: microphones.get(row.trackIdentifier) ?? null,
+                trackId: row.trackIdentifier,
+                bytesReceived: row.bytesReceived,
                 receivedSamples: row.totalSamplesReceived,
                 concealedSamples: row.concealedSamples,
                 concealmentEvents: row.concealmentEvents,
@@ -197,7 +214,10 @@ export function installScreenLoadSource(index: number, fileSource = false) {
           error: document.querySelector('.screen-error')?.textContent,
         };
       },
-      stopped: () => captures.every((track) => track.readyState === 'ended'),
+      stopped: () =>
+        voicePeerCount !== undefined &&
+        captures.every((track) => track.readyState === 'ended') &&
+        peers.slice(voicePeerCount).every((peer) => peer.connectionState === 'closed'),
     },
   });
 }

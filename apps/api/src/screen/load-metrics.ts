@@ -28,6 +28,35 @@ const intervalDelta = (before: number | undefined, after: number | undefined) =>
     : null;
 const meanMs = (seconds: number | null, count: number | null) =>
   seconds !== null && count !== null && count > 0 ? (seconds * 1000) / count : null;
+export type ScreenLoadMicrophone = {
+  publisher: number | null;
+  trackId?: string;
+  bytesReceived?: number;
+};
+export function screenMicrophoneFailures(
+  activeMicrophones: number,
+  listener: number,
+  before: readonly ScreenLoadMicrophone[],
+  after: readonly ScreenLoadMicrophone[],
+) {
+  const failures: string[] = [];
+  for (let publisher = 0; publisher < activeMicrophones; publisher++) {
+    if (publisher === listener) continue;
+    const first = before.filter((row) => row.publisher === publisher);
+    const last = after.filter((row) => row.publisher === publisher);
+    if (
+      first.length !== 1 ||
+      last.length !== 1 ||
+      !first[0]!.trackId ||
+      first[0]!.trackId !== last[0]!.trackId ||
+      (intervalDelta(first[0]!.bytesReceived, last[0]!.bytesReceived) ?? 0) <= 0
+    )
+      failures.push(
+        `Microphone ${publisher} did not advance on the same track at listener ${listener}.`,
+      );
+  }
+  return failures;
+}
 export type ScreenPublisherCounters = {
   peer: number;
   frames: number;

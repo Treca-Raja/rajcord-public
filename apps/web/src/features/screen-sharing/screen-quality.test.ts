@@ -4,6 +4,18 @@ import { applyScreenVideoPlan, screenVideoPlan, screenVideoRequest } from './scr
 const settings = { width: 1920, height: 1080, frameRate: 60 };
 const fixedChoice = { profile: 'smooth', resolution: 1080, frameRate: 60, videoBitrate: 8000000 };
 const fixedRequest = { revision: 1, publisher: fixedChoice, viewer: fixedChoice };
+it('uses actual legacy capture settings when a viewer requests an explicit format', () => {
+  const publisher = { profile: 'smooth', videoBitrate: 8000000 };
+  expect(
+    screenVideoPlan(
+      { revision: 1, publisher, viewer: fixedChoice },
+      { width: 1600, height: 900, frameRate: 30 },
+    ),
+  ).toMatchObject({
+    qualification: 'experimental-ceilings',
+    encoding: { maxBitrate: 8000000, maxFramerate: 30, scaleResolutionDownBy: 1 },
+  });
+});
 it('preserves height and aspect ratio for explicit ultrawide shares and rejects a weaker source', () => {
   expect(
     screenVideoPlan(fixedRequest, { ...settings, width: 2560 }).encoding.scaleResolutionDownBy,

@@ -11,6 +11,37 @@ import { screenSdp, screenIce } from './signaling-fixture.js';
 import { selectionFixture } from './selection-fixture.js';
 
 const active: ScreenService[] = [];
+it('keeps legacy directories at ten with active watches and the caller publication visible', async () => {
+  const f = fixture(),
+    viewer = f.user(),
+    bound = await f.bind(viewer);
+  const shares = [];
+  for (let index = 0; index < 12; index++) {
+    const publisher = f.user(),
+      binding = await f.bind(publisher);
+    shares.push(await f.publish(publisher.caller, binding.epoch));
+  }
+  const own = await f.publish(viewer.caller, bound.epoch);
+  const watched = shares.at(-1)!;
+  await f.screen.select(viewer.caller, selection(bound.epoch, watched.id));
+  const read = () => f.screen.snapshot(viewer.caller, { epoch: bound.epoch }, () => {});
+  const first = await read();
+  expect(first.shares.map((item) => item.id)).toEqual([
+    watched.id,
+    own.id,
+    ...shares.slice(0, 8).map((item) => item.id),
+  ]);
+  const later = f.user(),
+    laterBinding = await f.bind(later);
+  await f.publish(later.caller, laterBinding.epoch);
+  expect((await read()).shares).toEqual(first.shares);
+  const current = f.user();
+  current.caller.directoryChanges = true;
+  const modernBinding = await f.bind(current);
+  expect(
+    (await f.screen.snapshot(current.caller, { epoch: modernBinding.epoch }, () => {})).shares,
+  ).toHaveLength(14);
+});
 it('issues a finite publication proof and renews only the current own share with replay-safe deadlines', async () => {
   const f = fixture(),
     publisher = f.user(),
