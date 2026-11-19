@@ -117,7 +117,9 @@ app
         mode: 'canvas',
         codec: settings.codec,
         content: settings.content,
+        hint: settings.hint,
         phaseMs: settings.phaseMs,
+        bitrates: settings.bitrates,
       }),
     );
     // A fresh page prevents stopped fixture resources leaking into the capture run.
@@ -131,7 +133,9 @@ app
         mode: 'display',
         codec: settings.codec,
         content: settings.content,
+        hint: settings.hint,
         phaseMs: settings.phaseMs,
+        bitrates: settings.bitrates,
         source: displaySource,
       }),
     );

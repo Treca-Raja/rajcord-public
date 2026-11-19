@@ -20,7 +20,9 @@
     "test:voice": "tsx --env-file-if-exists=.env src/voice/browser-smoke.ts",
     "test:voice:load": "tsx --env-file-if-exists=.env src/voice/load-smoke.ts",
     "test:voice:check": "tsx --env-file-if-exists=.env src/voice/check-test-services.ts",
-    "test:screen": "pnpm build && node dist/screen/feasibility-smoke.js"
+    "test:screen": "pnpm build && node dist/screen/feasibility-smoke.js",
+    "test:screen:network": "pnpm build && node dist/screen/network-smoke.js",
+    "test:screen:load": "pnpm build && node --env-file-if-exists=.env dist/screen/load-smoke.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",

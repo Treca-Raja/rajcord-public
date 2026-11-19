@@ -1,5 +1,7 @@
+import { screenImageQuality } from './feasibility-quality.js';
+
 // Serialized into the loopback-only fixture. Keep this function self-contained.
-export function installFixture() {
+export function installFixture(measureQuality: typeof screenImageQuality) {
   const canvas = document.querySelector('canvas')!;
   const context = canvas.getContext('2d', { alpha: false })!;
   const video = document.querySelector('video')!;
@@ -14,9 +16,13 @@ export function installFixture() {
   let content = 'motion';
   const candidates: RTCIceCandidateInit[] = [];
   let completed = false;
-  const draw = (now: number) => {
-    // Deterministic moving tiles provide changing content, not a static 60-fps claim.
-    const frame = Math.floor(((now - sourceStart) * 60) / 1000);
+  const iceErrors: number[] = [];
+  const paint = (
+    context: CanvasRenderingContext2D,
+    frame: number,
+    now: number,
+    content: string,
+  ) => {
     for (let y = 0; y < 1080; y += 60)
       for (let x = 0; x < 1920; x += 60) {
         const n = (x * 13 + y * 7 + (content === 'stress' ? frame * 17 : 0)) % 255;
@@ -33,11 +39,37 @@ export function installFixture() {
         context.fillRect(left + 20, top + 20 + row * 40, 200 + row * 28, 20);
       }
     }
+    if (content === 'text' || content === 'static') {
+      context.fillStyle = '#17212b';
+      context.fillRect(0, 80, 1920, 1000);
+      context.fillStyle = '#edf2f7';
+      context.font = '18px monospace';
+      for (let row = 0; row < 38; row++)
+        context.fillText(
+          `const sample_${row} = { detail: 'AaBb0123456789', value: ${row} };`,
+          30,
+          110 + row * 25,
+        );
+    }
     context.fillStyle = '#000';
     context.fillRect(0, 0, 650, 80);
     context.fillStyle = '#fff';
     context.font = '36px monospace';
     context.fillText(`SYNTHETIC ${frame} ${Math.round(now)}ms`, 12, 54);
+    const check = (frame & 255) ^ ((frame >> 8) & 255);
+    for (let bit = 0; bit < 28; bit++) {
+      const white =
+        bit === 0 ||
+        bit === 27 ||
+        (bit >= 2 && bit < 18 && ((frame >> (bit - 2)) & 1) === 1) ||
+        (bit >= 18 && bit < 26 && ((check >> (bit - 18)) & 1) === 1);
+      context.fillStyle = white ? '#fff' : '#000';
+      context.fillRect(bit * 30, 1040, 30, 40);
+    }
+  };
+  const draw = (now: number) => {
+    const frame = content === 'static' ? 0 : Math.floor(((now - sourceStart) * 60) / 1000);
+    paint(context, frame, now, content);
     draws++;
     animation = requestAnimationFrame(draw);
   };
@@ -69,6 +101,17 @@ export function installFixture() {
           'timestamp',
           'bytesSent',
           'bytesReceived',
+          'packetsReceived',
+          'packetsLost',
+          'retransmittedPacketsSent',
+          'retransmittedBytesSent',
+          'nackCount',
+          'pliCount',
+          'freezeCount',
+          'totalFreezesDuration',
+          'jitter',
+          'jitterBufferDelay',
+          'jitterBufferEmittedCount',
           'framesEncoded',
           'framesDecoded',
           'framesRendered',
@@ -130,6 +173,7 @@ export function installFixture() {
           },
         })) ?? [],
       connection: peer.connectionState,
+      iceErrors: [...iceErrors],
       audioRms: (() => {
         if (!analyser) return null;
         const samples = new Float32Array(analyser.fftSize);
@@ -138,7 +182,47 @@ export function installFixture() {
       })(),
     };
   };
+  const qualitySurface = document.createElement('canvas');
+  qualitySurface.width = 1920;
+  qualitySurface.height = 1080;
+  const qualityContext = qualitySurface.getContext('2d', { willReadFrequently: true })!;
+  const referenceSurface = document.createElement('canvas');
+  referenceSurface.width = 1920;
+  referenceSurface.height = 1080;
+  const referenceContext = referenceSurface.getContext('2d', { willReadFrequently: true })!;
   const api = {
+    freezeSource() {
+      cancelAnimationFrame(animation);
+      animation = 0;
+    },
+    quality(kind: string) {
+      if (video.readyState < 2 || !video.videoWidth) return { status: 'not-ready' };
+      qualityContext.drawImage(video, 0, 0, 1920, 1080);
+      const marker = (bit: number) => {
+        const data = qualityContext.getImageData(bit * 30 + 12, 1055, 6, 6).data;
+        let total = 0;
+        for (let offset = 0; offset < data.length; offset += 4)
+          total += (data[offset]! + data[offset + 1]! + data[offset + 2]!) / 3;
+        return total / 36;
+      };
+      if (marker(0) < 160 || marker(1) > 90 || marker(26) > 90 || marker(27) < 160)
+        return { status: 'unaligned' };
+      let frame = 0;
+      for (let bit = 0; bit < 16; bit++) if (marker(bit + 2) >= 128) frame |= 1 << bit;
+      let check = 0;
+      for (let bit = 0; bit < 8; bit++) if (marker(bit + 18) >= 128) check |= 1 << bit;
+      if (check !== ((frame & 255) ^ (frame >> 8))) return { status: 'unaligned' };
+      paint(referenceContext, frame, 0, kind);
+      const reference = referenceContext.getImageData(0, 80, 1920, 960).data;
+      const decoded = qualityContext.getImageData(0, 80, 1920, 960).data;
+      return {
+        status: 'available',
+        frame,
+        width: video.videoWidth,
+        height: video.videoHeight,
+        ...measureQuality(reference, decoded, 1920, 960),
+      };
+    },
     startSource(kind = 'motion') {
       content = kind;
       video.style.display = 'none';
@@ -147,6 +231,7 @@ export function installFixture() {
     },
     startTonePlayback: () => tone(true).then(() => true),
     async capture(mode: 'canvas' | 'display', kind = 'motion') {
+      content = kind;
       if (mode === 'display')
         capture = await navigator.mediaDevices.getDisplayMedia({
           video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
@@ -159,8 +244,17 @@ export function installFixture() {
       }
       return capture.getTracks().map((t) => t.kind);
     },
-    async create(sender: boolean, codec: string) {
-      peer = new RTCPeerConnection({ iceServers: [] });
+    async create(
+      sender: boolean,
+      codec: string,
+      hint = 'auto',
+      configuration?: RTCConfiguration | null,
+      initialBitrate = 8000000,
+    ) {
+      peer = new RTCPeerConnection(configuration ?? { iceServers: [] });
+      peer.addEventListener('icecandidateerror', (event) =>
+        iceErrors.push((event as RTCPeerConnectionIceErrorEvent).errorCode),
+      );
       peer.onicecandidate = (e) => {
         if (e.candidate) candidates.push(e.candidate.toJSON());
         else completed = true;
@@ -172,22 +266,40 @@ export function installFixture() {
             direction: 'sendonly',
             streams: [capture],
             sendEncodings:
-              track.kind === 'video' ? [{ maxBitrate: 8000000, maxFramerate: 60 }] : undefined,
+              track.kind === 'video'
+                ? [{ maxBitrate: initialBitrate, maxFramerate: 60 }]
+                : undefined,
           });
           if (track.kind === 'video') {
-            const codecs = RTCRtpSender.getCapabilities('video')?.codecs.filter(
+            track.contentHint =
+              hint === 'auto' || hint === 'fixed'
+                ? ['text', 'static'].includes(content)
+                  ? 'detail'
+                  : 'motion'
+                : hint;
+            const available = RTCRtpSender.getCapabilities('video')?.codecs ?? [];
+            const codecs = available.filter(
               (c) => c.mimeType.toLowerCase() === 'video/' + codec.toLowerCase(),
             );
             if (!codecs?.length) throw new Error('Requested codec unavailable');
-            transceiver.setCodecPreferences(codecs);
+            transceiver.setCodecPreferences([
+              ...codecs,
+              ...available.filter((item) => /^video\/(rtx|red|ulpfec)$/i.test(item.mimeType)),
+            ]);
+            if (hint === 'fixed') {
+              const parameters = transceiver.sender.getParameters();
+              parameters.degradationPreference =
+                'maintain-framerate-and-resolution' as RTCDegradationPreference;
+              await transceiver.sender.setParameters(parameters);
+            }
           }
         }
       } else {
         peer.ontrack = (e) => {
           video.srcObject = e.streams[0]!;
         };
-        const renderedFrame = () => {
-          rendered++;
+        const renderedFrame: VideoFrameRequestCallback = (_, metadata) => {
+          rendered = metadata.presentedFrames;
           renderCallback = video.requestVideoFrameCallback(renderedFrame);
         };
         renderCallback = video.requestVideoFrameCallback(renderedFrame);
@@ -211,14 +323,27 @@ export function installFixture() {
     async addIce(items: RTCIceCandidateInit[]) {
       for (const item of items) await peer!.addIceCandidate(item);
     },
-    async cap(bits: number) {
+    async cap(bits: number, hint = 'auto', kind = content) {
       const sender = peer!.getSenders().find((s) => s.track?.kind === 'video')!;
       const parameters = sender.getParameters();
       parameters.encodings[0]!.maxBitrate = bits;
       parameters.encodings[0]!.maxFramerate = 60;
-      parameters.degradationPreference = 'maintain-resolution';
+      parameters.degradationPreference =
+        hint === 'fixed'
+          ? ('maintain-framerate-and-resolution' as RTCDegradationPreference)
+          : (hint === 'auto' ? (['text', 'static'].includes(kind) ? 'detail' : 'motion') : hint) ===
+              'detail'
+            ? 'maintain-resolution'
+            : 'maintain-framerate';
       await sender.setParameters(parameters);
-      return sender.getParameters().encodings[0]!.maxBitrate;
+      const observed = sender.getParameters();
+      if (
+        hint === 'fixed' &&
+        (observed.degradationPreference !== parameters.degradationPreference ||
+          observed.encodings[0]?.maxFramerate !== 60)
+      )
+        throw new Error('Fixed video format was not confirmed by the sender.');
+      return observed.encodings[0]!.maxBitrate;
     },
     sourceStats() {
       return { time: performance.now(), draws };
@@ -261,5 +386,5 @@ export function installFixture() {
 }
 
 export function fixtureHtml() {
-  return `<!doctype html><html><head><title>Rajcord synthetic screen fixture</title><style>html,body{margin:0;background:#000;overflow:hidden}canvas{width:100vw;height:100vh}video{position:fixed;width:100vw;height:100vh;inset:0;object-fit:contain}video:not([src]){pointer-events:none}</style></head><body><canvas width="1920" height="1080"></canvas><video muted playsinline></video><script>(${installFixture.toString()})()</script></body></html>`;
+  return `<!doctype html><html><head><title>Rajcord synthetic screen fixture</title><style>html,body{margin:0;background:#000;overflow:hidden}canvas{width:100vw;height:100vh}video{position:fixed;width:100vw;height:100vh;inset:0;object-fit:contain}video:not([src]){pointer-events:none}</style></head><body><canvas width="1920" height="1080"></canvas><video muted playsinline></video><script>(${installFixture.toString()})(${screenImageQuality.toString()})</script></body></html>`;
 }

@@ -138,6 +138,8 @@ Each deployment:
 
 There is a short maintenance interruption, including active calls. This is a single API deployment, not a zero-downtime cluster. Failure leaves data intact and reports a failed deployment; it never resets a database or automatically rolls back schema. The previous successful marker remains available for diagnosis.
 
+When upgrading from a release with a ten-person voice limit, the first voice join clears rooms left behind by the previous API process. If LiveKit still returns an existing room with a cap, Rajcord honors that cap until the room closes. Newly created rooms use the LiveKit server defaults. The bundled hosting configuration has no fixed room limit.
+
 After the first successful deployment, initialize the owner using the built CLI in an interactive server terminal. With `TRICORD_ENVIRONMENT`, `TRICORD_CONFIG_DIR` and `TRICORD_IMAGE` exported from the chosen environment/recorded image, use the matching Compose file:
 
 ```bash

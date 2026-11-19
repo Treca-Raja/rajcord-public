@@ -2,6 +2,31 @@ import { expect, it, vi } from 'vitest';
 import { applyScreenVideoPlan, screenVideoPlan, screenVideoRequest } from './screen-quality';
 
 const settings = { width: 1920, height: 1080, frameRate: 60 };
+const fixedChoice = { profile: 'smooth', resolution: 1080, frameRate: 60, videoBitrate: 8000000 };
+const fixedRequest = { revision: 1, publisher: fixedChoice, viewer: fixedChoice };
+it('uses actual legacy capture settings when a viewer requests an explicit format', () => {
+  const publisher = { profile: 'smooth', videoBitrate: 8000000 };
+  expect(
+    screenVideoPlan(
+      { revision: 1, publisher, viewer: fixedChoice },
+      { width: 1600, height: 900, frameRate: 30 },
+    ),
+  ).toMatchObject({
+    qualification: 'experimental-ceilings',
+    encoding: { maxBitrate: 8000000, maxFramerate: 30, scaleResolutionDownBy: 1 },
+  });
+});
+it('preserves height and aspect ratio for explicit ultrawide shares and rejects a weaker source', () => {
+  expect(
+    screenVideoPlan(fixedRequest, { ...settings, width: 2560 }).encoding.scaleResolutionDownBy,
+  ).toBe(1);
+  expect(() => screenVideoPlan(fixedRequest, { ...settings, height: 720 })).toThrow(
+    'requires 1080p at 60 fps',
+  );
+  expect(() => screenVideoPlan(fixedRequest, { ...settings, frameRate: 50 })).toThrow(
+    'requires 1080p at 60 fps',
+  );
+});
 it.each(
   [480, 720, 1080].flatMap((resolution) =>
     [15, 30, 60].map((frameRate) => ({ resolution, frameRate })),
@@ -140,6 +165,7 @@ it('copies and freezes only numeric source data and explicit manual choices', ()
   ).toBe(true);
 });
 function sender() {
+  let degradationPreference: RTCRtpSendParameters['degradationPreference'];
   let encoding = {
     active: true,
     rid: 'owned',
@@ -154,12 +180,39 @@ function sender() {
     headerExtensions: [],
     rtcp: { cname: 'owned', reducedSize: true },
     encodings: [{ ...encoding }],
+    degradationPreference,
   }));
   const setParameters = vi.fn(async (parameters: RTCRtpSendParameters) => {
+    degradationPreference = parameters.degradationPreference;
     encoding = { ...encoding, ...parameters.encodings[0] };
   });
   return { getParameters, setParameters, track: null };
 }
+it('confirms the fixed encoder policy and rejects a sender that silently substitutes another setting', async () => {
+  const native = sender(),
+    plan = screenVideoPlan(fixedRequest, settings);
+  const apply = () =>
+    applyScreenVideoPlan(
+      native,
+      plan,
+      (raw) => raw,
+      () => {},
+    );
+  await expect(apply()).resolves.toMatchObject({ encoding: plan.encoding });
+  expect(native.getParameters().degradationPreference).toBe('maintain-framerate-and-resolution');
+  for (const override of [
+    { maxFramerate: 50 },
+    { scaleResolutionDownBy: 1.5 },
+    { maxBitrate: 4000000 },
+    {},
+  ]) {
+    const observed = native.getParameters();
+    Object.assign(observed.encodings[0]!, override);
+    if (!Object.keys(override).length) observed.degradationPreference = 'balanced';
+    native.getParameters.mockReturnValueOnce(native.getParameters()).mockReturnValueOnce(observed);
+    await expect(apply()).rejects.toThrow('did not retain');
+  }
+});
 it('uses the fresh native transaction and preserves unrelated sender encoding fields', async () => {
   const native = sender(),
     plan = screenVideoPlan(request(), settings),

@@ -17,6 +17,15 @@ class Track extends EventTarget {
     this.readyState = 'ended';
   });
   getSettings = vi.fn(() => this.settings);
+  applyConstraints = vi.fn(
+    async (constraints: { height: { exact: number }; frameRate?: { exact: number } }) => {
+      this.settings = {
+        ...this.settings,
+        height: constraints.height.exact,
+        frameRate: constraints.frameRate?.exact ?? this.settings.frameRate,
+      };
+    },
+  );
   addEventListener = vi.fn(super.addEventListener.bind(this));
   removeEventListener = vi.fn(super.removeEventListener.bind(this));
   constructor(kind = 'video') {
@@ -116,8 +125,41 @@ it('invokes the native chooser on the gesture stack with independently selected 
   );
   f.resolve(stream);
   const capture = await work;
+  expect(stream.tracks[0]!.applyConstraints).toHaveBeenCalledWith({
+    height: { exact: 720 },
+  });
+  expect(stream.tracks[0]!.applyConstraints).toHaveBeenCalledOnce();
   capture.dispose();
 });
+
+it('sets the exact requested cadence if the native capture cadence differs', async () => {
+  const f = fixture(),
+    track = new Track();
+  const work = f.adapter.start({ sound: 'none', resolution: 720, frameRate: 30 });
+  f.resolve(new Stream([track]));
+  const capture = await work;
+  expect(track.applyConstraints).toHaveBeenLastCalledWith({
+    height: { exact: 720 },
+    frameRate: { exact: 30 },
+  });
+  capture.dispose();
+});
+
+it.each(['ignored', 'unsupported'] as const)(
+  'stops a source when the fixed capture format is %s',
+  async (mode) => {
+    const f = fixture(),
+      track = new Track();
+    if (mode === 'unsupported')
+      track.applyConstraints.mockRejectedValue(new Error('Overconstrained'));
+    else track.applyConstraints.mockResolvedValue(undefined);
+    track.settings = { ...track.settings, height: 720, frameRate: 50 };
+    const result = f.adapter.start({ sound: 'none', resolution: 1080, frameRate: 60 });
+    f.resolve(new Stream([track]));
+    await expect(result).rejects.toThrow('cannot capture 1080p at 60 fps');
+    expect(track.stop).toHaveBeenCalledOnce();
+  },
+);
 
 it.each(['window', 'monitor', 'browser', 'missing-audio'] as const)(
   'accepts app audio only with a desktop window and its audio track: %s',

@@ -329,14 +329,39 @@ it.each(['publisher', 'viewer'] as const)(
   },
 );
 
-it('rejects suspension immediately and invalidates grants during voice reconciliation', async () => {
+it('drops a suspended publisher during renewal and preserves the viewer’s other watch', async () => {
   const peers = await linked();
+  const other = await bind(owner);
+  const { share } = await server.screen!.publish(other.context, {
+    epoch: other.binding.epoch,
+    requestId: randomUUID(),
+    sourceGeneration: 1,
+    profile: 'smooth',
+    videoBitrate: 8000000,
+    sound: 'none',
+  });
+  const healthy = await server.screen!.select(peers.v.context, {
+    epoch: peers.v.binding.epoch,
+    requestId: randomUUID(),
+    revision: 2,
+    shareId: share.id,
+    profile: 'smooth',
+    videoBitrate: 4000000,
+    mode: 'add',
+  });
+
   await auth.changeStatus(owner.token, publisher.id, 'suspend');
+  const renewal = await server.screen!.renew(peers.v.context, {
+    epoch: peers.v.binding.epoch,
+    requestId: randomUUID(),
+    revision: 1,
+  });
+  expect(renewal.links).toHaveLength(1);
+  expect(renewal.links[0]?.link).toEqual(healthy!.link);
   await expect(
-    server.screen!.renew(peers.v.context, {
+    server.screen!.authorizeLink(peers.v.context, {
       epoch: peers.v.binding.epoch,
-      requestId: randomUUID(),
-      revision: 1,
+      linkId: peers.link.link.id,
     }),
   ).rejects.toMatchObject({ code: 'not_authorized' });
   await server.voice!.reconcile();
@@ -615,15 +640,15 @@ it('bounds unresolved authorization before enqueueing work and fences a disconne
   const started = new Promise<void>((done) => {
     entered = done;
   });
-  const original = server.voice!.authorize.bind(server.voice!);
+  const original = server.voice!.authorizeBatch.bind(server.voice!);
   let calls = 0;
-  vi.spyOn(server.voice!, 'authorize').mockImplementation(async (...args) => {
-    if (args[0] === publisher.token) {
+  vi.spyOn(server.voice!, 'authorizeBatch').mockImplementation(async (requests) => {
+    if (requests.some(({ token }) => token === publisher.token)) {
       calls++;
       entered();
       await gate;
     }
-    return original(...args);
+    return original(requests);
   });
   const received = vi.fn();
   v.socket.on('screen:signal', received);

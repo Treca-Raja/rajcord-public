@@ -1,5 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ScreenSelectRequest } from '@tricord/shared';
+import { SCREEN_RENEWAL_PAGE_SIZE } from '@tricord/shared';
+import { ScreenOutput } from './budget.js';
 import type { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VoiceService, type Lease } from '../voice/service.js';
@@ -9,6 +11,37 @@ import { screenSdp, screenIce } from './signaling-fixture.js';
 import { selectionFixture } from './selection-fixture.js';
 
 const active: ScreenService[] = [];
+it('keeps legacy directories at ten with active watches and the caller publication visible', async () => {
+  const f = fixture(),
+    viewer = f.user(),
+    bound = await f.bind(viewer);
+  const shares = [];
+  for (let index = 0; index < 12; index++) {
+    const publisher = f.user(),
+      binding = await f.bind(publisher);
+    shares.push(await f.publish(publisher.caller, binding.epoch));
+  }
+  const own = await f.publish(viewer.caller, bound.epoch);
+  const watched = shares.at(-1)!;
+  await f.screen.select(viewer.caller, selection(bound.epoch, watched.id));
+  const read = () => f.screen.snapshot(viewer.caller, { epoch: bound.epoch }, () => {});
+  const first = await read();
+  expect(first.shares.map((item) => item.id)).toEqual([
+    watched.id,
+    own.id,
+    ...shares.slice(0, 8).map((item) => item.id),
+  ]);
+  const later = f.user(),
+    laterBinding = await f.bind(later);
+  await f.publish(later.caller, laterBinding.epoch);
+  expect((await read()).shares).toEqual(first.shares);
+  const current = f.user();
+  current.caller.directoryChanges = true;
+  const modernBinding = await f.bind(current);
+  expect(
+    (await f.screen.snapshot(current.caller, { epoch: modernBinding.epoch }, () => {})).shares,
+  ).toHaveLength(14);
+});
 it('issues a finite publication proof and renews only the current own share with replay-safe deadlines', async () => {
   const f = fixture(),
     publisher = f.user(),
@@ -40,6 +73,129 @@ it('issues a finite publication proof and renews only the current own share with
   expect(publisher.lease.expires).toBe(147000);
   await f.screen.stop(publisher.caller, { epoch: binding.epoch, shareId: grant.share.id });
   await expect(f.screen.renew(publisher.caller, renew)).rejects.toMatchObject({ code: 'stale' });
+});
+it('skips unchanged snapshot delivery while still authorizing the polling recipient', async () => {
+  const f = await signalingFixture(),
+    deliver = vi.fn();
+  const first = await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver);
+  vi.mocked(f.voice.authorize).mockClear();
+  deliver.mockClear();
+  expect(
+    await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver, first.revision),
+  ).toBe(first.revision);
+  expect(f.voice.authorize).toHaveBeenCalledExactlyOnceWith(
+    f.viewer.caller.token,
+    f.viewer.lease.id,
+  );
+  expect(deliver).not.toHaveBeenCalled();
+  const another = f.user(),
+    binding = await f.bind(another);
+  await f.publish(another.caller, binding.epoch);
+  f.publisher.auth.revoked = true;
+  await expect(
+    f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver, first.revision),
+  ).resolves.toBeNull();
+  expect(deliver).not.toHaveBeenCalled();
+  await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver, first.revision);
+  expect(deliver).toHaveBeenCalledExactlyOnceWith({
+    directory: {
+      epoch: f.v.epoch,
+      revision: expect.any(Number),
+      shares: [expect.objectContaining({ publisherId: another.lease.userId })],
+    },
+    links: [],
+  });
+});
+it('skips the voice lock on the second poll after a change in another channel', async () => {
+  const f = await signalingFixture(),
+    deliver = vi.fn();
+  const first = await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver);
+  const known = {
+    shares: new Set(first.shares.map(({ id }) => id)),
+    links: new Set([f.grant.link.id]),
+  };
+  const outsider = f.user(randomUUID()),
+    other = await f.bind(outsider);
+  await f.publish(outsider.caller, other.epoch);
+  deliver.mockClear();
+  vi.mocked(f.voice.authorize).mockClear();
+  const request = { epoch: f.v.epoch };
+  const matched = await f.screen.snapshot(f.viewer.caller, request, deliver, first.revision, known);
+  expect(matched).toBeGreaterThan(first.revision);
+  expect(f.voice.authorize).toHaveBeenCalledExactlyOnceWith(
+    f.viewer.caller.token,
+    f.viewer.lease.id,
+  );
+  const exclusive = vi.spyOn(f.voice, 'exclusive');
+  await expect(f.screen.snapshot(f.viewer.caller, request, deliver, matched!, known)).resolves.toBe(
+    matched,
+  );
+  expect(exclusive).not.toHaveBeenCalled();
+  expect(f.voice.authorize).toHaveBeenCalledTimes(2);
+  expect(deliver).not.toHaveBeenCalled();
+});
+it('authorizes unchanged polls without waiting behind the voice mutation queue', async () => {
+  const f = await signalingFixture(),
+    deliver = vi.fn();
+  const request = { epoch: f.v.epoch };
+  const first = await f.screen.snapshot(f.viewer.caller, request, deliver);
+  const gate = deferred(),
+    entered = deferred();
+  const mutation = f.voice.exclusive(async () => {
+    entered.resolve();
+    await gate.promise;
+  });
+  await entered.promise;
+  deliver.mockClear();
+  try {
+    await expect(
+      f.screen.snapshot(f.viewer.caller, request, deliver, first.revision),
+    ).resolves.toBe(first.revision);
+    expect(deliver).not.toHaveBeenCalled();
+  } finally {
+    gate.resolve();
+    await mutation;
+  }
+});
+it('retains a change made during authorization for the next poll', async () => {
+  const f = await signalingFixture(),
+    another = f.user(),
+    publisher = await f.bind(another);
+  const request = { epoch: f.v.epoch };
+  const deliver = vi.fn();
+  const first = await f.screen.snapshot(f.viewer.caller, request, deliver);
+  deliver.mockClear();
+  const entered = deferred(),
+    gate = deferred();
+  f.setHook(async (token) => {
+    if (token === f.viewer.caller.token) {
+      entered.resolve();
+      await gate.promise;
+    }
+  });
+  const pending = f.screen.snapshot(f.viewer.caller, request, deliver, first.revision);
+  await entered.promise;
+  try {
+    await f.publish(another.caller, publisher.epoch);
+  } finally {
+    gate.resolve();
+  }
+  const matched = await pending;
+  expect(matched).toBe(first.revision);
+  expect(deliver).not.toHaveBeenCalled();
+  await f.screen.snapshot(f.viewer.caller, request, deliver, matched!);
+  expect(deliver).toHaveBeenCalledOnce();
+});
+it('rejects revoked recipients even when their snapshot revision is unchanged', async () => {
+  const f = await signalingFixture(),
+    deliver = vi.fn();
+  const first = await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver);
+  deliver.mockClear();
+  f.viewer.auth.revoked = true;
+  await expect(
+    f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver, first.revision),
+  ).rejects.toMatchObject({ code: 'not_authorized' });
+  expect(deliver).not.toHaveBeenCalled();
 });
 it('never revives an expired publication through voice heartbeat alone', async () => {
   const f = fixture(),
@@ -394,9 +550,21 @@ function fixture() {
       throw new HttpError(401, 'Lease ended');
     return lease;
   });
+  vi.spyOn(voice, 'authorizeBatch').mockImplementation(async (requests) => {
+    const results = [];
+    for (const { token, credential } of requests) {
+      try {
+        results.push(await voice.authorize(token, credential));
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error;
+        results.push(error);
+      }
+    }
+    return results;
+  });
   const screen = new ScreenService(voice, () => now);
   active.push(screen);
-  const user = (channelId = channel) => {
+  const user = (channelId = channel, supportsMoreThanNineViewers = false) => {
     const lease: Lease = {
       id: randomUUID(),
       userId: randomUUID(),
@@ -420,6 +588,7 @@ function fixture() {
     person.caller = {
       token: lease.token,
       transportId: randomUUID(),
+      supportsMoreThanNineViewers,
       isConnected: () => person.connected,
     };
     return person;
@@ -711,12 +880,91 @@ describe('ephemeral screen authorization', () => {
     ).toBe(capped.link.id);
   });
 
-  it('keeps nine selected viewers independent and removes only the viewer that closes', async () => {
+  it.each([true, false])('keeps renewals within the output window (paging: %s)', async (paged) => {
     const f = fixture(),
-      publisher = f.user(),
+      publisher = f.user(undefined, true);
+    publisher.caller.renewalPages = paged;
+    const { epoch } = await f.bind(publisher);
+    const share = await f.publish(publisher.caller, epoch);
+    const ids: string[] = [];
+    const viewers: ReturnType<typeof f.user>[] = [];
+    for (let i = 0; i < (paged ? 200 : SCREEN_RENEWAL_PAGE_SIZE + 1); i++) {
+      const viewer = f.user(),
+        binding = await f.bind(viewer);
+      const work = f.screen.select(viewer.caller, {
+        ...selection(binding.epoch, share.id),
+        resolution: 1080,
+        frameRate: 60,
+      });
+      if (!paged && i === SCREEN_RENEWAL_PAGE_SIZE) {
+        await expect(work).rejects.toMatchObject({ code: 'capacity' });
+      } else {
+        ids.push((await work)!.link.id);
+        viewers.push(viewer);
+      }
+    }
+    const request = { epoch, revision: 1, requestId: randomUUID() };
+    const send = vi.fn();
+    const cursor = { ...request, offset: SCREEN_RENEWAL_PAGE_SIZE };
+    await expect(f.screen.renew(publisher.caller, cursor, send)).rejects.toMatchObject({
+      code: 'stale',
+    });
+    expect(send).not.toHaveBeenCalled();
+    const first = await f.screen.renew(publisher.caller, request);
+    const output = new ScreenOutput();
+    const fits = (page: typeof first) => output.take(true, [{ ok: true, data: page }]);
+    expect(fits(first)).toBe(true);
+    expect(first.links.map(({ link }) => link.id)).toEqual(ids.slice(0, SCREEN_RENEWAL_PAGE_SIZE));
+    if (!paged) {
+      expect(first.nextOffset).toBeUndefined();
+      return;
+    }
+    expect(first.nextOffset).toBe(cursor.offset);
+    f.setTime(f.time() + 1000);
+    const last = await f.screen.renew(publisher.caller, cursor);
+    expect(last.links.map(({ link }) => link.id)).toEqual(ids.slice(SCREEN_RENEWAL_PAGE_SIZE));
+    expect(last.nextOffset).toBeUndefined();
+    expect(last.links[0]!.remainingMs).toBe(first.links[0]!.remainingMs - 1000);
+    expect(fits(last)).toBe(true);
+    expect(fits({ ...first, links: [...first.links, ...last.links] })).toBe(false);
+    await expect(
+      f.screen.renew(publisher.caller, { ...cursor, requestId: randomUUID() }, send),
+    ).rejects.toMatchObject({ code: 'stale' });
+    viewers[0]!.auth.revoked = true;
+    viewers.at(-1)!.auth.revoked = true;
+    await expect(f.screen.renew(publisher.caller, cursor, send)).rejects.toMatchObject({
+      code: 'stale',
+    });
+    expect(send).not.toHaveBeenCalled();
+
+    const fresh = { ...request, revision: 2, requestId: randomUUID() };
+    const freshFirst = await f.screen.renew(publisher.caller, fresh);
+    const freshCursor = { ...fresh, offset: freshFirst.nextOffset };
+    const freshLast = await f.screen.renew(publisher.caller, freshCursor);
+    expect(freshFirst.publication?.share).toEqual(share);
+    expect([...freshFirst.links, ...freshLast.links].map(({ link }) => link.id)).toEqual(
+      ids.slice(1, -1),
+    );
+
+    // Even after the initial caller check succeeds, revocation during the batch
+    // must still be reported as a caller authorization failure.
+    const nextViewer = viewers.at(-2)!;
+    nextViewer.auth.revoked = true;
+    f.setHook(async (token) => {
+      if (token === nextViewer.caller.token) publisher.auth.revoked = true;
+    });
+    await expect(f.screen.renew(publisher.caller, freshCursor, send)).rejects.toMatchObject({
+      code: 'not_authorized',
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('keeps nineteen selected viewers independent and removes only the viewer that closes', async () => {
+    const f = fixture(),
+      publisher = f.user(undefined, true),
       p = await f.bind(publisher),
       share = await f.publish(publisher.caller, p.epoch);
-    const viewers = Array.from({ length: 9 }, () => f.user());
+    const viewers = Array.from({ length: 19 }, () => f.user());
     const bindings = await Promise.all(viewers.map((viewer) => f.bind(viewer)));
     await Promise.all(
       viewers.map((viewer, index) =>
@@ -725,9 +973,47 @@ describe('ephemeral screen authorization', () => {
     );
     const renew = (revision: number) =>
       f.screen.renew(publisher.caller, { epoch: p.epoch, requestId: randomUUID(), revision });
-    expect((await renew(1)).links).toHaveLength(9);
+    expect((await renew(1)).links).toHaveLength(19);
     await f.screen.select(viewers[0]!.caller, selection(bindings[0]!.epoch, null, 2));
-    expect((await renew(2)).links).toHaveLength(8);
+    expect((await renew(2)).links).toHaveLength(18);
+  });
+
+  it('protects a legacy publisher from a tenth viewer while allowing viewers to reselect and leave', async () => {
+    const f = fixture(),
+      publisher = f.user(),
+      publisherBinding = await f.bind(publisher),
+      share = await f.publish(publisher.caller, publisherBinding.epoch);
+    const viewers = Array.from({ length: 10 }, () => f.user(undefined, true));
+    const bindings = await Promise.all(viewers.map((viewer) => f.bind(viewer)));
+    const select = (index: number, shareId: string | null, revision = 1) =>
+      f.screen.select(viewers[index]!.caller, selection(bindings[index]!.epoch, shareId, revision));
+    const firstNine = await Promise.all(
+      viewers.slice(0, 9).map((_, index) => select(index, share.id)),
+    );
+    await expect(select(9, share.id)).rejects.toMatchObject({ code: 'capacity' });
+    const renew = (revision: number, deliver?: Parameters<ScreenService['renew']>[2]) =>
+      f.screen.renew(
+        publisher.caller,
+        { epoch: publisherBinding.epoch, requestId: randomUUID(), revision },
+        deliver,
+      );
+    expect((await renew(1)).links.map(({ link }) => link.id)).toEqual(
+      firstNine.map((grant) => grant!.link.id),
+    );
+    await expect(select(0, share.id, 2)).resolves.toMatchObject({
+      link: { viewerId: viewers[0]!.lease.userId },
+    });
+    await select(0, null, 3);
+    await expect(select(9, share.id)).resolves.toMatchObject({
+      link: { viewerId: viewers[9]!.lease.userId },
+    });
+    const deliver = vi.fn();
+    const result = await renew(2, deliver);
+    expect(result.links).toHaveLength(9);
+    expect(deliver).toHaveBeenCalledWith(result, {
+      revision: expect.any(Number),
+      outgoing: new Set(result.links.map(({ link }) => link.id)),
+    });
   });
 
   it('adds and removes multiple stream selections without replacing their siblings', async () => {
@@ -735,7 +1021,7 @@ describe('ephemeral screen authorization', () => {
       viewer = f.user(),
       binding = await f.bind(viewer),
       sources = await Promise.all(
-        Array.from({ length: 10 }, async () => {
+        Array.from({ length: 20 }, async () => {
           const publisher = f.user(),
             owner = await f.bind(publisher),
             share = await f.publish(publisher.caller, owner.epoch);
@@ -747,21 +1033,17 @@ describe('ephemeral screen authorization', () => {
         ...selection(binding.epoch, source.share.id, index + 1),
         mode: index === 0 ? ('replace' as const) : ('add' as const),
       };
-      if (index < 9) await f.screen.select(viewer.caller, request);
-      else
-        await expect(f.screen.select(viewer.caller, request)).rejects.toMatchObject({
-          code: 'capacity',
-        });
+      await f.screen.select(viewer.caller, request);
     }
     const current = await f.screen.renew(viewer.caller, {
       epoch: binding.epoch,
       requestId: randomUUID(),
       revision: 1,
     });
-    expect(current.links.map(({ link }) => link.shareId)).toHaveLength(9);
+    expect(current.links.map(({ link }) => link.shareId)).toHaveLength(20);
     const removed = sources[3]!.share.id;
     await f.screen.select(viewer.caller, {
-      ...selection(binding.epoch, null, 11),
+      ...selection(binding.epoch, null, 21),
       mode: 'remove',
       removeShareId: removed,
     });
@@ -770,10 +1052,10 @@ describe('ephemeral screen authorization', () => {
       requestId: randomUUID(),
       revision: 2,
     });
-    expect(afterRemoval.links.map(({ link }) => link.shareId)).toHaveLength(8);
+    expect(afterRemoval.links.map(({ link }) => link.shareId)).toHaveLength(19);
     expect(afterRemoval.links.some(({ link }) => link.shareId === removed)).toBe(false);
     await f.screen.select(viewer.caller, {
-      ...selection(binding.epoch, sources[9]!.share.id, 12),
+      ...selection(binding.epoch, removed, 22),
       mode: 'add',
     });
     const refilled = await f.screen.renew(viewer.caller, {
@@ -781,9 +1063,9 @@ describe('ephemeral screen authorization', () => {
       requestId: randomUUID(),
       revision: 3,
     });
-    expect(refilled.links.map(({ link }) => link.shareId)).toHaveLength(9);
+    expect(refilled.links.map(({ link }) => link.shareId)).toHaveLength(20);
     await f.screen.select(viewer.caller, {
-      ...selection(binding.epoch, sources[0]!.share.id, 13),
+      ...selection(binding.epoch, sources[0]!.share.id, 23),
       mode: 'replace',
     });
     const replaced = await f.screen.renew(viewer.caller, {
@@ -1042,7 +1324,7 @@ describe('ephemeral screen authorization', () => {
     await expect(pending).rejects.toMatchObject({ code: 'stale' });
   });
 
-  it('rechecks all links after asynchronous fan-out renewal authorization', async () => {
+  it('renews healthy links when a viewer is revoked during asynchronous authorization', async () => {
     const f = fixture(),
       peers = await linked(f),
       other = f.user(),
@@ -1066,12 +1348,20 @@ describe('ephemeral screen authorization', () => {
     await started.promise;
     f.voice.invalidate(peers.viewer.lease);
     release.resolve();
-    await expect(pending).rejects.toMatchObject({ code: 'stale' });
+    const renewed = await pending;
+    expect(renewed.publication?.share).toEqual(peers.share);
+    expect(renewed.links.map(({ link }) => link.id)).toEqual([second.link.id]);
     f.setHook();
     expect(
       (await f.screen.authorizeLink(other.caller, { epoch: b.epoch, linkId: second.link.id }))
         .remainingMs,
-    ).toBe(44000);
+    ).toBe(54000);
+    await expect(
+      f.screen.authorizeLink(peers.viewer.caller, {
+        epoch: peers.v.epoch,
+        linkId: peers.link.link.id,
+      }),
+    ).rejects.toMatchObject({ code: 'stale' });
   });
 
   it('removes grants synchronously before failed LiveKit removal and notifies only once', async () => {

@@ -1,6 +1,6 @@
 # Rajcord
 
-Private, self-hosted text/voice app for up to ten friends; public pnpm monorepo.
+Private, self-hosted text/voice app; public pnpm monorepo. No fixed production room headcount cap; measured media capacity depends on the host and workload.
 
 Repository/guidance names use Rajcord. Existing `@tricord/*`, `TRICORD_*`, database/volume/cookie names and server paths remain compatibility identifiers; do not globally replace them. See [naming scope](README.md#naming-and-compatibility).
 
@@ -25,7 +25,7 @@ Code map: `apps/api/src/{auth,chat,db,screen,voice}`, `apps/api/src/{app.ts,pres
 - HTTP schemas are grouped by feature in `packages/shared/src/contracts`; `api-response.ts` composes the route registry and runtime validators. Use the schema-derived browser contract helper for new typed calls. Socket.IO client-event payload schemas are shared in `packages/shared`; keep server and browser transports on those contracts while retaining service authorization and semantic validation.
 - Group history requires current membership and the account's membership periods. Only authors edit/delete messages. Preserve send idempotency and sequence ordering.
 - Unread cursors are account-private and monotonic; exclude own/deleted/inaccessible messages. Acknowledge only visible, focused reading at the latest messages. Keep updates on authenticated sockets and retain bounded event/request budgets.
-- Voice uses session-bound `/media/rtc` leases with JWTs server-side, one reservation per account and a ten-person cap. Preserve revocation/leave cleanup and exact device selection without silent fallback.
+- Voice uses session-bound `/media/rtc` leases with JWTs server-side and one reservation per account. Preserve bounded request/queue budgets, revocation/leave cleanup and exact device selection without silent fallback. Screen sharing remains direct P2P. Use the ten-person voice call with one 1080p60 publisher and two viewers as the representative workload. The optional stress target is twenty publishers, each watching all nineteen other sources.
 - Preserve Electron sandbox/context isolation, disabled renderer Node integration and origin/main-frame IPC/permission checks. Notification previews contain no message text or participant names. Preferences may use localStorage; authentication tokens may not.
 - No credentials, cookies, private messages, environment files, profiles, backups or generated artifacts in commits/diagnostics.
 

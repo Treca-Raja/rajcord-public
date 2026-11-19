@@ -17,12 +17,33 @@ function deferred<T>() {
 const calls: ScreenCall[] = [],
   adapters: WebScreenCapture[] = [],
   drains: (() => void)[] = [];
+const closeProbe = vi.fn();
+let supportsFixedFormat: boolean;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(100000);
   vi.stubGlobal('document', Object.assign(new EventTarget(), { hidden: false }));
   vi.stubGlobal('window', {});
-  vi.stubGlobal('RTCPeerConnection', vi.fn());
+  supportsFixedFormat = true;
+  closeProbe.mockClear();
+  vi.stubGlobal(
+    'RTCPeerConnection',
+    vi.fn(function () {
+      let parameters = {};
+      return {
+        addTransceiver: () => ({
+          sender: {
+            getParameters: () => ({ ...parameters }),
+            setParameters: async (next: RTCRtpSendParameters) => {
+              if (!supportsFixedFormat) throw new TypeError('Unknown degradation preference');
+              parameters = next;
+            },
+          },
+        }),
+        close: closeProbe,
+      };
+    }),
+  );
 });
 afterEach(async () => {
   calls.splice(0).forEach((call) => call.dispose());
@@ -33,7 +54,7 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-async function fixture(failDisposal = false) {
+async function fixture(failDisposal = false, chooseSource = true) {
   const epoch = crypto.randomUUID(),
     channelId = crypto.randomUUID(),
     shareId = crypto.randomUUID();
@@ -65,20 +86,26 @@ async function fixture(failDisposal = false) {
     throw new Error('Unexpected fixture command.');
   });
   wire.current = { command, subscribe: () => () => {} } as unknown as ScreenSocket;
+  const trackSettings = { displaySurface: 'browser', width: 1280, height: 720, frameRate: 60 };
   const track = Object.assign(new EventTarget(), {
     kind: 'video',
     readyState: 'live',
     enabled: true,
     label: 'Owned',
-    getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720, frameRate: 60 }),
+    getSettings: () => trackSettings,
+    applyConstraints: vi.fn(
+      async (constraints: { height: { exact: number }; frameRate?: { exact: number } }) => {
+        trackSettings.height = constraints.height.exact;
+        if (constraints.frameRate) trackSettings.frameRate = constraints.frameRate.exact;
+      },
+    ),
     stop: vi.fn(() => {
       track.readyState = 'ended';
     }),
   });
   const stream = Object.assign(new EventTarget(), { getTracks: () => [track] });
-  const capture = new WebScreenCapture({
-    getDisplayMedia: vi.fn(async () => stream as unknown as MediaStream),
-  });
+  const getDisplayMedia = vi.fn(async () => stream as unknown as MediaStream);
+  const capture = new WebScreenCapture({ getDisplayMedia });
   adapters.push(capture);
   if (failDisposal) {
     const start = capture.start.bind(capture);
@@ -116,10 +143,40 @@ async function fixture(failDisposal = false) {
     published.resolve(grant);
     stopped.resolve({ stopped: true });
   });
-  await call.prepare(settings);
-  await call.choose();
-  return { call, command, published, stopped, grant, track, binding, voice, settings };
+  if (chooseSource) {
+    await call.prepare(settings);
+    await call.choose();
+  }
+  return {
+    call,
+    command,
+    published,
+    stopped,
+    grant,
+    track,
+    binding,
+    voice,
+    settings,
+    getDisplayMedia,
+  };
 }
+it('explains unsupported fixed-format publishing before opening the source picker', async () => {
+  const f = await fixture(false, false);
+  supportsFixedFormat = false;
+  await expect(f.call.prepare(f.settings)).rejects.toMatchObject({ code: 'unsupported' });
+  expect(f.call.inspect()).toMatchObject({
+    phase: 'ready',
+    prepared: false,
+    error: expect.stringContaining(
+      'This browser cannot publish screen shares at a fixed resolution and frame rate.',
+    ),
+  });
+  await expect(f.call.choose()).rejects.toThrow('Prepare screen sharing first.');
+  expect(f.getDisplayMedia).not.toHaveBeenCalled();
+  expect(f.command.mock.calls.map(([event]) => event)).not.toContain('screen:publish');
+  expect(closeProbe).toHaveBeenCalledOnce();
+  expect(f.binding.release).not.toHaveBeenCalled();
+});
 it('stops locally while a publish is unresolved and retains publication/cleanup admission through late settlement', async () => {
   const f = await fixture();
   const work = f.call.publish().catch((error) => error as Error);
@@ -147,7 +204,7 @@ it('retires only the screen binding after a lost publish acknowledgement instead
   expect(f.binding.release).toHaveBeenCalledTimes(1);
   expect(f.call.inspect().phase).toBe('idle');
   expect(f.voice.leave).not.toHaveBeenCalled();
-  expect(RTCPeerConnection).not.toHaveBeenCalled();
+  expect(RTCPeerConnection).toHaveBeenCalledTimes(1);
 });
 it('rejects a bare share acknowledgement and never creates peers before a publication proof', async () => {
   const f = await fixture(),
@@ -155,7 +212,7 @@ it('rejects a bare share acknowledgement and never creates peers before a public
   f.published.resolve(f.grant.share);
   expect(await work).toBeInstanceOf(Error);
   expect(f.binding.release).toHaveBeenCalledTimes(1);
-  expect(RTCPeerConnection).not.toHaveBeenCalled();
+  expect(RTCPeerConnection).toHaveBeenCalledTimes(1);
   expect(f.voice.leave).not.toHaveBeenCalled();
   expect(Object.isFrozen(f.call.inspect())).toBe(true);
   expect(Object.isFrozen(f.call.inspect().shares)).toBe(true);
@@ -182,8 +239,18 @@ it('publishes the selected quality while retaining the capture sound consent', a
     undefined,
   );
   expect(f.call.inspect().phase).toBe('sharing');
+  expect(f.track.getSettings()).toMatchObject({ height: 480, frameRate: 30 });
 });
 
+it('can stop a pending preview format change without publishing or dropping the binding', async () => {
+  const f = await fixture();
+  f.track.applyConstraints.mockImplementationOnce(() => new Promise<void>(() => {}));
+  const result = f.call.publish({ ...f.settings, resolution: 1080 });
+  f.call.stopSource();
+  await expect(result).rejects.toThrow('Screen source ended.');
+  expect(f.command.mock.calls.some(([event]) => event === 'screen:publish')).toBe(false);
+  expect(f.voice.leave).not.toHaveBeenCalled();
+});
 it('retires the published share and keeps voice connected when capture disposal throws', async () => {
   const f = await fixture(true),
     work = f.call.publish();

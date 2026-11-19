@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { waitForDebuggingPort } from './browser-harness';
+import { launch, waitForDebuggingPage, waitForDebuggingPort } from './browser-harness';
 
 vi.mock('node:fs/promises', async (original) => ({
   ...(await original<typeof import('node:fs/promises')>()),
@@ -9,6 +9,26 @@ vi.mock('node:fs/promises', async (original) => ({
 vi.mock('node:timers/promises', () => ({ setTimeout: vi.fn(async () => {}) }));
 
 beforeEach(() => vi.mocked(readFile).mockReset());
+
+it('waits for the debugging page when the port is ready earlier', async () => {
+  const url = 'ws://127.0.0.1:43123/devtools/page/test';
+  const fetchPages = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(Response.json([]))
+    .mockResolvedValueOnce(Response.json([{ type: 'page', webSocketDebuggerUrl: url }]));
+  try {
+    await expect(waitForDebuggingPage('43123')).resolves.toBe(url);
+    expect(fetchPages).toHaveBeenCalledTimes(2);
+  } finally {
+    fetchPages.mockRestore();
+  }
+});
+
+it('requires fake devices for a file-backed gameplay capture', async () => {
+  await expect(launch({ fakeMicrophone: false, fakeVideoFile: 'fixture.y4m' })).rejects.toThrow(
+    'requires fake media devices',
+  );
+});
 
 it('waits through missing and partially written port files without accepting empty readiness', async () => {
   vi.mocked(readFile)

@@ -6,6 +6,7 @@ import {
   screenQualityCeiling,
   type ScreenQuality,
 } from '@tricord/shared';
+import type { ScreenContentKind } from './screen-content';
 
 export class ScreenVideoQualityError extends Error {
   constructor(
@@ -28,7 +29,8 @@ export type ScreenVideoEncoding = Readonly<{
   scaleResolutionDownBy: number;
 }>;
 export type ScreenVideoPlan = Readonly<{
-  qualification: 'experimental-ceilings';
+  content?: ScreenContentKind;
+  qualification: 'fixed-format' | 'experimental-ceilings';
   request: ScreenVideoRequest;
   source: ScreenVideoSource;
   ceiling: Readonly<{ width: number; height: number; frameRate: number }>;
@@ -36,6 +38,31 @@ export type ScreenVideoPlan = Readonly<{
 }>;
 export type ScreenVideoApplied = Readonly<{ plan: ScreenVideoPlan; encoding: ScreenVideoEncoding }>;
 export type ScreenVideoSender = Pick<RTCRtpSender, 'track' | 'getParameters' | 'setParameters'>;
+
+// The content-hint specification includes this value ahead of TypeScript's DOM declarations.
+const fixedPreference = 'maintain-framerate-and-resolution' as RTCDegradationPreference;
+
+export async function requireFixedScreenFormat() {
+  let peer: RTCPeerConnection | undefined;
+  try {
+    // Check a local sender without opening the picker or starting ICE.
+    peer = new RTCPeerConnection();
+    const { sender } = peer.addTransceiver('video', { direction: 'sendonly' });
+    const parameters = sender.getParameters();
+    parameters.degradationPreference = fixedPreference;
+    await sender.setParameters(parameters);
+    if (sender.getParameters().degradationPreference !== fixedPreference)
+      throw new Error('The video sender did not retain the fixed-format setting.');
+  } catch (cause) {
+    throw new ScreenVideoQualityError(
+      'unsupported',
+      'This browser cannot publish screen shares at a fixed resolution and frame rate. Choose Adaptive capture in the browser, or use a version of Rajcord that supports fixed-format sharing.',
+      { cause },
+    );
+  } finally {
+    peer?.close();
+  }
+}
 
 function object(value: unknown, fields: string[]): Record<string, unknown> {
   if (
@@ -115,19 +142,23 @@ export function screenVideoPlan(value: unknown, settings: MediaTrackSettings): S
     height: Math.min(publisher.height, viewer.height),
     frameRate: Math.min(publisher.frameRate, viewer.frameRate),
   });
+  const fixed = request.publisher.resolution !== undefined;
+  if (fixed && (source.height < ceiling.height || source.frameRate < ceiling.frameRate))
+    throw new ScreenVideoQualityError(
+      'unqualified',
+      `The source provides ${source.height}p at ${source.frameRate} fps. This link requires ${ceiling.height}p at ${ceiling.frameRate} fps.`,
+    );
   return Object.freeze({
-    qualification: 'experimental-ceilings',
+    qualification: fixed ? 'fixed-format' : 'experimental-ceilings',
     request,
     source,
     ceiling,
     encoding: Object.freeze({
       maxBitrate: Math.min(request.publisher.videoBitrate!, request.viewer.videoBitrate!),
       maxFramerate: Math.min(source.frameRate, ceiling.frameRate),
-      scaleResolutionDownBy: Math.max(
-        1,
-        source.width / ceiling.width,
-        source.height / ceiling.height,
-      ),
+      scaleResolutionDownBy: fixed
+        ? source.height / ceiling.height
+        : Math.max(1, source.width / ceiling.width, source.height / ceiling.height),
     }),
   });
 }
@@ -153,17 +184,40 @@ export async function applyScreenVideoPlan(
   if (parameters.encodings?.length !== 1)
     throw new ScreenVideoQualityError('unsupported', 'Exactly one video encoding is required.');
   parameters.encodings[0] = { ...parameters.encodings[0], ...plan.encoding };
+  const fixed = plan.qualification === 'fixed-format';
+  parameters.degradationPreference = fixed
+    ? fixedPreference
+    : (plan.content ?? (plan.ceiling.frameRate > 30 ? 'motion' : 'detail')) === 'motion'
+      ? 'maintain-framerate'
+      : 'maintain-resolution';
   check();
   try {
     await boundary(sender.setParameters(parameters));
   } catch (cause) {
-    throw new ScreenVideoQualityError('failed', 'Video parameter update failed.', { cause });
+    throw new ScreenVideoQualityError(
+      'failed',
+      fixed
+        ? 'The video sender could not apply the selected fixed format.'
+        : 'Video parameter update failed.',
+      { cause },
+    );
   }
   check();
   const observed = sender.getParameters();
   if (observed.encodings?.length !== 1)
     throw new ScreenVideoQualityError('unsupported', 'Video encoding readback is unavailable.');
   const { maxBitrate, maxFramerate, scaleResolutionDownBy } = observed.encodings[0]!;
+  if (
+    fixed &&
+    (observed.degradationPreference !== fixedPreference ||
+      maxBitrate !== plan.encoding.maxBitrate ||
+      maxFramerate !== plan.encoding.maxFramerate ||
+      scaleResolutionDownBy !== plan.encoding.scaleResolutionDownBy)
+  )
+    throw new ScreenVideoQualityError(
+      'unsupported',
+      'The video sender did not retain the selected fixed format and bitrate setting.',
+    );
   if (
     typeof maxBitrate !== 'number' ||
     !Number.isFinite(maxBitrate) ||

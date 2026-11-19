@@ -565,6 +565,9 @@
 .screen-options fieldset > label {
   margin-top: 9px;
 }
+.screen-capture-mode {
+  margin-bottom: 9px;
+}
 .screen-options [role='status'],
 .screen-help,
 .screen-watch-heading > span,

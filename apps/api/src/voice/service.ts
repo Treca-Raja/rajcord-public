@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { TrackSource } from '@livekit/protocol';
-import { approved, identity } from '../auth/service.js';
+import { approved, identities, identity, type Identity } from '../auth/service.js';
 import { HttpError, input, text, uuid } from '../auth/validation.js';
 import type { VoiceConfig } from './config.js';
 export type Lease = {
@@ -96,18 +96,28 @@ export class VoiceService {
         !(await this.pool.query('SELECT id FROM voice_channels WHERE id=$1', [channelId])).rowCount
       )
         throw new HttpError(404, 'Voice channel not found.');
-      if (
-        [...this.leases.values()].filter((l) => !l.revoked && l.channelId === channelId).length >=
-        10
-      )
-        throw new HttpError(409, 'This voice channel is full (10 people).');
       const room = this.prefix + channelId;
-      await this.media.createRoom({
+      const mediaRoom = await this.media.createRoom({
         name: room,
-        maxParticipants: 10,
+        maxParticipants: 0,
         emptyTimeout: 60,
         departureTimeout: 30,
       });
+      if (mediaRoom.maxParticipants > 0) {
+        // A room created before the upgrade keeps its limit until LiveKit closes it.
+        const occupants = new Set(
+          [...this.leases.values()]
+            .filter((lease) => !lease.revoked && lease.room === room)
+            .map((lease) => lease.userId),
+        );
+        const participants = await this.media.listParticipants(room);
+        for (const participant of participants) occupants.add(participant.identity);
+        if (occupants.size >= mediaRoom.maxParticipants)
+          throw new HttpError(
+            409,
+            `This voice channel is full (${mediaRoom.maxParticipants} people).`,
+          );
+      }
       // Recheck after the media service call; suspension may have committed in the meantime.
       const fresh = approved(await identity(this.pool, token));
       const lease: Lease = {
@@ -134,7 +144,24 @@ export class VoiceService {
     };
   }
   async authorize(token: string, credential: string) {
-    const auth = approved(await identity(this.pool, token));
+    return this.authorizedLease(await identity(this.pool, token), credential);
+  }
+  async authorizeBatch(requests: readonly { token: string; credential: string }[]) {
+    const sessions = await identities(
+      this.pool,
+      requests.map(({ token }) => token),
+    );
+    return requests.map(({ credential }, index) => {
+      try {
+        return this.authorizedLease(sessions[index]!, credential);
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error;
+        return error;
+      }
+    });
+  }
+  private authorizedLease(session: Identity | null, credential: string) {
+    const auth = approved(session);
     const lease = this.leases.get(auth.user.id);
     if (
       !lease ||
@@ -155,7 +182,7 @@ export class VoiceService {
         throw new HttpError(410, 'Voice reservation expired; rejoin with a current session.');
       if (current.id !== body.leaseId || current.sessionId !== auth.sessionId)
         throw new HttpError(409, 'Voice is active on another device.');
-      const lease = await this.authorize(token, uuid(body.leaseId));
+      const lease = this.authorizedLease(auth, uuid(body.leaseId));
       lease.expires = Date.now() + 45000;
       return { ok: true };
     });
@@ -201,13 +228,20 @@ export class VoiceService {
     }
     if (this.leases.get(lease.userId) === lease) this.leases.delete(lease.userId);
   }
-  async reconcileUnlocked() {
-    for (const lease of this.leases.values()) {
+  private readLeaseSessions(leases: Lease[]) {
+    return identities(
+      this.pool,
+      leases.map((lease) => (lease.revoked || lease.expires < Date.now() ? null : lease.token)),
+    );
+  }
+  private async reconcileLeases(leases: Lease[], sessions: (Identity | null)[]) {
+    for (const [index, lease] of leases.entries()) {
+      if (this.leases.get(lease.userId) !== lease) continue;
       if (lease.revoked || lease.expires < Date.now()) {
         await this.remove(lease);
         continue;
       }
-      const auth = await identity(this.pool, lease.token);
+      const auth = sessions[index];
       if (
         lease.revoked ||
         lease.expires < Date.now() ||
@@ -218,8 +252,14 @@ export class VoiceService {
         await this.remove(lease);
     }
   }
+  async reconcileUnlocked() {
+    const leases = [...this.leases.values()];
+    await this.reconcileLeases(leases, await this.readLeaseSessions(leases));
+  }
   async reconcile() {
-    return this.exclusive(() => this.reconcileUnlocked());
+    const leases = [...this.leases.values()];
+    const sessions = await this.readLeaseSessions(leases);
+    await this.exclusive(() => this.reconcileLeases(leases, sessions));
   }
   async jwt(lease: Lease) {
     const token = new AccessToken(this.config.key, this.config.secret, {
