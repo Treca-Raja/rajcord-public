@@ -260,7 +260,7 @@ it('owns several distinct incoming links independently', async () => {
   const f = fixture(),
     first = f.open(),
     second = f.open();
-  expect(f.lane.inspect()).toMatchObject({ activeCount: 2, capacity: 9, occupied: true });
+  expect(f.lane.inspect()).toMatchObject({ activeCount: 2, capacity: null, occupied: true });
   await Promise.all([ready(first), ready(second)]);
   first.receiver.stop();
   await flush();
@@ -270,12 +270,14 @@ it('owns several distinct incoming links independently', async () => {
   expect(f.lane.inspect().activeCount).toBe(1);
   second.receiver.dispose();
 });
-it('caps a viewer at nine receivers without weakening each link admission fence', () => {
+it('admits more than nineteen receivers while retaining exact-link admission fences', () => {
   const f = fixture();
-  Array.from({ length: 9 }, () => f.open());
-  expect(f.lane.inspect()).toMatchObject({ activeCount: 9, capacity: 9 });
-  expect(() => f.lane.open(f.selection().request)).toThrowError(/limit/);
-  expect(f.rtcs).toHaveLength(9);
+  const selected = f.selection();
+  f.lane.open(selected.request);
+  Array.from({ length: 20 }, () => f.open());
+  expect(f.lane.inspect()).toMatchObject({ activeCount: 21, capacity: null });
+  expect(() => f.lane.open(selected.request)).toThrowError(/already has a receiver/);
+  expect(f.rtcs).toHaveLength(21);
   f.lane.dispose();
 });
 it.each(['none', 'tab', 'system', 'application', 'source'] as const)(

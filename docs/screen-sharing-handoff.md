@@ -1,6 +1,6 @@
 # Screen-sharing contributor and GPT handoff
 
-Updated 2026-11-16. The call redesign and account/chat polish are integrated with modularized `develop` on `feature/call-workspace-redesign`, preserving the original `feature/screen-sharing-completion` checkout. This is a feature PR candidate, not a production deployment, signed release, or physical/WAN performance qualification. This document supersedes the old slice-1 continuation prompt; dated evidence remains in [verification.md](verification.md).
+Updated 2026-11-18. The media recovery and quality continuation below describes the current source changes. The preceding call redesign and account/chat polish were integrated with modularized `develop` on `feature/call-workspace-redesign`, preserving the original `feature/screen-sharing-completion` checkout. This is source implementation evidence, not a production deployment, signed release, or physical/WAN performance qualification. This document supersedes the old slice-1 continuation prompt; dated evidence remains in [verification.md](verification.md).
 
 ## Call UI continuation - 2026-11-15
 
@@ -12,11 +12,37 @@ The call view has a focused stream, persistent participant strip, floating contr
 
 Two-publisher synthetic loopback verification now covers multi-view through the original grant deadline and delayed hidden-selection cleanup, restoring every remaining stream with its quality and previous grid layout. This remains local implementation evidence; the physical/WAN and release gates below remain open. See the [redesign verification](verification.md#discord-style-call-ui---2026-11-15).
 
+## Reliability and impairment continuation - 2026-11-18
+
+Source/content/budget maintenance survives hung or unsupported native statistics. Exact-owner fencing covers renewal, publisher startup and late signal completion; concurrent watched-stream recovery waits for selection/cleanup, and reentrant Stop cancels before dispatch. Screen commands use a bounded cancelable queue so fan-out signaling fits the existing server authorization budget without raising it. Unchanged directory polls authorize the recipient without repeating whole-fan-out authorization or delivering data; changed snapshots retain fresh authorization for every included source/link.
+
+Use `pnpm test:screen:network` for measured loss/bandwidth/delay/jitter through the owned loopback-only authenticated relay. It verifies native retransmissions, continued source media, recovery and empty allocation/packet queues after cleanup. It does not test the production LiveKit TURN service, TLS or remote NAT. See the [current audit evidence](verification.md#screen-system-reliability-and-impairment-audit--2026-11-18).
+
+The nine-viewer correctness case passed with watchers capped at 720p15 and a shared 4 Mb/s publisher budget, alongside generated voice, renewal, two-publisher multi-view, hide/resume and Stop. Applied ceilings and received picture do not prove sustained rendered FPS. The nine-viewer high-rate stress attempt failed, including in isolation; that capacity gap remains open.
+
+## Content-aware fidelity continuation - 2026-11-18
+
+This supersedes the first-pass quality heuristic below. One local 64 x 36 sampler per consented source detects sustained motion at up to five samples per second, with hysteresis for cursor changes, short movement and settling. It sets the shared capture hint; explicit-format senders keep their fixed degradation preference for both content types. Stop/expiry/source loss disposes the sampler without stopping someone else's borrowed track. Status is explicit if analysis is unsupported or fails, and detail remains the fallback. Pixels never leave this local analysis path.
+
+H.264 can be preferred only after the browser reports supported, smooth and power-efficient encoding for the requested publisher quality. The 300 ms bounded qualification is shared per source and canceled on Stop. Missing/negative/error/timeout reports retain browser defaults. Native preference failure restores defaults and remains visible in local diagnostics. No fallback codec or RTP repair capability is removed, and no AV1/VP9 software encoder is forced. The report is an estimate, not hardware qualification.
+
+In the earlier shared-budget implementation, the application preserved selected resolution/FPS ceilings when dividing the publisher's bitrate budget. It delegates congestion/CPU adaptation to WebRTC instead of repeatedly cutting its bitrate ceiling or multiplying downscaling merely because an allocation is smaller. Local diagnostics now include target/retransmit bitrate, codec-specific quantizer and reported encoder power efficiency. The qualification harness adds exact synthetic-reference RGB/luma PSNR and uniform-block/detail-region SSIM, explicit detail/motion A/B policies, and a genuinely static source. Its numeric quality proxies do not establish human legibility, WAN behavior, device-wide hardware efficiency or a universally best codec. See [current fidelity evidence](verification.md#content-aware-screen-fidelity---2026-11-18).
+
+## Media recovery and quality continuation - 2026-11-18
+
+The first pass added local, sanitized two-second screen-peer statistics and application pressure heuristics. The content-aware continuation above supersedes those heuristics and its original codec policy. The explicit feasibility harness accepts VP9, AV1 and synthetic small-text content alongside VP8/H.264 and motion/stress content. Harness metrics do not establish perceptual quality or hardware efficiency.
+
+The publisher's selected bitrate now caps the sum of video encoder allocations across viewers. Allocation respects individual lower viewer ceilings; existing peers are reduced before another offer starts. Audio/retransmission/protocol overhead is additional. ICE failure receives bounded publisher-led restart attempts with freshly renewed ICE configuration; incoming failure can request a fresh authorized selection after exact old-selection cleanup. Recovery is canceled by applicable Stop/visibility/source/binding/authority changes. Screen signaling disconnection remains terminal. Window dimension changes clear obsolete quality readback and are reapplied without selecting another source. Changes during an explicit in-flight limit transaction still fail closed rather than claiming stale limits.
+
+`ScreenControls.inspectMedia()` returns local samples and explicit statistics availability without addresses, titles, device identifiers or media. Missing counters and static desktop frames are not treated as transport failure. Statistics failure does not end healthy media; timed-out raw statistics work retains admission until settlement. There is no remote collection or persistence.
+
+These changes do not configure production TURN, add a port-443 relay, alter the main-window Stop limitation, qualify sustained hardware/WAN behavior, or change production codec preference. Use the manual acceptance gates below before release.
+
 ## Current continuation - 2026-11-13
 
 The source branch was `a30525f`; fetched `develop` was `05bb0ca`. Both remote tips were rechecked unchanged during completion. The original 69 completion files (51 tracked modifications plus 18 new files) and staged upstream integration were snapshotted before continuation. The integration includes current `origin/develop` at `05bb0ca`. The user has now authorized a feature-branch commit/push and PR to `develop` after validation. Shared-branch merge, deployment and desktop rollout remain separately gated.
 
-The user's current requirements are internet P2P, independently selectable resolution and frame rate, separate video bitrate, and sharing in the main window. The initial choices are 480p/720p/1080p, 15/30/60 fps and 2/4/6/8/12/20 Mb/s per viewer. These are ceilings, not measured delivery. Ultra/4K remains deferred.
+The user's current requirements are internet P2P, independently selectable resolution and frame rate, separate video bitrate, and sharing in the main window. Choices are 480p/720p/1080p, 15/30/60 fps and 2/4/6/8/12/20 Mb/s. The publisher bitrate is shared across viewers, each of whom may request a lower ceiling. These are limits, not measured delivery. Ultra/4K remains deferred.
 
 The dedicated screen policy keeps Cloudflare STUN and prefers direct ICE. Optional `SCREEN_TURN_HOST=turn.rajcord.com` reuses the pinned LiveKit 1.13.10 TURN service on its existing UDP 3478/TLS 5349 listeners. The API issues separate 60-second TURN allocation credentials after exact screen-binding authorization and refreshes them on renewal; no LiveKit room JWT/API secret enters the renderer. Credentials stay in memory. The setting is off until explicitly configured. Existing LiveKit relay destination/quota policy still applies; forced relay media, especially two peers using the same VPS relay, remains a manual acceptance gate. No additional VPS service/port is proposed.
 
@@ -61,7 +87,7 @@ pnpm desktop:package
 pnpm desktop:audit
 ```
 
-The actual app screen fixture uses port 3012, two or four disposable accounts, generated canvas video/PCM source sound and fake voice devices. It verifies preview consent, independent quality, direct candidate types, source/audio delivery, live viewer FPS changes, renewal beyond the original deadline, hide/resume limits and Stop preserving voice. It does not capture a private desktop or certify physical playback. The three-viewer case verifies independently received video and cleanup for all viewers while one hides/resumes. Use `pnpm exec vitest run --config vitest.browser.config.ts apps/web/src/screen-call.browser.integration.test.ts` after building to select it.
+The actual app screen fixture uses port 3012, two, four or ten disposable accounts, generated canvas video/PCM source sound and fake voice devices. It verifies preview consent, independent quality, direct candidate types, source/audio delivery, live viewer FPS changes, renewal beyond the original deadline, hide/resume limits and Stop preserving voice. It does not capture a private desktop or certify physical playback. The fan-out cases check independently received video and cleanup while one viewer hides/resumes; the nine-viewer case also checks voice audio bytes growing at every client. Use `pnpm exec vitest run --config vitest.browser.config.ts apps/web/src/features/screen-sharing/screen-call.browser.integration.test.ts` after building to select it.
 
 Inspect current source and [latest verification](verification.md#screen-sharing-continuation-and-production-restore-verification---2026-11-13) before continuing. The remaining work is acceptance/review and the normal separately authorized delivery flow; do not restart the old architecture investigation or implement a duplicate lease delegate/runtime. Follow AGENTS.md, preserve existing work, and keep local/synthetic, native-fixture, physical and WAN evidence distinct.
 

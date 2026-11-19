@@ -17,6 +17,12 @@ it('validates bounded multi-view selection fields before screen authorization', 
   for (const mode of ['replace', 'add'])
     expect(validateClientSocketPacket('screen:select', [{ ...request, mode }, ack])).toBe(true);
   expect(
+    validateClientSocketPacket('screen:select', [{ ...request, videoBitrate: 17000000 }, ack]),
+  ).toBe(true);
+  expect(
+    validateClientSocketPacket('screen:select', [{ ...request, videoBitrate: 17000001 }, ack]),
+  ).toBe(false);
+  expect(
     validateClientSocketPacket('screen:select', [
       {
         ...request,

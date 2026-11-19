@@ -65,12 +65,19 @@ async function fixture(failDisposal = false) {
     throw new Error('Unexpected fixture command.');
   });
   wire.current = { command, subscribe: () => () => {} } as unknown as ScreenSocket;
+  const trackSettings = { displaySurface: 'browser', width: 1280, height: 720, frameRate: 60 };
   const track = Object.assign(new EventTarget(), {
     kind: 'video',
     readyState: 'live',
     enabled: true,
     label: 'Owned',
-    getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720, frameRate: 60 }),
+    getSettings: () => trackSettings,
+    applyConstraints: vi.fn(
+      async (constraints: { height: { exact: number }; frameRate?: { exact: number } }) => {
+        trackSettings.height = constraints.height.exact;
+        if (constraints.frameRate) trackSettings.frameRate = constraints.frameRate.exact;
+      },
+    ),
     stop: vi.fn(() => {
       track.readyState = 'ended';
     }),
@@ -182,8 +189,18 @@ it('publishes the selected quality while retaining the capture sound consent', a
     undefined,
   );
   expect(f.call.inspect().phase).toBe('sharing');
+  expect(f.track.getSettings()).toMatchObject({ height: 480, frameRate: 30 });
 });
 
+it('can stop a pending preview format change without publishing or dropping the binding', async () => {
+  const f = await fixture();
+  f.track.applyConstraints.mockImplementationOnce(() => new Promise<void>(() => {}));
+  const result = f.call.publish({ ...f.settings, resolution: 1080 });
+  f.call.stopSource();
+  await expect(result).rejects.toThrow('Screen source ended.');
+  expect(f.command.mock.calls.some(([event]) => event === 'screen:publish')).toBe(false);
+  expect(f.voice.leave).not.toHaveBeenCalled();
+});
 it('retires the published share and keeps voice connected when capture disposal throws', async () => {
   const f = await fixture(true),
     work = f.call.publish();

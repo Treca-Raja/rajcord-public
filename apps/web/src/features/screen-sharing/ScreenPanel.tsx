@@ -126,7 +126,7 @@ function ConnectedScreenPanel({
     profile: 'smooth',
     resolution: 1080,
     frameRate: 60,
-    videoBitrate: 4000000,
+    videoBitrate: null,
   });
   const [sound, setSound] = useState<ScreenSound>('none');
   const automaticAudio = window.tricordDesktop?.platform === 'win32';
@@ -150,6 +150,7 @@ function ConnectedScreenPanel({
   const [endedStream, setEndedStream] = useState<string | null>(null);
   const lastWatched = useRef<{ id: string; name: string } | null>(null);
   const gallery = !endedStream && (state.layout === 'grid' || (!state.watching && !localVideo));
+  const showParticipantStrip = participantsVisible && !gallery;
   const availableShares = state.shares.filter(
     (item) => !state.watchingShareIds.includes(item.id) && item.id !== state.ownShareId,
   );
@@ -327,7 +328,7 @@ function ConnectedScreenPanel({
       profile: 'smooth',
       resolution: Math.min(preference.resolution!, offered.height) as ScreenQuality['resolution'],
       frameRate: Math.min(preference.frameRate!, offered.frameRate) as ScreenQuality['frameRate'],
-      videoBitrate: preference.videoBitrate,
+      videoBitrate: preference.videoBitrate ?? item.videoBitrate,
     };
   };
   const addToMulti = async (item: Readonly<ScreenShare>) => {
@@ -636,7 +637,7 @@ function ConnectedScreenPanel({
                     </select>
                   </label>
                   <label>
-                    Video cap per viewer
+                    Video bitrate per viewer
                     <select
                       aria-label="Screen video bitrate"
                       value={quality.videoBitrate ?? 8000000}
@@ -723,8 +724,8 @@ function ConnectedScreenPanel({
                 </p>
               )}
               <p className="screen-help">
-                Resolution, frame rate and bitrate are ceilings. Actual delivery depends on the
-                source, hardware and network connection.
+                Capture uses the selected resolution and frame rate. Each viewer has a separate
+                video bitrate allowance. Upload capacity and encoder speed affect playback.
               </p>
             </div>
             <div className="screen-settings-divider" />
@@ -776,14 +777,17 @@ function ConnectedScreenPanel({
                   Watch video cap
                   <select
                     aria-label="Watch video bitrate"
-                    value={watchQuality.videoBitrate ?? 4000000}
+                    value={watchQuality.videoBitrate ?? ''}
                     onChange={(event) =>
                       changeWatchQuality({
                         ...watchQuality,
-                        videoBitrate: Number(event.target.value) as ScreenQuality['videoBitrate'],
+                        videoBitrate: event.target.value
+                          ? (Number(event.target.value) as ScreenQuality['videoBitrate'])
+                          : null,
                       })
                     }
                   >
+                    <option value="">Publisher’s bitrate</option>
                     {SCREEN_VIDEO_BITRATES.map((value) => (
                       <option key={value} value={value}>
                         {value / 1000000} Mb/s
@@ -902,15 +906,17 @@ function ConnectedScreenPanel({
           className="screen-participant-strip"
           role="group"
           aria-label="Call participants"
-          hidden={!participantsVisible || gallery}
+          hidden={!showParticipantStrip}
         >
-          <div className="screen-participant-tiles">
-            {state.shares.map(renderStream)}
-            {participants.map(renderParticipant)}
-            {participants.length === 0 && state.shares.length === 0 && (
-              <p className="screen-participant-empty">Waiting for people to join the call.</p>
-            )}
-          </div>
+          {showParticipantStrip && (
+            <div className="screen-participant-tiles">
+              {state.shares.map(renderStream)}
+              {participants.map(renderParticipant)}
+              {participants.length === 0 && state.shares.length === 0 && (
+                <p className="screen-participant-empty">Waiting for people to join the call.</p>
+              )}
+            </div>
+          )}
         </div>
         <div className="screen-call-toolbar">
           <div className="screen-call-control-group">

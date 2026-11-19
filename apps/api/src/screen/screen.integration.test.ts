@@ -615,15 +615,15 @@ it('bounds unresolved authorization before enqueueing work and fences a disconne
   const started = new Promise<void>((done) => {
     entered = done;
   });
-  const original = server.voice!.authorize.bind(server.voice!);
+  const original = server.voice!.authorizeBatch.bind(server.voice!);
   let calls = 0;
-  vi.spyOn(server.voice!, 'authorize').mockImplementation(async (...args) => {
-    if (args[0] === publisher.token) {
+  vi.spyOn(server.voice!, 'authorizeBatch').mockImplementation(async (requests) => {
+    if (requests.some(({ token }) => token === publisher.token)) {
       calls++;
       entered();
       await gate;
     }
-    return original(...args);
+    return original(requests);
   });
   const received = vi.fn();
   v.socket.on('screen:signal', received);

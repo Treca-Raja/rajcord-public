@@ -246,6 +246,51 @@ async function withPeers(
     );
 }
 
+it('restarts native ICE with authenticated signaling while retaining capture and source sound', async () => {
+  await withPeers(async (publisher, viewer) => {
+    const before = (await viewer.js(`${f}.snapshot().frames`)) as number;
+    await publisher.js(`${f}.restartIce()`);
+    for (const browser of [publisher, viewer])
+      await browser.wait(
+        `${f}.snapshot().phase==='stable' && ${f}.snapshot().connection==='connected'`,
+      );
+    await viewer.wait(`${f}.snapshot().frames>${before + 3} && ${f}.snapshot().rms>0.001`);
+    for (const browser of [publisher, viewer]) {
+      await browser.wait(`${f}.mediaStatistics()?.statistics==='available'`);
+      expect(await browser.js(`${f}.mediaStatistics()`)).toMatchObject({
+        sample: { route: 'direct' },
+      });
+      expect(await browser.js(`${f}.snapshot().peerErrors`)).toEqual([]);
+    }
+  });
+});
+
+it('switches content policy for real moving and static capture without changing selected FPS', async () => {
+  await withPeers(async (publisher, viewer) => {
+    await publisher.wait(
+      `${f}.contentAnalysis()?.kind==='motion' && ${f}.contentAnalysis()?.status==='available'`,
+    );
+    await publisher.js(
+      `${f}.setVideoQuality({revision:1,publisher:{profile:'smooth',videoBitrate:8000000},viewer:{profile:'smooth',videoBitrate:4000000}})`,
+    );
+    await publisher.js(`${f}.sourceMotion(false);true`);
+    await publisher.wait(`${f}.contentAnalysis()?.kind==='detail'`);
+    await publisher.wait(`${f}.videoQuality()?.applied?.plan?.content==='detail'`);
+    expect(
+      await publisher.js(
+        `${f}.parameterSnapshot().find(row=>row.kind==='video').degradationPreference`,
+      ),
+    ).toBe('maintain-resolution');
+    expect(await publisher.js(`${f}.videoQuality().applied.encoding.maxFramerate`)).toBe(20);
+    expect(await viewer.js(`${f}.snapshot().peerErrors`)).toEqual([]);
+    await publisher.js(`${f}.sourceMotion(true);true`);
+    await publisher.wait(`${f}.contentAnalysis()?.kind==='motion'`);
+    await publisher.wait(
+      `${f}.parameterSnapshot().find(row=>row.kind==='video').degradationPreference==='maintain-framerate'`,
+    );
+  });
+});
+
 it('round-trips native video ceilings without changing capture or source audio', async () => {
   await withPeers(
     async (publisher, viewer) => {

@@ -17,6 +17,7 @@ type Connection = {
   epoch?: string;
   revision: number;
   links: Set<string>;
+  shares: Set<string>;
   dirty: boolean;
   refreshing: boolean;
   output: ScreenOutput;
@@ -44,6 +45,8 @@ export function registerScreen(
   const budget = new ScreenBudget();
   const connections = new Map<string, Connection>();
   let scheduled = false,
+    refreshing = false,
+    refreshOffset = 0,
     disposed = false;
   const sendSnapshot = (c: Connection, snapshot: ScreenSnapshot) => {
     if (!c.socket.connected || c.epoch !== snapshot.directory.epoch) return;
@@ -58,19 +61,26 @@ export function registerScreen(
         linkId,
         reason: 'ended' as const,
       }));
-    const notices = links.map((grant) => ({
+    const added = links.filter((grant) => !c.links.has(grant.link.id));
+    const notices = added.map((grant) => ({
       epoch: c.epoch!,
       revision: directory.revision,
       grant,
     }));
     if (!c.output.take(c.socket.conn.transport.writable, [...closed, directory, ...notices])) {
-      c.dirty = true;
-      return;
+      const batch = { directory, links: added, closed: closed.map((notice) => notice.linkId) };
+      if (!c.output.take(c.socket.conn.transport.writable, [batch])) {
+        c.dirty = true;
+        return;
+      }
+      c.socket.emit('screen:snapshot', batch);
+    } else {
+      for (const notice of closed) c.socket.emit('screen:closed', notice);
+      c.socket.emit('screen:directory', directory);
+      for (const notice of notices) c.socket.emit('screen:link', notice);
     }
-    for (const notice of closed) c.socket.emit('screen:closed', notice);
-    c.socket.emit('screen:directory', directory);
-    for (const notice of notices) c.socket.emit('screen:link', notice);
     c.links = current;
+    c.shares = new Set(directory.shares.map((share) => share.id));
     c.revision = directory.revision;
   };
   const refresh = async (c: Connection) => {
@@ -81,7 +91,13 @@ export function registerScreen(
       release = budget.acquire(c.socket.data.auth.user.id, 'snapshot', 0);
       c.refreshing = true;
       c.dirty = false;
-      await service.snapshot(c.caller, { epoch }, (snapshot) => sendSnapshot(c, snapshot));
+      await service.snapshot(
+        c.caller,
+        { epoch },
+        (snapshot) => sendSnapshot(c, snapshot),
+        c.revision,
+        c.revision > 0 ? c : undefined,
+      );
     } catch (error) {
       if (error instanceof ScreenError && error.code === 'throttled') c.dirty = true;
       else if (c.epoch === epoch) {
@@ -97,32 +113,52 @@ export function registerScreen(
         service.disconnect(c.socket.id, epoch);
         c.epoch = undefined;
         c.links.clear();
+        c.shares.clear();
       }
     } finally {
       release?.();
       c.refreshing = false;
     }
   };
-  const refreshInBackground = (c: Connection) => {
-    void refresh(c).catch(() => {
+  const refreshConnection = async (c: Connection) => {
+    try {
+      await refresh(c);
+    } catch {
       const epoch = c.epoch;
       if (!epoch) return;
       c.epoch = undefined;
       c.dirty = false;
       c.links.clear();
+      c.shares.clear();
       service.disconnect(c.socket.id, epoch);
-    });
+    }
   };
   const rejectUnexpected = (work: Promise<unknown>) => {
     void work.catch(() => console.error('Screen event handler escaped its failure boundary.'));
   };
   const schedule = () => {
     for (const c of connections.values()) if (c.epoch) c.dirty = true;
-    if (scheduled || disposed) return;
+    if (scheduled || disposed || refreshing) return;
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      if (!disposed) for (const c of connections.values()) refreshInBackground(c);
+      if (disposed) return;
+      const wave = [...connections.values()].filter((c) => c.epoch);
+      if (!wave.length) return;
+      const start = refreshOffset++ % wave.length;
+      refreshing = true;
+      // Admit one directory refresh at a time so polling cannot fill the
+      // shared voice authorization queue ahead of interactive commands.
+      rejectUnexpected(
+        (async () => {
+          try {
+            for (let i = 0; i < wave.length && !disposed; i++)
+              await refreshConnection(wave[(start + i) % wave.length]!);
+          } finally {
+            refreshing = false;
+          }
+        })(),
+      );
     });
   };
   const unsubscribe = service.onChange(schedule);
@@ -136,6 +172,7 @@ export function registerScreen(
       },
       revision: 0,
       links: new Set(),
+      shares: new Set(),
       dirty: false,
       refreshing: false,
       output: new ScreenOutput(),
@@ -183,6 +220,7 @@ export function registerScreen(
           if (c.epoch !== binding.epoch) {
             c.revision = 0;
             c.links.clear();
+            c.shares.clear();
           }
           c.epoch = binding.epoch;
           schedule();

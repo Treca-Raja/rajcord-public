@@ -18,11 +18,12 @@ import { screenSocket, type ScreenSocket } from './screen-socket';
 import type { OwnedScreenBinding } from './screen-binding';
 import type { ScreenRuntimeAttachment } from './screen-runtime';
 import type { VoiceScreenSession, VoiceState } from '../voice/contracts';
-import type { WebScreenCapture } from './screen-capture';
+import { setScreenCaptureFormat, type WebScreenCapture } from './screen-capture';
 import { ScreenPeer } from './screen-peer';
 import type { ScreenReceiveHandle } from './screen-receiver';
 import { publicScreenIceServers, screenIceServers } from './screen-ice';
 import { screenVideoRequest } from './screen-quality';
+import { screenVideoBudget } from './screen-adaptation';
 import { screenRenewalPermit } from './screen-renewal';
 
 export type ScreenSettings = ScreenQuality & { sound: ScreenSound };
@@ -73,6 +74,7 @@ export type ScreenControls = Pick<
   | 'incoming'
   | 'subscribe'
   | 'inspect'
+  | 'inspectMedia'
   | 'open'
   | 'close'
 >;
@@ -149,6 +151,7 @@ type Incoming = {
   selection: ScreenSelectRequest;
 };
 type Outgoing = { peer: ScreenPeer; life: ScreenLifetime; shareId: string };
+type WatchRecovery = { attempts: number; readyAt: number; timer?: ReturnType<typeof setTimeout> };
 const qualityOnly = (quality: ScreenQuality): ScreenQuality => ({
   profile: quality.profile,
   videoBitrate: quality.videoBitrate,
@@ -191,7 +194,8 @@ export class ScreenCall {
   private generation = 0;
   private active = true;
   private connecting?: Promise<void>;
-  private renewing = false;
+  private renewing?: object;
+  private renewalFailures = 0;
   private publishing = false;
   private preparing = false;
   private sourceCleanup?: Promise<unknown>;
@@ -199,6 +203,8 @@ export class ScreenCall {
   private interval?: ReturnType<typeof setInterval>;
   private receiving = new Map<string, Incoming>();
   private selecting = false;
+  private selectionFinished: Promise<void> = Promise.resolve();
+  private watchRecoveryTail: Promise<void> = Promise.resolve();
   private selectionAbort?: AbortController;
   private selectionShareId?: string;
   private early: ScreenSignalNotice[] = [];
@@ -207,6 +213,7 @@ export class ScreenCall {
   private cleanupTail: Promise<void> = Promise.resolve();
   private iceServers: RTCIceServer[] = screenIceServers(publicScreenIceServers);
   private outgoing = new Map<string, Outgoing>();
+  private watchRecoveries = new Map<string, WatchRecovery>();
   private publisherLinks = new Map<string, ScreenLinkGrant['link']>();
   private removals: (() => void)[] = [];
   private bindingRemovals: (() => void)[] = [];
@@ -270,9 +277,19 @@ export class ScreenCall {
     );
   }
   inspect = () => this.state;
+  inspectMedia = () =>
+    Object.freeze({
+      outgoing: Object.freeze([...this.outgoing.values()].map(({ peer }) => peer.inspectMedia())),
+      content: this.source?.content() ?? null,
+      codec: this.source?.codec() ?? null,
+      incoming: Object.freeze(
+        [...this.receiving.values()].map(({ handle }) => handle.inspectMedia()),
+      ),
+    });
   controls(): ScreenControls {
     return Object.freeze({
       inspect: this.inspect,
+      inspectMedia: this.inspectMedia,
       subscribe: this.subscribe,
       connect: this.connect,
       prepare: this.prepare,
@@ -390,8 +407,7 @@ export class ScreenCall {
     if (
       data.epoch !== this.binding?.binding.epoch ||
       !Number.isSafeInteger(data.revision) ||
-      !Array.isArray(data.shares) ||
-      data.shares.length > 10
+      !Array.isArray(data.shares)
     )
       throw new Error('Invalid screen directory.');
     if ((data.revision as number) < this.directoryRevision) return;
@@ -400,6 +416,8 @@ export class ScreenCall {
     this.update({ shares });
     for (const id of this.receiving.keys())
       if (!shares.some((item) => item.id === id)) this.stopWatchingShare(id);
+    for (const id of this.watchRecoveries.keys())
+      if (!shares.some((item) => item.id === id)) this.cancelWatchRecovery(id);
     if (this.selectionShareId && !shares.some((item) => item.id === this.selectionShareId))
       this.stopWatchingShare(this.selectionShareId);
   }
@@ -439,23 +457,32 @@ export class ScreenCall {
       const signal = value as ScreenSignalNotice;
       if (signal.epoch !== this.binding?.binding.epoch) return;
       const incoming = [...this.receiving.values()].find((item) => item.id === signal.linkId);
-      const target = this.outgoing.get(signal.linkId)?.peer ?? incoming?.handle;
+      const ownedOutgoing = this.outgoing.get(signal.linkId);
+      const binding = this.binding;
+      const currentTarget = () =>
+        this.current(binding) &&
+        (ownedOutgoing
+          ? this.outgoing.get(signal.linkId) === ownedOutgoing
+          : !!incoming && this.receiving.get(incoming.shareId) === incoming);
+      const target = ownedOutgoing?.peer ?? incoming?.handle;
       if (target)
         void target
           .receive(signal)
           .then(async () => {
+            if (!currentTarget()) return;
             const outgoing = this.outgoing.get(signal.linkId);
             if (outgoing && signal.payload.type === 'answer' && this.ownShare) {
               const link = this.publisherLinks.get(signal.linkId);
               if (link)
                 await outgoing.peer.setVideoQuality({
-                  revision: 1,
+                  revision: (outgoing.peer.inspectVideoQuality().requested?.revision ?? 0) + 1,
                   publisher: qualityOnly(this.ownShare),
                   viewer: qualityOnly(link.quality),
                 });
             }
           })
           .catch((cause) => {
+            if (!currentTarget()) return;
             this.closeOutgoing(signal.linkId);
             this.error(cause);
           });
@@ -594,7 +621,25 @@ export class ScreenCall {
       started = Date.now();
     this.update({ phase: 'publishing', error: '' });
     let issued: ScreenPublishGrant | undefined;
+    let publishDispatched = false;
     try {
+      if (
+        settings.resolution &&
+        settings.frameRate &&
+        (settings.resolution !== preparedSettings?.resolution ||
+          settings.frameRate !== preparedSettings?.frameRate)
+      ) {
+        const capture = source.borrow();
+        await Promise.race([
+          setScreenCaptureFormat(capture.video, settings.resolution, settings.frameRate),
+          capture.ended.then(() => {
+            throw new Error('Screen source ended.');
+          }),
+        ]);
+        if (this.source !== source || !this.current(binding) || this.prepared !== prepared)
+          throw new Error('Screen source ended.');
+      }
+      publishDispatched = true;
       const proof = publication(
         await this.send<unknown>('screen:publish', {
           epoch: binding!.binding.epoch,
@@ -628,7 +673,7 @@ export class ScreenCall {
       source.stop();
       if (issued && this.current(binding))
         this.retireShare(this.socket!, binding!, issued.share.id);
-      else if (this.current(binding)) this.disconnect();
+      else if (publishDispatched && this.current(binding)) this.disconnect();
       this.error(cause);
       throw cause;
     } finally {
@@ -690,7 +735,8 @@ export class ScreenCall {
   }
   private async renew() {
     if (this.renewing || !this.current()) return;
-    this.renewing = true;
+    const operation = {};
+    this.renewing = operation;
     const binding = this.binding!,
       socket = this.socket!,
       epoch = binding.binding.epoch;
@@ -708,11 +754,7 @@ export class ScreenCall {
       const deadline = lifetime(data.remainingMs, started);
       if (Object.hasOwn(data, 'iceServers'))
         this.iceServers = screenIceServers(data.iceServers as RTCIceServer[]);
-      if (
-        !Array.isArray(data.links) ||
-        data.links.length > 18 || // Nine incoming streams plus nine viewers of our publication.
-        !Object.hasOwn(data, 'publication')
-      )
+      if (!Array.isArray(data.links) || !Object.hasOwn(data, 'publication'))
         throw new Error('Invalid screen renewal.');
       binding.adoptRenewal(screenRenewalPermit(binding.inspect()!.generation, deadline, revision));
       const own = this.ownShare,
@@ -731,6 +773,7 @@ export class ScreenCall {
       }
       const live = new Set<string>();
       for (const value of data.links) {
+        if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
         const grant = this.linkGrant(value, started);
         live.add(grant.link.id);
         const incoming = [...this.receiving.values()].find((item) => item.id === grant.link.id);
@@ -758,19 +801,30 @@ export class ScreenCall {
             const permit = screenRenewalPermit(existing.life.generation, peerDeadline, revision);
             existing.life.renew(permit);
             existing.peer.adoptRenewal(permit);
-          } else this.openPublisher(grant.link, peerDeadline, source, own);
+          } else {
+            await this.openPublisher(grant.link, peerDeadline, source, own);
+            if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
+          }
         }
       }
       for (const id of this.outgoing.keys()) if (!live.has(id)) this.closeOutgoing(id);
       for (const incoming of this.receiving.values())
         if (!live.has(incoming.id)) this.stopWatchingShare(incoming.shareId);
+      this.renewalFailures = 0;
     } catch (cause) {
       if (this.current(binding)) {
-        if ((cause as { code?: string }).code === 'throttled') {
-          this.renewalTimer = setTimeout(() => {
-            this.renewalTimer = undefined;
-            runInBackground(this.renew());
-          }, 5000);
+        const code = (cause as { code?: string }).code;
+        if (
+          code === 'throttled' ||
+          ((code === 'timeout' || code === 'unavailable') && this.renewalFailures++ < 2)
+        ) {
+          this.renewalTimer = setTimeout(
+            () => {
+              this.renewalTimer = undefined;
+              runInBackground(this.renew());
+            },
+            code === 'throttled' ? 5000 : 1000,
+          );
           this.error(cause);
         } else {
           this.disconnect();
@@ -778,7 +832,7 @@ export class ScreenCall {
         }
       }
     } finally {
-      this.renewing = false;
+      if (this.renewing === operation) this.renewing = undefined;
     }
   }
   private linkGrant(value: unknown, started: number) {
@@ -806,29 +860,44 @@ export class ScreenCall {
     screenVideoRequest({ revision: 1, publisher: link.quality, viewer: link.quality });
     return { link: link as ScreenLinkGrant['link'], deadline: lifetime(data.remainingMs, started) };
   }
-  private openPublisher(
+  private async openPublisher(
     link: ScreenLinkGrant['link'],
     deadline: number,
     source: CaptureSession,
     own: ScreenShare,
   ) {
-    if (this.outgoing.size >= 9) throw new Error('Screen viewer capacity exceeded.');
     const life = new ScreenLifetime(deadline),
       socket = this.socket!,
-      epoch = this.binding!.binding.epoch;
+      binding = this.binding!,
+      epoch = binding.binding.epoch;
     const capture = source.borrow();
-    let peer: ScreenPeer;
+    this.publisherLinks.set(link.id, link);
+    let peer: ScreenPeer | undefined;
     try {
       peer = new ScreenPeer({
         endpoint: { epoch, linkId: link.id, role: 'publisher', sound: own.sound },
         lifecycle: life,
         source: { video: capture.video, audio: capture.audio, sound: capture.sound },
         iceServers: this.iceServers,
+        currentIceServers: () => this.iceServers,
+        content: () => source.content().kind,
+        codecPreference: () => source.codecPreference(),
         createPeer: (config) => new RTCPeerConnection(config),
         initialVideoQuality: {
           revision: 1,
           publisher: qualityOnly(own),
           viewer: qualityOnly(link.quality),
+        },
+        videoBudget: () => {
+          if (own.resolution !== undefined || link.quality.resolution !== undefined)
+            return Math.min(own.videoBitrate!, link.quality.videoBitrate!);
+          const links = [...this.publisherLinks.values()];
+          const index = links.findIndex((item) => item.id === link.id);
+          if (index < 0) throw new Error('Screen viewer budget retired.');
+          return screenVideoBudget(
+            links.map((item) => Math.min(own.videoBitrate!, item.quality.videoBitrate!)),
+            own.videoBitrate!,
+          )[index]!;
         },
         send: async (signal, abort) => ({
           ok: true,
@@ -836,21 +905,38 @@ export class ScreenCall {
         }),
         onTrack: () => {},
         onError: (cause) => {
-          this.closeOutgoing(link.id);
-          this.error(cause);
+          if (peer && this.outgoing.get(link.id)?.peer === peer) {
+            this.closeOutgoing(link.id);
+            this.error(cause);
+          }
         },
       });
     } catch (cause) {
+      this.publisherLinks.delete(link.id);
       life.stop();
       throw cause;
     }
-    this.publisherLinks.set(link.id, link);
     this.outgoing.set(link.id, { peer, life, shareId: own.id });
-    void peer.offer().catch((cause) => {
-      this.closeOutgoing(link.id);
-      this.error(cause);
-    });
-    this.update({ viewers: this.outgoing.size });
+    try {
+      await Promise.all(
+        [...this.outgoing.values()]
+          .filter((item) => item.peer !== peer && own.resolution === undefined)
+          .map((item) => item.peer.refreshVideoLimits()),
+      );
+      if (
+        this.outgoing.get(link.id)?.peer !== peer ||
+        this.source !== source ||
+        this.ownShare !== own
+      )
+        return;
+      await peer.offer();
+    } catch (cause) {
+      if (this.outgoing.get(link.id)?.peer === peer) {
+        this.closeOutgoing(link.id);
+        this.error(cause);
+      }
+    }
+    if (this.current(binding)) this.update({ viewers: this.outgoing.size });
   }
   private closeOutgoing(id: string) {
     const owned = this.outgoing.get(id);
@@ -861,9 +947,12 @@ export class ScreenCall {
     owned.life.stop();
     this.update({ viewers: this.outgoing.size });
   }
-  watch = (shareId: string, quality: ScreenQuality) =>
-    this.selectShare(shareId, quality, 'replace');
+  watch = (shareId: string, quality: ScreenQuality) => {
+    this.cancelWatchRecovery(shareId);
+    return this.selectShare(shareId, quality, 'replace');
+  };
   watchMultiple = (shareId: string, quality: ScreenQuality) => {
+    this.cancelWatchRecovery(shareId);
     if (this.selecting)
       return Promise.reject(new Error('Finish the current screen selection first.'));
     const existing = this.receiving.get(shareId);
@@ -878,7 +967,12 @@ export class ScreenCall {
     }
     return this.selectShare(shareId, quality, 'add');
   };
-  private async selectShare(shareId: string, quality: ScreenQuality, mode: 'replace' | 'add') {
+  private async selectShare(
+    shareId: string,
+    quality: ScreenQuality,
+    mode: 'replace' | 'add',
+    recovery?: WatchRecovery,
+  ) {
     await this.connect();
     if (this.selecting) throw new Error('Finish the current screen selection first.');
     const selected = this.state.shares.find((item) => item.id === shareId);
@@ -895,20 +989,26 @@ export class ScreenCall {
         return;
       }
     }
-    if (mode === 'add' && this.receiving.size >= 9)
-      throw new Error('You can watch up to nine streams at once.');
     if (mode === 'replace') this.stopWatching(false);
     const binding = this.binding!,
       socket = this.socket!,
       epoch = binding.binding.epoch;
     this.selecting = true;
-    this.update({ selectingShareId: shareId, error: '' });
+    let finishSelection!: () => void;
+    this.selectionFinished = new Promise<void>((resolve) => {
+      finishSelection = resolve;
+    });
     const abort = new AbortController();
     this.selectionAbort = abort;
     this.selectionShareId = shareId;
     try {
+      this.update({ selectingShareId: shareId, error: '' });
       if (this.cleanupRaw) await this.cleanupRaw;
-      if (abort.signal.aborted || !this.current(binding))
+      if (
+        abort.signal.aborted ||
+        !this.current(binding) ||
+        (recovery && this.watchRecoveries.get(shareId) !== recovery)
+      )
         throw new Error('Screen selection ended.');
       const selection: ScreenSelectRequest = {
         ...quality,
@@ -939,6 +1039,7 @@ export class ScreenCall {
         abort.signal.aborted ||
         !this.current(binding) ||
         this.state.hidden ||
+        (recovery && this.watchRecoveries.get(shareId) !== recovery) ||
         this.selectionCleanup !== cancelledCleanup
       )
         throw new Error('Screen selection ended.');
@@ -954,6 +1055,7 @@ export class ScreenCall {
       };
       const handle = this.options.attachment.openIncoming({
         iceServers: this.iceServers,
+        currentIceServers: () => this.iceServers,
         endpoint: { epoch, linkId: result.link.id, role: 'viewer', sound: selected.sound },
         lifecycle: life,
         send: async (signal, signalAbort) => ({
@@ -981,6 +1083,7 @@ export class ScreenCall {
         if (this.receiving.get(shareId) !== incoming) return;
         if (state.phase === 'closed' || state.phase === 'paused-hidden') {
           this.receiving.delete(shareId);
+          incoming.life.stop();
           this.elements.get(incoming.id)?.remove();
           this.elements.delete(incoming.id);
           const focused = this.state.watching === shareId;
@@ -989,9 +1092,11 @@ export class ScreenCall {
             playback: focused ? '' : this.state.playback,
           });
           if (state.reason === 'failed' || state.reason === 'tracks-timeout')
-            this.error(new Error('Screen connection failed. Select the screen again to retry.'));
+            this.recoverWatching(incoming, binding, focused);
           return;
         }
+        const recovery = this.watchRecoveries.get(shareId);
+        if (state.phase === 'ready' && recovery && !recovery.readyAt) recovery.readyAt = Date.now();
         if (this.state.watching === shareId)
           this.update({
             playback: state.playback?.error?.message ?? state.playback?.phase ?? state.phase,
@@ -1007,10 +1112,12 @@ export class ScreenCall {
         if (signal.linkId === incoming.id) await handle.receive(signal);
     } catch (cause) {
       if (this.selectionCleanup) {
-        const cleanup = { ...this.selectionCleanup, revision: ++this.revision };
+        const cleanup = this.selectionCleanup;
         this.selectionCleanup = undefined;
-        if (this.current(binding))
-          void this.cleanupSelection(socket, cleanup).catch((error) => this.error(error));
+        if (this.current(binding) && (cause as { code?: string } | undefined)?.code !== 'throttled')
+          void this.cleanupSelection(socket, { ...cleanup, revision: ++this.revision }).catch(
+            (error) => this.error(error),
+          );
       }
       this.selectionShareId = undefined;
       if (!abort.signal.aborted) this.error(cause);
@@ -1018,8 +1125,54 @@ export class ScreenCall {
     } finally {
       if (this.selectionAbort === abort) this.selectionAbort = undefined;
       this.selecting = false;
+      finishSelection();
       if (this.state.selectingShareId === shareId) this.update({ selectingShareId: null });
     }
+  }
+  private cancelWatchRecovery(shareId: string) {
+    clearTimeout(this.watchRecoveries.get(shareId)?.timer);
+    this.watchRecoveries.delete(shareId);
+  }
+  private recoverWatching(incoming: Incoming, binding: OwnedScreenBinding, focused: boolean) {
+    const shareId = incoming.shareId;
+    const recovery = this.watchRecoveries.get(shareId) ?? { attempts: 0, readyAt: 0 };
+    if (recovery.readyAt && Date.now() - recovery.readyAt >= 30000) recovery.attempts = 0;
+    recovery.readyAt = 0;
+    if (recovery.attempts >= 2 || this.state.hidden || !this.current(binding)) {
+      this.error(new Error('Screen connection recovery failed. Select the screen again to retry.'));
+      return;
+    }
+    this.watchRecoveries.set(shareId, recovery);
+    recovery.timer = setTimeout(() => {
+      recovery.timer = undefined;
+      const task = this.watchRecoveryTail.then(async () => {
+        try {
+          while (this.selecting) await this.selectionFinished;
+          await this.cleanupRaw;
+          if (
+            this.watchRecoveries.get(shareId) !== recovery ||
+            !this.current(binding) ||
+            this.state.hidden ||
+            this.receiving.has(shareId) ||
+            !this.state.shares.some((item) => item.id === shareId)
+          )
+            return;
+          recovery.attempts++;
+          const previousFocus = this.state.watching,
+            previousLayout = this.state.layout;
+          await this.selectShare(shareId, qualityOnly(incoming.selection), 'add', recovery);
+          if (this.watchRecoveries.get(shareId) !== recovery) return;
+          if (!focused && previousFocus && this.receiving.has(previousFocus))
+            this.updateWatching({ watching: previousFocus, layout: previousLayout });
+          else this.update({ layout: previousLayout });
+        } catch (cause) {
+          if (this.watchRecoveries.get(shareId) === recovery && this.current(binding))
+            this.error(cause);
+        }
+      });
+      this.watchRecoveryTail = task;
+      runInBackground(task);
+    }, 1000);
   }
   private cleanupSelection(socket: ScreenSocket, request: ScreenSelectRequest) {
     const raw = this.cleanupTail.then(async () => {
@@ -1042,6 +1195,7 @@ export class ScreenCall {
     if (this.receiving.size > 0) this.update({ layout: 'grid' });
   };
   stopWatchingShare = (shareId: string) => {
+    this.cancelWatchRecovery(shareId);
     const incoming = this.receiving.get(shareId);
     if (incoming) {
       this.receiving.delete(shareId);
@@ -1070,6 +1224,7 @@ export class ScreenCall {
     } else this.updateWatching({});
   };
   stopWatching = (forget = true) => {
+    for (const shareId of this.watchRecoveries.keys()) this.cancelWatchRecovery(shareId);
     if (forget) this.resume = undefined;
     const pending = this.selectionCleanup,
       socket = this.socket;
@@ -1221,6 +1376,8 @@ export class ScreenCall {
   };
   private disconnect() {
     this.generation++;
+    this.renewing = undefined;
+    this.renewalFailures = 0;
     clearInterval(this.interval);
     clearTimeout(this.renewalTimer);
     this.renewalTimer = undefined;

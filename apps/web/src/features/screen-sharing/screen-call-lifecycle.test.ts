@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ScreenLinkGrant, ScreenQuality, ScreenSelectRequest } from '@tricord/shared';
 import { ScreenCall } from './screen-call';
+import { ScreenLifetime } from './capture-session';
 import type { ScreenSocket } from './screen-socket';
 import type { OwnedScreenBinding } from './screen-binding';
 import type { ScreenReceiveOptions, ScreenReceiveState } from './screen-receiver';
@@ -262,8 +263,187 @@ it('ignores adopted link notices while timed renewals continue without a feedbac
   expect(f.call.inspect().error).toBe('');
 });
 
-it.each([18, 19])(
-  'bounds combined incoming and outgoing renewal links at eighteen: %s',
+it('automatically reselects a failed incoming stream with its previous quality', async () => {
+  const f = await fixture();
+  const previous = f.openIncoming.mock.results[0]!.value;
+  previous.update({ phase: 'closed', reason: 'failed' });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.openIncoming).toHaveBeenCalledTimes(2);
+  expect(f.call.inspect().watching).toBe(f.share.id);
+  expect(
+    f.command.mock.calls
+      .filter(
+        ([event, request]) =>
+          event === 'screen:select' && (request as ScreenSelectRequest).shareId === f.share.id,
+      )
+      .at(-1)?.[1],
+  ).toMatchObject({ ...f.quality, mode: 'add' });
+  expect(f.voice.leave).not.toHaveBeenCalled();
+});
+it('retries a transient renewal timeout without extending authority or discarding healthy watching', async () => {
+  const f = await fixture();
+  f.command.mockRejectedValueOnce(Object.assign(new Error('Timed out'), { code: 'timeout' }));
+  await vi.advanceTimersByTimeAsync(10100);
+  expect(f.binding.release).not.toHaveBeenCalled();
+  expect(f.binding.adoptRenewal).not.toHaveBeenCalled();
+  expect(f.call.inspect().watching).toBe(f.share.id);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.binding.adoptRenewal).toHaveBeenCalledTimes(1);
+  expect(f.binding.release).not.toHaveBeenCalled();
+});
+it('bounds consecutive unavailable renewal retries and retires the binding on exhaustion', async () => {
+  const f = await fixture();
+  f.command.mockRejectedValue(Object.assign(new Error('Unavailable'), { code: 'unavailable' }));
+  await vi.advanceTimersByTimeAsync(12100);
+  expect(f.binding.release).toHaveBeenCalledTimes(1);
+  expect(f.call.inspect().watching).toBeNull();
+});
+
+it('serializes recovery of simultaneously failed watched streams', async () => {
+  const f = await fixture(),
+    other = f.addShare();
+  await f.call.watchMultiple(other.id, f.quality);
+  f.openIncoming.mock.results[0]!.value.update({ phase: 'closed', reason: 'failed' });
+  f.openIncoming.mock.results[1]!.value.update({ phase: 'closed', reason: 'failed' });
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(f.openIncoming).toHaveBeenCalledTimes(4);
+  expect(new Set(f.call.inspect().watchingShareIds)).toEqual(new Set([f.share.id, other.id]));
+  expect(f.call.inspect().error).toBe('');
+});
+
+it('does not send compensating cleanup for a selection explicitly rejected by admission', async () => {
+  const f = await fixture(),
+    other = f.addShare();
+  f.command.mockClear();
+  f.command.mockRejectedValueOnce(
+    Object.assign(new Error('Screen authorization is busy.'), { code: 'throttled' }),
+  );
+  await expect(f.call.watchMultiple(other.id, f.quality)).rejects.toMatchObject({
+    code: 'throttled',
+  });
+  await flush();
+  const selections = f.command.mock.calls.filter(([event]) => event === 'screen:select');
+  expect(selections).toHaveLength(1);
+  expect(selections[0]![1]).toMatchObject({ shareId: other.id, mode: 'add' });
+  expect(f.call.inspect().watching).toBe(f.share.id);
+});
+it('honors Stop triggered synchronously by a selection-state observer', async () => {
+  const f = await fixture(),
+    other = f.addShare();
+  const unsubscribe = f.call.subscribe(() => {
+    if (f.call.inspect().selectingShareId === other.id) f.call.stopWatching();
+  });
+  await expect(f.call.watch(other.id, f.quality)).rejects.toThrow('selection ended');
+  unsubscribe();
+  expect(
+    f.command.mock.calls.some(
+      ([event, request]) =>
+        event === 'screen:select' && (request as ScreenSelectRequest).shareId === other.id,
+    ),
+  ).toBe(false);
+  expect(f.call.inspect().watchingShareIds).toEqual([]);
+});
+
+it('does not clear a replacement renewal admission when an old request settles', async () => {
+  const f = await fixture();
+  let resolve!: (value: unknown) => void;
+  const pending = new Promise((done) => {
+    resolve = done;
+  });
+  drains.push(() => resolve({}));
+  f.command.mockImplementationOnce(() => pending as never);
+  await vi.advanceTimersByTimeAsync(10100);
+  f.binding.release();
+  const replacement = {};
+  Reflect.set(f.call, 'renewing', replacement);
+  resolve({});
+  await flush();
+  expect(Reflect.get(f.call, 'renewing')).toBe(replacement);
+});
+
+it('does not tear down watching when a stopped publication interrupts outgoing renewal work', async () => {
+  const f = await fixture(),
+    gate = deferred(),
+    life = new ScreenLifetime(Date.now() + 45000);
+  const own = { ...f.share, id: crypto.randomUUID(), publisherId: crypto.randomUUID() };
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
+  const publisherLink = {
+    ...f.notice().grant.link,
+    id: crypto.randomUUID(),
+    shareId: own.id,
+    publisherId: own.publisherId,
+  };
+  const command = f.command.getMockImplementation()!;
+  f.command.mockImplementation(async (event, request) => {
+    if (event === 'screen:stop') return { stopped: true } as never;
+    if (event === 'screen:renew')
+      return {
+        remainingMs: 45000,
+        publication: { share: own, remainingMs: 45000 },
+        links: [
+          ...[publisherLink, { ...publisherLink, id: crypto.randomUUID() }].map((link) => ({
+            link,
+            remainingMs: 45000,
+          })),
+          f.notice().grant,
+        ],
+      } as never;
+    return command(event, request);
+  });
+  const open = vi
+    .spyOn(f.call as unknown as { openPublisher(): Promise<void> }, 'openPublisher')
+    .mockImplementation(() => gate.promise);
+  await vi.advanceTimersByTimeAsync(10100);
+  expect(open).toHaveBeenCalledOnce();
+  f.call.stopSource();
+  gate.resolve();
+  await flush();
+  expect(f.binding.release).not.toHaveBeenCalled();
+  expect(f.call.inspect().watching).toBe(f.share.id);
+  open.mockRestore();
+});
+
+it.each(['stop', 'hide', 'binding', 'source', 'dispose'] as const)(
+  'cancels incoming recovery on %s',
+  async (action) => {
+    const f = await fixture();
+    f.openIncoming.mock.results[0]!.value.update({ phase: 'closed', reason: 'failed' });
+    if (action === 'stop') f.call.stopWatching();
+    else if (action === 'hide') f.visibility(false);
+    else if (action === 'binding') f.binding.release();
+    else if (action === 'dispose') f.call.dispose();
+    else {
+      f.transport.shares = [];
+      f.emit('directory', { epoch: f.binding.binding.epoch, revision: 2, shares: [] });
+    }
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(f.openIncoming).toHaveBeenCalledTimes(1);
+  },
+);
+
+it('bounds automatic reselection and leaves other watched streams and focus intact', async () => {
+  const f = await fixture(),
+    other = f.addShare();
+  await f.call.watchMultiple(other.id, f.quality);
+  const initial = f.openIncoming.mock.results[0]!.value;
+  initial.update({ phase: 'closed', reason: 'failed' });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.call.inspect()).toMatchObject({
+    watching: other.id,
+    watchingShareIds: [other.id, f.share.id],
+  });
+  f.openIncoming.mock.results[2]!.value.update({ phase: 'closed', reason: 'failed' });
+  await vi.advanceTimersByTimeAsync(1000);
+  f.openIncoming.mock.results[3]!.value.update({ phase: 'closed', reason: 'failed' });
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(f.openIncoming).toHaveBeenCalledTimes(4);
+  expect(f.call.inspect().error).toContain('recovery failed');
+  expect(f.call.inspect().watching).toBe(other.id);
+});
+
+it.each([18, 38, 64])(
+  'renews combined incoming and outgoing links without a fixed room-count cap: %s',
   async (count) => {
     const f = await fixture();
     const grant = f.notice().grant;
@@ -279,14 +459,9 @@ it.each([18, 19])(
       ],
     });
     await vi.advanceTimersByTimeAsync(10100);
-    if (count === 18) {
-      expect(f.call.inspect()).toMatchObject({ watching: f.share.id, error: '' });
-      expect(f.binding.release).not.toHaveBeenCalled();
-      expect(f.openIncoming.mock.results[0]!.value.adoptRenewal).toHaveBeenCalledTimes(1);
-    } else {
-      expect(f.call.inspect().error).toBe('Invalid screen renewal.');
-      expect(f.binding.release).toHaveBeenCalledTimes(1);
-    }
+    expect(f.call.inspect()).toMatchObject({ watching: f.share.id, error: '' });
+    expect(f.binding.release).not.toHaveBeenCalled();
+    expect(f.openIncoming.mock.results[0]!.value.adoptRenewal).toHaveBeenCalledTimes(1);
   },
 );
 

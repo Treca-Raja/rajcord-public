@@ -52,7 +52,7 @@ export class ScreenBudget {
     this.aggregate = {
       control: new Bucket(10, 100, time),
       signal: new Bucket(1200, 1800, time),
-      renew: new Bucket(2, 30, time),
+      renew: new Bucket(8, 40, time),
       bytes: new Bucket(2621440, 5242880, time),
       snapshot: new Bucket(30, 30, time),
     };

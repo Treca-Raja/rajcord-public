@@ -1,5 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
+import { SCREEN_VIDEO_BITRATES } from './screen.js';
 
 const id = Type.String({
   pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
@@ -15,7 +16,7 @@ const oneOf = <const T extends readonly (string | number | boolean)[]>(...values
   Type.Union(values.map((value) => Type.Literal(value)) as unknown as [TSchema, ...TSchema[]]);
 const resolution = oneOf(480, 720, 1080);
 const frameRate = oneOf(15, 30, 60);
-const videoBitrate = nullable(oneOf(2000000, 4000000, 6000000, 8000000, 12000000, 20000000));
+const videoBitrate = nullable(oneOf(...SCREEN_VIDEO_BITRATES));
 const quality = {
   profile: oneOf('low', 'auto', 'high', 'smooth', 'ultra'),
   videoBitrate,

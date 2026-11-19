@@ -31,6 +31,7 @@ type PeerOptions = ConstructorParameters<typeof ScreenPeer>[0];
 export type ScreenReceiveOptions = {
   // Already verified by the caller's authorization boundary; references are not grants.
   iceServers?: readonly RTCIceServer[];
+  currentIceServers?: () => readonly RTCIceServer[];
   endpoint: Endpoint;
   lifecycle: ScreenPeerLifecycle;
   send: PeerOptions['send'];
@@ -317,6 +318,7 @@ class ReceiveLink {
     this.trackTimer = setTimeout(() => this.end('tracks-timeout'), this.lane.trackTimeout);
     const peer = new ScreenPeer({
       iceServers: this.options.iceServers,
+      currentIceServers: this.options.currentIceServers,
       endpoint: this.options.endpoint,
       lifecycle: this.lifecycle,
       now: this.lane.now,
@@ -453,6 +455,9 @@ class ReceiveLink {
     }
     return this.state;
   }
+  inspectMedia() {
+    return this.peer?.inspectMedia() ?? null;
+  }
   subscribe(listener: (state: ScreenReceiveState) => void) {
     this.check();
     this.listeners.add(listener);
@@ -583,6 +588,7 @@ class ReceiveLink {
 export type ScreenReceiveHandle = Pick<
   ReceiveLink,
   | 'inspect'
+  | 'inspectMedia'
   | 'subscribe'
   | 'receive'
   | 'setOutput'
@@ -601,14 +607,13 @@ export type ScreenReceiveLane = Readonly<{
   inspect(): Readonly<{
     occupied: boolean;
     activeCount: number;
-    capacity: number;
+    capacity: null;
     disposed: boolean;
     pending: Readonly<Record<Slot, boolean>>;
   }>;
   dispose(): void;
 }>;
 export function createScreenReceiveLane(options: LaneOptions): ScreenReceiveLane {
-  const capacity = 9;
   const lanes = new Map<string, ReceiveLane>();
   let disposed = false;
   const prune = () => {
@@ -626,7 +631,6 @@ export function createScreenReceiveLane(options: LaneOptions): ScreenReceiveLane
       prune();
       const linkId = request.endpoint.linkId;
       if (lanes.has(linkId)) throw error('busy', 'This screen link already has a receiver.');
-      if (lanes.size >= capacity) throw error('busy', 'The viewer stream limit has been reached.');
       const lane = new ReceiveLane(options);
       lanes.set(linkId, lane);
       try {
@@ -648,7 +652,7 @@ export function createScreenReceiveLane(options: LaneOptions): ScreenReceiveLane
       return Object.freeze({
         occupied: states.some((state) => state.occupied),
         activeCount: states.filter((state) => state.occupied).length,
-        capacity,
+        capacity: null,
         disposed,
         pending,
       });

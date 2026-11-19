@@ -63,7 +63,9 @@ try {
         mode: 'canvas',
         codec: settings.codec,
         content: settings.content,
+        hint: settings.hint,
         phaseMs: settings.phaseMs,
+        bitrates: settings.bitrates,
       }),
     });
     for (const browser of browsers.splice(0)) await browser.close();
@@ -96,7 +98,7 @@ try {
           timedOut = true;
           child.kill();
         },
-        settings.phaseMs * 4 + 90000,
+        (settings.phaseMs + 2000) * settings.bitrates.length * 2 + 90000,
       );
       child.once('error', (error) => {
         clearTimeout(timer);

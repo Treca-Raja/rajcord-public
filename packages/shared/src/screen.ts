@@ -7,7 +7,7 @@ export const SCREEN_PROFILES = ['low', 'auto', 'high', 'smooth', 'ultra'] as con
 export type ScreenProfile = (typeof SCREEN_PROFILES)[number];
 // Experimental manual ceilings; these are not qualified performance defaults.
 export const SCREEN_VIDEO_BITRATES = [
-  2000000, 4000000, 6000000, 8000000, 12000000, 20000000,
+  2000000, 4000000, 6000000, 8000000, 12000000, 17000000, 20000000,
 ] as const;
 export type ScreenVideoBitrate = (typeof SCREEN_VIDEO_BITRATES)[number] | null;
 export type ScreenSound = 'none' | 'tab' | 'system' | 'application' | 'source';
@@ -143,6 +143,11 @@ export interface ScreenClientEvents {
   ) => void;
 }
 export interface ScreenServerEvents {
+  'screen:snapshot': (data: {
+    directory: ScreenDirectory;
+    links: ScreenLinkGrant[];
+    closed: string[];
+  }) => void;
   'screen:directory': (data: ScreenDirectory) => void;
   'screen:link': (data: ScreenLinkNotice) => void;
   'screen:closed': (data: ScreenClosed) => void;

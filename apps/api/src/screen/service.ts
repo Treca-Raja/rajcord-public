@@ -27,7 +27,7 @@ import { description, signal, type Description } from './signaling.js';
 export type ScreenCaller = { token: string; transportId: string; isConnected: () => boolean };
 type Voice = Pick<
   VoiceService,
-  'leases' | 'authorize' | 'exclusive' | 'onLeaseInvalidated' | 'config'
+  'leases' | 'authorize' | 'authorizeBatch' | 'exclusive' | 'onLeaseInvalidated' | 'config'
 >;
 type Binding = {
   lease: Lease;
@@ -70,6 +70,7 @@ type Link = {
   sequences?: [number, number];
 };
 export type ScreenSnapshot = { directory: ScreenDirectory; links: ScreenLinkGrant[] };
+type SnapshotMembership = { shares: ReadonlySet<string>; links: ReadonlySet<string> };
 export type ScreenDestination = { transportId: string; epoch: string };
 
 export class ScreenError extends HttpError {
@@ -215,24 +216,49 @@ export class ScreenService {
       throw error;
     }
   }
-  private async bound(caller: ScreenCaller, epoch: unknown) {
+  private findBinding(caller: ScreenCaller, epoch: unknown) {
     if (!caller.isConnected()) throw stale();
     const id = uuid(epoch);
     const binding = [...this.bindings.values()].find(
       (b) => b.transportId === caller.transportId && b.epoch === id,
     );
     if (!binding) throw stale();
+    return binding;
+  }
+  private async bound(caller: ScreenCaller, epoch: unknown) {
+    const binding = this.findBinding(caller, epoch);
     const lease = await this.lease(caller.token, binding.leaseId, binding);
     this.check(binding);
     if (lease !== binding.lease) throw stale();
     return binding;
   }
   private async pair(caller: Binding, peer: Binding) {
-    const lease = await this.lease(peer.lease.token, peer.leaseId, peer);
-    await this.lease(caller.lease.token, caller.leaseId, caller);
-    this.check(caller);
-    this.check(peer);
-    if (lease !== peer.lease || caller.channelId !== peer.channelId) throw denied();
+    await this.endpoints(caller, new Set([peer]));
+  }
+  private async endpoints(caller: Binding, peers: Set<Binding>) {
+    const endpoints = [...peers].filter((peer) => peer !== caller);
+    endpoints.push(caller);
+    let results: Awaited<ReturnType<VoiceService['authorizeBatch']>>;
+    try {
+      results = await this.voice.authorizeBatch(
+        endpoints.map((binding) => ({
+          token: binding.lease.token,
+          credential: binding.leaseId,
+        })),
+      );
+    } catch (error) {
+      this.clear();
+      throw error;
+    }
+    for (const [index, binding] of endpoints.entries()) {
+      const lease = results[index];
+      if (lease instanceof HttpError) {
+        this.dropBinding(binding);
+        throw new ScreenError('not_authorized', lease.statusCode, 'Screen authorization ended.');
+      }
+      this.check(binding);
+      if (lease !== binding.lease || caller.channelId !== binding.channelId) throw denied();
+    }
   }
   private shareValue(share: Share): ScreenShare {
     return { ...share.value };
@@ -531,8 +557,6 @@ export class ScreenService {
           throw new ScreenError('invalid', 400, 'Requested quality exceeds the publisher ceiling.');
       }
       if (mode === 'replace') for (const old of viewer.selections.values()) this.dropLink(old);
-      else if (!viewer.selections.has(shareId!) && viewer.selections.size >= 9)
-        throw new ScreenError('capacity', 409, 'A viewer can watch up to nine streams.');
       const existing = viewer.selections.get(shareId!);
       if (existing) this.dropLink(existing);
       viewer.selectionRevision = next;
@@ -576,23 +600,60 @@ export class ScreenService {
   }
   // Delivery callbacks run synchronously after the final fences, while holding the voice lock.
   // A returned DTO alone never authorizes a subsequent private delivery.
-  snapshot(caller: ScreenCaller, value: unknown, deliver: (snapshot: ScreenSnapshot) => void) {
+  snapshot(
+    caller: ScreenCaller,
+    value: unknown,
+    deliver: (snapshot: ScreenSnapshot) => void,
+  ): Promise<ScreenDirectory>;
+  snapshot(
+    caller: ScreenCaller,
+    value: unknown,
+    deliver: (snapshot: ScreenSnapshot) => void,
+    knownRevision: number,
+    known?: SnapshotMembership,
+  ): Promise<ScreenDirectory | null>;
+  async snapshot(
+    caller: ScreenCaller,
+    value: unknown,
+    deliver: (snapshot: ScreenSnapshot) => void,
+    knownRevision?: number,
+    known?: SnapshotMembership,
+  ) {
     const body = input(value, ['epoch']);
+    // A poll that cannot deliver data need not wait behind voice mutations.
+    // If the revision changes during authorization, the next poll will send it.
+    if (knownRevision === this.stateRevision) {
+      await this.bound(caller, body.epoch);
+      return null;
+    }
     return this.run(async () => {
       const binding = await this.bound(caller, body.epoch);
+      // Unchanged polls authorize the recipient but deliver nothing. A changed
+      // snapshot still freshly authorizes every source and link below.
+      if (knownRevision === this.stateRevision) return null;
       const shares = [...this.shares.values()].filter(
         (s) => s.publisher.channelId === binding.channelId,
       );
       const links = [...this.links.values()].filter(
         (l) => l.viewer === binding || l.share.publisher === binding,
       );
+      // Share and link records have immutable public identities. Changes to
+      // other viewers' selections do not require delivering this same snapshot.
+      if (
+        known &&
+        shares.length === known.shares.size &&
+        links.length === known.links.size &&
+        shares.every((share) => known.shares.has(share.value.id)) &&
+        links.every((link) => known.links.has(link.value.id))
+      )
+        return null;
       const peers = new Set(shares.map((s) => s.publisher));
       for (const link of links) {
         peers.add(link.viewer);
         peers.add(link.share.publisher);
       }
       peers.delete(binding);
-      for (const peer of peers) await this.pair(binding, peer);
+      await this.endpoints(binding, peers);
       this.check(binding);
       for (const peer of peers) this.check(peer);
       for (const share of shares) if (share.publisher.share !== share) throw stale();
@@ -616,8 +677,9 @@ export class ScreenService {
   ) {
     const request = signal(value);
     return this.run(async () => {
-      const binding = await this.bound(caller, request.epoch),
+      const binding = this.findBinding(caller, request.epoch),
         link = this.links.get(request.linkId);
+      if (caller.token !== binding.lease.token) throw denied();
       if (!link || (link.viewer !== binding && link.share.publisher !== binding)) throw denied();
       const publisher = binding === link.share.publisher;
       const peer = publisher ? link.viewer : link.share.publisher;
@@ -716,10 +778,12 @@ export class ScreenService {
         : [...this.links.values()].filter(
             (link) => link.viewer === binding || link.share.publisher === binding,
           );
-      for (const link of links) {
-        await this.pair(binding, link.viewer === binding ? link.share.publisher : link.viewer);
-        this.checkLink(link);
-      }
+      await this.endpoints(
+        binding,
+        new Set(
+          links.map((link) => (link.viewer === binding ? link.share.publisher : link.viewer)),
+        ),
+      );
       this.check(binding);
       if (
         own &&
@@ -745,7 +809,6 @@ export class ScreenService {
         binding.renewalRevision = next;
         binding.lastRenewal = fingerprint;
         this.request(binding, requestId, fingerprint, true);
-        this.changed();
       }
       const result: ScreenRenewal = {
         ...this.relayConfig(binding),

@@ -21,7 +21,22 @@ export async function waitForDebuggingPort(profile: string, check: () => void) {
   }
   throw new Error('Test browser did not publish a valid debugging port.');
 }
-export async function launch(options: { fakeMicrophone?: boolean } = {}) {
+export async function waitForDebuggingPage(port: string) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const response = await fetch('http://127.0.0.1:' + port + '/json/list', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) throw new Error('Test browser page discovery failed: ' + response.status);
+    const pages = (await response.json()) as { type: string; webSocketDebuggerUrl: string }[];
+    const page = pages.find((p) => p.type === 'page');
+    if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl;
+    await delay(100);
+  }
+  throw new Error('Test browser did not publish a debugging page.');
+}
+export async function launch(options: { fakeMicrophone?: boolean; fakeVideoFile?: string } = {}) {
+  if (options.fakeVideoFile && options.fakeMicrophone === false)
+    throw new Error('A file-backed camera requires fake media devices.');
   const profile = await mkdtemp(path.join(tmpdir(), 'tricord-voice-browser-'));
   const wav = Buffer.alloc(44 + 48000 * 2 * 4);
   wav.write('RIFF');
@@ -54,6 +69,9 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
       ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
       '--remote-debugging-address=127.0.0.1',
       '--remote-debugging-port=0',
+      ...(options.fakeVideoFile
+        ? ['--use-file-for-fake-video-capture=' + options.fakeVideoFile]
+        : []),
       '--user-data-dir=' + profile,
       ...(options.fakeMicrophone === false
         ? []
@@ -93,7 +111,9 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
   try {
     const port = await waitForDebuggingPort(profile, () => {
       if (launchError) throw launchError;
-      if (child.exitCode !== null || child.signalCode !== null)
+      // On Windows the launcher may exit after handing its unique
+      // profile to the browser. Its DevToolsActivePort remains the readiness signal.
+      if ((process.platform !== 'win32' && child.exitCode !== null) || child.signalCode !== null)
         throw new Error('Test browser exited before publishing its debugging port.');
     }).catch((cause: unknown) => {
       throw new Error(
@@ -101,11 +121,7 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
         { cause },
       );
     });
-    const pages = (await (await fetch('http://127.0.0.1:' + port + '/json/list')).json()) as {
-      type: string;
-      webSocketDebuggerUrl: string;
-    }[];
-    const ws = new WebSocket(pages.find((p) => p.type === 'page')!.webSocketDebuggerUrl);
+    const ws = new WebSocket(await waitForDebuggingPage(port));
     let sequence = 0;
     const pending = new Map<
       number,
@@ -223,7 +239,15 @@ export async function launch(options: { fakeMicrophone?: boolean } = {}) {
     };
   } catch (error) {
     child.kill();
-    await cleanup();
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'Browser launch and cleanup failed: ' + String(error),
+        { cause: cleanupError },
+      );
+    }
     throw error;
   }
 }

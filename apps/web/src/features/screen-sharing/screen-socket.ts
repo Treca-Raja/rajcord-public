@@ -1,4 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
+import { runInBackground } from '../../shared/background';
 import type {
   ScreenAck,
   ScreenBindRequest,
@@ -13,11 +14,17 @@ import type {
 import type { OwnedScreenBinding, ScreenBindingDependency } from './screen-binding';
 
 const sockets = new Map<string, ScreenSocket>();
+type ScreenCommand = { event: keyof ScreenClientEvents; run(): Promise<void>; cancel(): void };
+const maxQueued = 128;
 export class ScreenSocket {
   private readonly socket: Socket<ScreenServerEvents, ScreenClientEvents>;
   private retired = false;
   private epoch?: string;
   private raw = new Set<Promise<unknown>>();
+  private commands: ScreenCommand[] = [];
+  private selectionReadyAt = 0;
+  private wake?: ReturnType<typeof setTimeout>;
+  private commanding = false;
   private listeners = new Set<
     (event: 'directory' | 'link' | 'closed' | 'signal' | 'disconnect', data: unknown) => void
   >();
@@ -30,6 +37,13 @@ export class ScreenSocket {
       reconnection: false,
     });
     this.socket.on('screen:directory', (value) => this.notify('directory', value));
+    this.socket.on('screen:snapshot', ({ directory, links, closed }) => {
+      const { epoch, revision } = directory;
+      for (const linkId of closed)
+        this.notify('closed', { epoch, revision, linkId, reason: 'ended' });
+      this.notify('directory', directory);
+      for (const grant of links) this.notify('link', { epoch, revision, grant });
+    });
     this.socket.on('screen:link', (value) => this.notify('link', value));
     this.socket.on('screen:closed', (value) => this.notify('closed', value));
     this.socket.on('screen:signal', (value) => this.notify('signal', value));
@@ -89,36 +103,128 @@ export class ScreenSocket {
   command<T>(event: keyof ScreenClientEvents, body: unknown, signal?: AbortSignal): Promise<T> {
     if (this.retired || !this.socket.connected || signal?.aborted)
       return Promise.reject(new Error('Screen connection is unavailable.'));
-    if (this.raw.size >= 20) return Promise.reject(new Error('Screen connection is busy.'));
-    // Socket.IO's generic argument tuples cannot represent this checked event union.
-    const emit = this.socket.timeout(4000).emitWithAck.bind(this.socket.timeout(4000)) as (
-      event: keyof ScreenClientEvents,
-      body: unknown,
-    ) => Promise<ScreenAck<T>>;
-    const raw = this.track(emit(event, body));
+    // Reserve the last queue slot for the lease that authorizes every peer.
+    const queueLimit = event === 'screen:renew' ? maxQueued : maxQueued - 1;
+    if (this.commands.length >= queueLimit)
+      return Promise.reject(new Error('Screen connection is busy.'));
+    let request: unknown;
+    try {
+      request = structuredClone(body);
+    } catch (cause) {
+      return Promise.reject(new Error('Invalid screen command body.', { cause }));
+    }
     return new Promise<T>((resolve, reject) => {
-      const aborted = () => reject(new Error('Screen request cancelled.'));
-      signal?.addEventListener('abort', aborted, { once: true });
-      void raw
-        .then((ack) => {
-          if (this.retired || signal?.aborted) throw new Error('Screen request ended.');
-          if (!ack || typeof ack !== 'object' || typeof ack.ok !== 'boolean')
-            throw new Error('Invalid screen acknowledgement.');
-          if (!ack.ok)
-            throw Object.assign(new Error(ack.error || 'Screen request rejected.'), {
-              code: ack.code,
-            });
-          resolve(ack.data);
-        })
-        .catch(reject)
-        .finally(() => signal?.removeEventListener('abort', aborted));
+      let started = false;
+      let retries = 0;
+      const selection = event === 'screen:select';
+      const retryUntil = Date.now() + 8000;
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
+      };
+      const cancel = () => {
+        reject(new Error('Screen request cancelled.'));
+        if (!started) {
+          const index = this.commands.indexOf(task);
+          if (index >= 0) this.commands.splice(index, 1);
+          cleanup();
+          runInBackground(this.pumpCommands());
+        }
+      };
+      const queueTimeout = () =>
+        setTimeout(() => {
+          const index = this.commands.indexOf(task);
+          if (index >= 0) this.commands.splice(index, 1);
+          cleanup();
+          reject(Object.assign(new Error('Screen request queue timed out.'), { code: 'timeout' }));
+          runInBackground(this.pumpCommands());
+        }, 4000);
+      let timer = queueTimeout();
+      const task: ScreenCommand = {
+        event,
+        cancel,
+        run: async () => {
+          started = true;
+          clearTimeout(timer);
+          try {
+            if (this.retired || !this.socket.connected || signal?.aborted)
+              throw new Error('Screen connection is unavailable.');
+            // One command plus the server's snapshot refresh fits the existing two-request account budget.
+            const emit = this.socket.timeout(4000).emitWithAck.bind(this.socket.timeout(4000)) as (
+              event: keyof ScreenClientEvents,
+              body: unknown,
+            ) => Promise<ScreenAck<T>>;
+            if (selection) this.selectionReadyAt = Date.now() + 250;
+            const ack = await this.track(emit(event, request));
+            if (this.retired || signal?.aborted) throw new Error('Screen request ended.');
+            if (!ack || typeof ack !== 'object' || typeof ack.ok !== 'boolean')
+              throw new Error('Invalid screen acknowledgement.');
+            if (!ack.ok) {
+              // A throttled acknowledgement confirms that this attempt can be
+              // retried. An ambiguous timeout must never replay a mutation.
+              if (selection && ack.code === 'throttled' && retries < 2) {
+                const hint = Number.isFinite(ack.retryAfterMs) ? ack.retryAfterMs! : 1000;
+                const delay =
+                  Math.max(1000, Math.min(2000, hint)) +
+                  retries * 500 +
+                  Math.floor(Math.random() * 250);
+                if (Date.now() + delay < retryUntil && this.commands.length < queueLimit) {
+                  retries++;
+                  this.selectionReadyAt = Date.now() + delay;
+                  started = false;
+                  timer = queueTimeout();
+                  this.commands.unshift(task);
+                  return;
+                }
+              }
+              throw Object.assign(new Error(ack.error || 'Screen request rejected.'), {
+                code: ack.code,
+              });
+            }
+            resolve(ack.data);
+          } catch (cause) {
+            if (cause instanceof Error && cause.message === 'operation has timed out')
+              Object.assign(cause, { code: 'timeout' });
+            reject(cause);
+          } finally {
+            if (started) cleanup();
+          }
+        },
+      };
+      signal?.addEventListener('abort', cancel, { once: true });
+      this.commands.push(task);
+      if (signal?.aborted) cancel();
+      runInBackground(this.pumpCommands());
     });
+  }
+  private async pumpCommands() {
+    if (this.commanding) return;
+    clearTimeout(this.wake);
+    this.wake = undefined;
+    this.commanding = true;
+    try {
+      while (this.commands.length && !this.retired) {
+        const delay = this.selectionReadyAt - Date.now();
+        let index = this.commands.findIndex((task) => task.event === 'screen:renew');
+        if (index < 0)
+          index = delay > 0 ? this.commands.findIndex((task) => task.event !== 'screen:select') : 0;
+        if (index < 0) {
+          this.wake = setTimeout(() => runInBackground(this.pumpCommands()), delay);
+          break;
+        }
+        await this.commands.splice(index, 1)[0]!.run();
+      }
+    } finally {
+      this.commanding = false;
+    }
   }
   retire = async () => {
     if (!this.retired) {
       this.retired = true;
+      clearTimeout(this.wake);
       if (this.epoch && sockets.get(this.epoch) === this) sockets.delete(this.epoch);
       this.listeners.clear();
+      for (const task of [...this.commands]) task.cancel();
       this.socket.removeAllListeners();
       this.socket.disconnect();
     }

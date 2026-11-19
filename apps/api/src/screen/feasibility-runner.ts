@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { delta, type Counters } from './feasibility-metrics.js';
+import type { screenImageQuality } from './feasibility-quality.js';
 
 export type Page = { js(expression: string): Promise<unknown> };
 type Rtp = Record<string, number | string | boolean>;
@@ -45,11 +46,14 @@ export async function runScenario(
     mode: 'canvas' | 'display';
     codec: string;
     content: string;
+    hint?: string;
     phaseMs: number;
+    bitrates?: number[];
     source?: Page;
   },
 ) {
   const started = performance.now();
+  const bitrates = settings.bitrates ?? [2000000, 8000000];
   const phases = [];
   let last: unknown;
   let cleanup: unknown;
@@ -62,8 +66,16 @@ export async function runScenario(
       'Picture AND source audio tracks required',
     );
     if (settings.source) await invoke(settings.source, 'startTonePlayback');
-    await invoke(publisher, 'create', true, settings.codec);
-    await invoke(receiver, 'create', false, settings.codec);
+    await invoke(
+      publisher,
+      'create',
+      true,
+      settings.codec,
+      settings.hint ?? 'auto',
+      null,
+      bitrates[0],
+    );
+    await invoke(receiver, 'create', false, settings.codec, settings.hint ?? 'auto');
     const offer = (await invoke(publisher, 'offer')) as { sdp: string };
     const answer = (await invoke(receiver, 'answer', offer)) as { sdp: string };
     await invoke(publisher, 'accept', answer);
@@ -89,9 +101,13 @@ export async function runScenario(
     }
     assert.ok(ready, 'Direct video/audio did not arrive within the bounded setup interval');
     await invoke(receiver, 'play');
+    if (settings.content === 'static') await invoke(settings.source ?? publisher, 'freezeSource');
     const decodedVideoAndAudioStartupMs = performance.now() - started;
-    for (const bits of [2000000, 8000000]) {
-      assert.equal(await invoke(publisher, 'cap', bits), bits);
+    for (const bits of bitrates) {
+      assert.equal(
+        await invoke(publisher, 'cap', bits, settings.hint ?? 'auto', settings.content),
+        bits,
+      );
       await delay(2000);
       const before = {
         sent: await snapshot(publisher),
@@ -109,6 +125,42 @@ export async function runScenario(
           : null,
       };
       last = { before, after };
+      const qualitySamples = [];
+      const frameIds = new Set<number>();
+      const sampleCount = settings.content === 'static' ? 1 : 5;
+      for (
+        let attempt = 0;
+        attempt < sampleCount * 2 && qualitySamples.length < sampleCount;
+        attempt++
+      ) {
+        if (attempt) await delay(150);
+        const sample = (await invoke(receiver, 'quality', settings.content)) as {
+          status: string;
+          frame: number;
+          width: number;
+          height: number;
+        } & ReturnType<typeof screenImageQuality>;
+        assert.equal(
+          sample.status,
+          'available',
+          'Decoded image must align with its synthetic reference frame',
+        );
+        assert.ok(Number.isFinite(sample.blockSsim), 'Image fidelity measurement required');
+        if (settings.hint === 'fixed')
+          assert.ok(
+            sample.width === 1920 && sample.height === 1080,
+            'Fixed-format fidelity comparison requires a native 1080p picture',
+          );
+        if (!frameIds.has(sample.frame)) {
+          frameIds.add(sample.frame);
+          qualitySamples.push(sample);
+        }
+      }
+      assert.equal(
+        qualitySamples.length,
+        sampleCount,
+        'Distinct matched frames required for the image comparison',
+      );
       const sentVideo = delta(
         counter(before.sent, 'outbound-rtp', 'video'),
         counter(after.sent, 'outbound-rtp', 'video'),
@@ -133,8 +185,10 @@ export async function runScenario(
           ? afterAudio.totalAudioEnergy - beforeAudio.totalAudioEnergy
           : null;
       assert.ok(
-        receivedVideo.bitsPerSecond > 0 && Number(receivedVideo.fps) > 0,
-        'Moving remote video required',
+        settings.content === 'static'
+          ? Number(counter(after.received, 'inbound-rtp', 'video').frames) > 0
+          : receivedVideo.bitsPerSecond > 0 && Number(receivedVideo.fps) > 0,
+        'Decoded video required; only static sources may have no new frames',
       );
       assert.ok(receivedAudio.bitsPerSecond > 0, 'Received audio bytes required');
       assert.ok(
@@ -149,6 +203,8 @@ export async function runScenario(
       );
       phases.push({
         videoCapBitsPerSecond: bits,
+        imageQuality: qualitySamples[0],
+        qualitySamples,
         sentVideo,
         receivedVideo,
         receivedAudio,
@@ -169,19 +225,29 @@ export async function runScenario(
         after,
       });
     }
+    const byCap = [...phases].sort((a, b) => a.videoCapBitsPerSecond - b.videoCapBitsPerSecond);
     return {
       mode: settings.mode,
       requested: { width: 1920, height: 1080, fps: 60 },
       codec: settings.codec,
       content: settings.content,
-      degradationPreference: 'maintain-resolution',
+      degradationPreference:
+        settings.hint === 'fixed'
+          ? 'maintain-framerate-and-resolution'
+          : settings.hint === 'detail' ||
+              ((settings.hint ?? 'auto') === 'auto' &&
+                ['text', 'static'].includes(settings.content))
+            ? 'maintain-resolution'
+            : 'maintain-framerate',
       renderMetric:
-        'requestVideoFrameCallback count; callbacks can coalesce, not physical display proof',
+        'Frames submitted for composition, from requestVideoFrameCallback metadata.presentedFrames.',
       decodedVideoAndAudioStartupMs,
       sdpBytes: { offer: Buffer.byteLength(offer.sdp), answer: Buffer.byteLength(answer.sdp) },
       phases,
       highToLowVideoByteRateRatio:
-        phases[1]!.receivedVideo.bitsPerSecond / phases[0]!.receivedVideo.bitsPerSecond,
+        byCap.length > 1 && byCap[0]!.receivedVideo.bitsPerSecond > 0
+          ? byCap.at(-1)!.receivedVideo.bitsPerSecond / byCap[0]!.receivedVideo.bitsPerSecond
+          : null,
       qualification:
         'measurement-only; zero-gain synthetic audio inspection, local processes, no approved FPS/audio/resource budgets',
     };
