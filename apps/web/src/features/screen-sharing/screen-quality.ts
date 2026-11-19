@@ -39,6 +39,31 @@ export type ScreenVideoPlan = Readonly<{
 export type ScreenVideoApplied = Readonly<{ plan: ScreenVideoPlan; encoding: ScreenVideoEncoding }>;
 export type ScreenVideoSender = Pick<RTCRtpSender, 'track' | 'getParameters' | 'setParameters'>;
 
+// The content-hint specification includes this value ahead of TypeScript's DOM declarations.
+const fixedPreference = 'maintain-framerate-and-resolution' as RTCDegradationPreference;
+
+export async function requireFixedScreenFormat() {
+  let peer: RTCPeerConnection | undefined;
+  try {
+    // Check a local sender without opening the picker or starting ICE.
+    peer = new RTCPeerConnection();
+    const { sender } = peer.addTransceiver('video', { direction: 'sendonly' });
+    const parameters = sender.getParameters();
+    parameters.degradationPreference = fixedPreference;
+    await sender.setParameters(parameters);
+    if (sender.getParameters().degradationPreference !== fixedPreference)
+      throw new Error('The video sender did not retain the fixed-format setting.');
+  } catch (cause) {
+    throw new ScreenVideoQualityError(
+      'unsupported',
+      'This browser cannot publish screen shares at a fixed resolution and frame rate. Use the Rajcord desktop app or a browser that supports fixed-format sharing.',
+      { cause },
+    );
+  } finally {
+    peer?.close();
+  }
+}
+
 function object(value: unknown, fields: string[]): Record<string, unknown> {
   if (
     !value ||
@@ -161,8 +186,6 @@ export async function applyScreenVideoPlan(
     throw new ScreenVideoQualityError('unsupported', 'Exactly one video encoding is required.');
   parameters.encodings[0] = { ...parameters.encodings[0], ...plan.encoding };
   const fixed = plan.qualification === 'fixed-format';
-  // The content-hint specification includes this value ahead of TypeScript's DOM declarations.
-  const fixedPreference = 'maintain-framerate-and-resolution' as RTCDegradationPreference;
   parameters.degradationPreference = fixed
     ? fixedPreference
     : (plan.content ?? (plan.ceiling.frameRate > 30 ? 'motion' : 'detail')) === 'motion'

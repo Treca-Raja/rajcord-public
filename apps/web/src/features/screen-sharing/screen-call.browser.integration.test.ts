@@ -152,6 +152,24 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         await choose(a, 'Screen frame rate', '60');
         await choose(a, 'Screen video bitrate', '4000000');
         if (sound === 'tab') await choose(a, 'Screen source sound', 'tab');
+        if (sound === 'none') {
+          await a.js(`void (window.__restoreScreenEncoder = (() => {
+            const setParameters = RTCRtpSender.prototype.setParameters;
+            RTCRtpSender.prototype.setParameters = function (parameters) {
+              if (parameters.degradationPreference === 'maintain-framerate-and-resolution')
+                throw new TypeError('Unsupported degradation preference');
+              return setParameters.call(this, parameters);
+            };
+            return () => { RTCRtpSender.prototype.setParameters = setParameters; };
+          })())`);
+          await a.click('Prepare source');
+          await a.wait(
+            "document.querySelector('.screen-error')?.textContent.includes('This browser cannot publish screen shares at a fixed resolution and frame rate.')",
+          );
+          expect(await a.js('window.__screenTest.calls')).toBe(0);
+          expect(commandDiagnostics.some(({ event }) => event === 'screen:publish')).toBe(false);
+          await a.js('window.__restoreScreenEncoder()');
+        }
         expect(await a.js('window.__screenTest.calls')).toBe(0);
         await a.click('Prepare source');
         await a.wait("document.querySelector('#screen-panel')?.dataset.prepared==='true'");

@@ -15,7 +15,9 @@ type Connection = {
   socket: ScreenSocket;
   caller: ScreenCaller;
   epoch?: string;
+  snapshotBatch: boolean;
   revision: number;
+  completeRevision: number;
   links: Set<string>;
   shares: Set<string>;
   dirty: boolean;
@@ -51,7 +53,7 @@ export function registerScreen(
   const sendSnapshot = (c: Connection, snapshot: ScreenSnapshot) => {
     if (!c.socket.connected || c.epoch !== snapshot.directory.epoch) return;
     const { directory, links } = snapshot;
-    if (c.revision === directory.revision) return;
+    if (c.completeRevision === directory.revision) return;
     const current = new Set(links.map((l) => l.link.id));
     const closed = [...c.links]
       .filter((id) => !current.has(id))
@@ -67,21 +69,51 @@ export function registerScreen(
       revision: directory.revision,
       grant,
     }));
-    if (!c.output.take(c.socket.conn.transport.writable, [...closed, directory, ...notices])) {
-      const batch = { directory, links: added, closed: closed.map((notice) => notice.linkId) };
-      if (!c.output.take(c.socket.conn.transport.writable, [batch])) {
-        c.dirty = true;
-        return;
-      }
-      c.socket.emit('screen:snapshot', batch);
-    } else {
-      for (const notice of closed) c.socket.emit('screen:closed', notice);
+    const needsDirectory = c.revision !== directory.revision;
+    const sendDirectory = () => {
       c.socket.emit('screen:directory', directory);
+      c.shares = new Set(directory.shares.map((share) => share.id));
+      c.revision = directory.revision;
+    };
+    const defer = () => {
+      c.dirty = true;
+    };
+    if (
+      c.output.take(c.socket.conn.transport.writable, [
+        ...closed,
+        ...(needsDirectory ? [directory] : []),
+        ...notices,
+      ])
+    ) {
+      for (const notice of closed) c.socket.emit('screen:closed', notice);
+      if (needsDirectory) sendDirectory();
       for (const notice of notices) c.socket.emit('screen:link', notice);
+    } else if (c.snapshotBatch) {
+      const batch = { directory, links: added, closed: closed.map((notice) => notice.linkId) };
+      if (!c.output.take(false, [batch])) return defer();
+      c.socket.emit('screen:snapshot', batch);
+      c.shares = new Set(directory.shares.map((share) => share.id));
+      c.revision = directory.revision;
+    } else {
+      // Older tabs only understand individual events. Keep their progress so a
+      // snapshot larger than one output window can finish on the next refresh.
+      for (const notice of closed) {
+        if (!c.output.take(false, [notice])) return defer();
+        c.socket.emit('screen:closed', notice);
+        c.links.delete(notice.linkId);
+      }
+      if (needsDirectory) {
+        if (!c.output.take(false, [directory])) return defer();
+        sendDirectory();
+      }
+      for (const notice of notices) {
+        if (!c.output.take(false, [notice])) return defer();
+        c.socket.emit('screen:link', notice);
+        c.links.add(notice.grant.link.id);
+      }
     }
     c.links = current;
-    c.shares = new Set(directory.shares.map((share) => share.id));
-    c.revision = directory.revision;
+    c.completeRevision = directory.revision;
   };
   const refresh = async (c: Connection) => {
     if (!c.epoch || c.refreshing || !c.dirty || !c.socket.connected) return;
@@ -95,7 +127,7 @@ export function registerScreen(
         c.caller,
         { epoch },
         (snapshot) => sendSnapshot(c, snapshot),
-        c.revision,
+        c.completeRevision,
         c.revision > 0 ? c : undefined,
       );
     } catch (error) {
@@ -170,7 +202,9 @@ export function registerScreen(
         transportId: socket.id,
         isConnected: () => socket.connected && !disposed,
       },
+      snapshotBatch: socket.handshake.auth.screenSnapshotBatch === true,
       revision: 0,
+      completeRevision: 0,
       links: new Set(),
       shares: new Set(),
       dirty: false,
@@ -219,6 +253,7 @@ export function registerScreen(
           }
           if (c.epoch !== binding.epoch) {
             c.revision = 0;
+            c.completeRevision = 0;
             c.links.clear();
             c.shares.clear();
           }

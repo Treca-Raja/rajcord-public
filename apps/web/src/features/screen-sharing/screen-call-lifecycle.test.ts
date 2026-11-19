@@ -404,6 +404,47 @@ it('does not tear down watching when a stopped publication interrupts outgoing r
   open.mockRestore();
 });
 
+it('preserves a watch selected while renewal waits for an outgoing offer', async () => {
+  const f = await fixture(),
+    next = f.addShare(),
+    gate = deferred(),
+    life = new ScreenLifetime(Date.now() + 45000);
+  const own = { ...f.share, id: crypto.randomUUID(), publisherId: crypto.randomUUID() };
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
+  const command = f.command.getMockImplementation()!;
+  f.command.mockImplementation(async (event, request) => {
+    if (event !== 'screen:renew') return command(event, request);
+    return {
+      remainingMs: 45000,
+      publication: { share: own, remainingMs: 45000 },
+      links: [
+        {
+          link: {
+            ...f.notice().grant.link,
+            id: crypto.randomUUID(),
+            shareId: own.id,
+            publisherId: own.publisherId,
+          },
+          remainingMs: 45000,
+        },
+      ],
+    } as never;
+  });
+  const open = vi
+    .spyOn(f.call as unknown as { openPublisher(): Promise<void> }, 'openPublisher')
+    .mockImplementation(() => gate.promise);
+  await vi.advanceTimersByTimeAsync(10100);
+  expect(open).toHaveBeenCalledOnce();
+  await f.call.watchMultiple(next.id, f.quality);
+  gate.resolve();
+  await flush();
+  expect(f.call.inspect().watchingShareIds).toEqual([next.id]);
+  expect(f.openIncoming.mock.results[0]!.value.stop).toHaveBeenCalledOnce();
+  expect(f.openIncoming.mock.results[1]!.value.stop).not.toHaveBeenCalled();
+  open.mockRestore();
+});
+
 it.each(['stop', 'hide', 'binding', 'source', 'dispose'] as const)(
   'cancels incoming recovery on %s',
   async (action) => {

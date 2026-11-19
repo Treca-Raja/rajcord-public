@@ -22,7 +22,7 @@ import { setScreenCaptureFormat, type WebScreenCapture } from './screen-capture'
 import { ScreenPeer } from './screen-peer';
 import type { ScreenReceiveHandle } from './screen-receiver';
 import { publicScreenIceServers, screenIceServers } from './screen-ice';
-import { screenVideoRequest } from './screen-quality';
+import { requireFixedScreenFormat, screenVideoRequest } from './screen-quality';
 import { screenVideoBudget } from './screen-adaptation';
 import { screenRenewalPermit } from './screen-renewal';
 
@@ -516,6 +516,9 @@ export class ScreenCall {
     this.prepared = { tag, deadline: initial.deadline };
     this.update({ phase: 'preparing', error: '' });
     try {
+      if (quality.resolution !== undefined) await requireFixedScreenFormat();
+      if (!this.current(binding) || this.prepared?.tag !== tag)
+        throw new Error('Screen preparation ended.');
       const bridge = window.tricordDesktop?.screens;
       if (window.tricordDesktop && !bridge)
         throw new Error('Update the desktop app to enable screen capture.');
@@ -555,8 +558,10 @@ export class ScreenCall {
       this.source = captureSession;
       this.update({ phase: 'ready', prepared: true });
     } catch (cause) {
-      this.stopSource();
-      this.error(cause);
+      if (this.prepared?.tag === tag) {
+        this.stopSource();
+        this.error(cause);
+      }
       throw cause;
     } finally {
       this.preparing = false;
@@ -623,6 +628,11 @@ export class ScreenCall {
     let issued: ScreenPublishGrant | undefined;
     let publishDispatched = false;
     try {
+      if (settings.resolution !== undefined && preparedSettings?.resolution === undefined) {
+        await requireFixedScreenFormat();
+        if (this.source !== source || !this.current(binding) || this.prepared !== prepared)
+          throw new Error('Screen source ended.');
+      }
       if (
         settings.resolution &&
         settings.frameRate &&
@@ -740,6 +750,7 @@ export class ScreenCall {
     const binding = this.binding!,
       socket = this.socket!,
       epoch = binding.binding.epoch;
+    const priorWatches = [...this.receiving.values()];
     const started = Date.now(),
       revision = ++this.renewalRevision;
     try {
@@ -808,8 +819,9 @@ export class ScreenCall {
         }
       }
       for (const id of this.outgoing.keys()) if (!live.has(id)) this.closeOutgoing(id);
-      for (const incoming of this.receiving.values())
-        if (!live.has(incoming.id)) this.stopWatchingShare(incoming.shareId);
+      for (const incoming of priorWatches)
+        if (!live.has(incoming.id) && this.receiving.get(incoming.shareId) === incoming)
+          this.stopWatchingShare(incoming.shareId);
       this.renewalFailures = 0;
     } catch (cause) {
       if (this.current(binding)) {
