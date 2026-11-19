@@ -97,12 +97,27 @@ export class VoiceService {
       )
         throw new HttpError(404, 'Voice channel not found.');
       const room = this.prefix + channelId;
-      await this.media.createRoom({
+      const mediaRoom = await this.media.createRoom({
         name: room,
         maxParticipants: 0,
         emptyTimeout: 60,
         departureTimeout: 30,
       });
+      if (mediaRoom.maxParticipants > 0) {
+        // A room created before the upgrade keeps its limit until LiveKit closes it.
+        const occupants = new Set(
+          [...this.leases.values()]
+            .filter((lease) => !lease.revoked && lease.room === room)
+            .map((lease) => lease.userId),
+        );
+        const participants = await this.media.listParticipants(room);
+        for (const participant of participants) occupants.add(participant.identity);
+        if (occupants.size >= mediaRoom.maxParticipants)
+          throw new HttpError(
+            409,
+            `This voice channel is full (${mediaRoom.maxParticipants} people).`,
+          );
+      }
       // Recheck after the media service call; suspension may have committed in the meantime.
       const fresh = approved(await identity(this.pool, token));
       const lease: Lease = {

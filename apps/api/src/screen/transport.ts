@@ -200,6 +200,7 @@ export function registerScreen(
       caller: {
         token: socket.data.token,
         transportId: socket.id,
+        supportsMoreThanNineViewers: socket.handshake.auth.screenMoreThanNineViewers === true,
         isConnected: () => socket.connected && !disposed,
       },
       snapshotBatch: socket.handshake.auth.screenSnapshotBatch === true,

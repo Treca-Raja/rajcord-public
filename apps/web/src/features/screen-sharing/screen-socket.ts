@@ -31,7 +31,7 @@ export class ScreenSocket {
   constructor(csrfToken: string) {
     this.socket = io({
       transports: ['websocket'],
-      auth: { csrfToken, screenSnapshotBatch: true },
+      auth: { csrfToken, screenSnapshotBatch: true, screenMoreThanNineViewers: true },
       withCredentials: true,
       autoConnect: false,
       reconnection: false,

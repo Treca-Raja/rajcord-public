@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
 import type { ScreenAck } from '@tricord/shared';
-import type { ScreenSnapshot } from './service.js';
+import type { ScreenCaller, ScreenSnapshot } from './service.js';
 import { registerScreen } from './transport.js';
 
 async function withConnection(
@@ -9,18 +9,21 @@ async function withConnection(
   run: (fixture: {
     update(snapshot: ScreenSnapshot): Promise<unknown>;
     emit: ReturnType<typeof vi.fn>;
+    caller: ScreenCaller | undefined;
   }) => Promise<void>,
+  viewerCapability?: unknown,
 ) {
   const io = new EventEmitter();
   const inbound = new EventEmitter();
   const emit = vi.fn();
   const directory = { epoch: 'epoch', revision: 1, shares: [] };
   let snapshot: ScreenSnapshot = { directory, links: [] };
+  const bind = vi.fn(async (_caller: ScreenCaller) => ({ epoch: directory.epoch }));
   const stop = registerScreen(
     io as unknown as Parameters<typeof registerScreen>[0],
     {
       onChange: () => () => {},
-      bind: async () => ({ epoch: directory.epoch }),
+      bind,
       snapshot: async (_caller: unknown, _body: unknown, send: (item: ScreenSnapshot) => void) => {
         send(snapshot);
         return snapshot.directory;
@@ -40,7 +43,9 @@ async function withConnection(
       id: 'socket',
       connected: true,
       data: { token: 'session', auth: { user: { id: 'viewer' } } },
-      handshake: { auth: batch ? { screenSnapshotBatch: true } : {} },
+      handshake: {
+        auth: { screenSnapshotBatch: batch, screenMoreThanNineViewers: viewerCapability },
+      },
       conn: { transport: { writable: true } },
       on: inbound.on.bind(inbound),
       once: inbound.once.bind(inbound),
@@ -51,6 +56,7 @@ async function withConnection(
     emit.mockClear();
     await run({
       emit,
+      caller: bind.mock.calls[0]?.[0],
       update: (next) => {
         snapshot = next;
         return command('screen:directory');
@@ -100,3 +106,20 @@ it('resumes a partial snapshot using only individual events for an older client'
     ]);
   });
 });
+
+it.each([
+  [undefined, false],
+  ['true', false],
+  [true, true],
+])(
+  'requires an explicit publisher opt-in for more than nine viewers (%s)',
+  async (value, enabled) => {
+    await withConnection(
+      false,
+      async ({ caller }) => {
+        expect(caller).toMatchObject({ supportsMoreThanNineViewers: enabled });
+      },
+      value,
+    );
+  },
+);

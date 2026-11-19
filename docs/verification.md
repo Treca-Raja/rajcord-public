@@ -16,6 +16,8 @@ With this change, both gameplay viewers decoded a median 59.86 fps and presented
 
 ## H.264 bitrate comparison at 1080p60
 
+The 17 Mb/s result records the earlier experimental run. The live version 2 signaling contract uses the original bitrate choices so older clients can still parse directories and renewal grants. The standalone feasibility probe still accepts 17 Mb/s.
+
 The same moving CS:GO segment ran in six local Edge clients with voice, one publisher and two direct viewers. Each bitrate used a separate call with thirteen five-second measurement intervals after startup. Received rates are video payload per viewer. The FPS columns are medians across 26 viewer intervals. The strict qualification checks each interval individually.
 
 | Selected per viewer | Received per viewer | Decoded FPS | Presented FPS |
@@ -138,6 +140,10 @@ Six local Edge clients joined voice. One sent a synthetic microphone and file-ba
 Queue time uses the interval increase in total packet send delay divided by packets sent. Jitter-buffer residence uses the increase in jitter-buffer delay divided by emitted frames. The timing rows summarize five-second means with a median, except RTT, which uses the median of sampled RTTs. The two individual bitrate medians can sum to a different value from the median combined bitrate. [WebRTC statistics definitions](https://www.w3.org/TR/webrtc-stats/)
 
 Both video links first exceeded 90% of the capped run's single-viewer baseline in the 70–75 second window after release. Each of the five listeners received the microphone throughout and concealed 3,651–4,267 audio samples during join and hold. Edge omitted its optional interruption-duration counter, and no human listened. The pre-existing viewer froze at the join in both runs. Only the capped call showed audio concealment during this phase. Both runs passed cleanup and missed the sustained 60 fps gate. This compares one call per condition on the same PC.
+
+### Mixed-version screen sharing and voice room upgrades
+
+Local regressions cover version 2 publication and selection validation, admission of nine viewers for a publisher that does not advertise support for more, and nineteen independent links for a publisher that opts in. A disposable LiveKit room created with a legacy cap retained it when Rajcord requested zero. Ten voice reservations succeeded, the eleventh returned HTTP 409, and a new reservation succeeded after a seat was released. A separate room created with the bundled defaults admitted twenty-one accounts.
 
 # Earlier six-person voice calls with adaptive gameplay sharing — 2026-11-19
 

@@ -151,6 +151,27 @@ it('admits more than twenty approved accounts without a fixed room headcount cap
   expect((await server.voice!.media.listRooms([room]))[0]!.maxParticipants).toBe(0);
   expect((await request(pending, '/join', 'POST', { channelId: channel })).statusCode).toBe(403);
 });
+it('honors a ten-person limit reported by an existing LiveKit room during upgrade', async () => {
+  const voice = server.voice!;
+  await voice.initialize();
+  const legacyChannel = (
+    await request(owner, '/channels', 'POST', { name: 'Legacy cap room' })
+  ).json().channel.id as string;
+  const room = voice.prefix + legacyChannel;
+  await voice.media.createRoom({ name: room, maxParticipants: 10, emptyTimeout: 60 });
+  for (let index = 0; index < 10; index++) {
+    const account = await user('voice_legacy_capacity_' + index);
+    await join(account, legacyChannel);
+  }
+  const newcomer = await user('voice_legacy_newcomer');
+  const response = await request(newcomer, '/join', 'POST', { channelId: legacyChannel });
+  expect(response.statusCode).toBe(409);
+  expect(voice.leases.has(newcomer.id)).toBe(false);
+  expect((await voice.media.listRooms([room]))[0]!.maxParticipants).toBe(10);
+  const existing = [...voice.leases.values()].find((lease) => lease.room === room)!;
+  await voice.remove(existing);
+  await join(newcomer, legacyChannel);
+});
 it('batch authorization preserves request order and rejects revoked sessions and mismatched leases', async () => {
   const disposable = await user('voice_batch_member');
   const memberLease = await join(disposable);

@@ -23,8 +23,13 @@ import { HttpError, input, uuid } from '../auth/validation.js';
 import type { Lease, VoiceService } from '../voice/service.js';
 import { description, signal, type Description } from './signaling.js';
 
-// Supplied by the authenticated server transport, never accepted from a client payload.
-export type ScreenCaller = { token: string; transportId: string; isConnected: () => boolean };
+// Identity and connectivity come from the authenticated server transport.
+export type ScreenCaller = {
+  token: string;
+  transportId: string;
+  isConnected: () => boolean;
+  supportsMoreThanNineViewers?: boolean;
+};
 type Voice = Pick<
   VoiceService,
   'leases' | 'authorize' | 'authorizeBatch' | 'exclusive' | 'onLeaseInvalidated' | 'config'
@@ -36,6 +41,7 @@ type Binding = {
   sessionId: string;
   channelId: string;
   transportId: string;
+  supportsMoreThanNineViewers: boolean;
   epoch: string;
   sourceGeneration: number;
   selectionRevision: number;
@@ -377,6 +383,7 @@ export class ScreenService {
           sessionId: lease.sessionId,
           channelId: lease.channelId,
           transportId: caller.transportId,
+          supportsMoreThanNineViewers: caller.supportsMoreThanNineViewers === true,
           isConnected: caller.isConnected,
           requests: new Map(),
           selections: new Map(),
@@ -555,6 +562,18 @@ export class ScreenService {
           requested.frameRate > offered.frameRate
         )
           throw new ScreenError('invalid', 400, 'Requested quality exceeds the publisher ceiling.');
+        if (
+          !share.publisher.supportsMoreThanNineViewers &&
+          !viewer.selections.has(share.value.id)
+        ) {
+          const viewers = [...this.links.values()].filter((link) => link.share === share).length;
+          if (viewers >= 9)
+            throw new ScreenError(
+              'capacity',
+              409,
+              'This publisher can share with up to nine viewers.',
+            );
+        }
       }
       if (mode === 'replace') for (const old of viewer.selections.values()) this.dropLink(old);
       const existing = viewer.selections.get(shareId!);

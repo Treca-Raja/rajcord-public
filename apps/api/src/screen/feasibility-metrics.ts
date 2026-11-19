@@ -1,5 +1,7 @@
 import { SCREEN_VIDEO_BITRATES } from '@tricord/shared';
 
+const feasibilityBitrates: readonly number[] = [...SCREEN_VIDEO_BITRATES, 17000000];
+
 export type Counters = {
   time: number;
   bytes: number;
@@ -65,7 +67,7 @@ export function options(args: string[]) {
       const rates = value!.split(',').map((rate) => Number(rate) * 1000000);
       if (
         !/^\d+(,\d+)*$/.test(value!) ||
-        rates.some((rate) => !SCREEN_VIDEO_BITRATES.some((allowed) => allowed === rate)) ||
+        rates.some((rate) => !feasibilityBitrates.includes(rate)) ||
         new Set(rates).size !== rates.length
       )
         throw new Error('Choose distinct supported screen bitrates.');

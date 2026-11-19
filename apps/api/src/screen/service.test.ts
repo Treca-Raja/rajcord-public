@@ -487,7 +487,7 @@ function fixture() {
   });
   const screen = new ScreenService(voice, () => now);
   active.push(screen);
-  const user = (channelId = channel) => {
+  const user = (channelId = channel, supportsMoreThanNineViewers = false) => {
     const lease: Lease = {
       id: randomUUID(),
       userId: randomUUID(),
@@ -511,6 +511,7 @@ function fixture() {
     person.caller = {
       token: lease.token,
       transportId: randomUUID(),
+      supportsMoreThanNineViewers,
       isConnected: () => person.connected,
     };
     return person;
@@ -804,7 +805,7 @@ describe('ephemeral screen authorization', () => {
 
   it('keeps nineteen selected viewers independent and removes only the viewer that closes', async () => {
     const f = fixture(),
-      publisher = f.user(),
+      publisher = f.user(undefined, true),
       p = await f.bind(publisher),
       share = await f.publish(publisher.caller, p.epoch);
     const viewers = Array.from({ length: 19 }, () => f.user());
@@ -819,6 +820,38 @@ describe('ephemeral screen authorization', () => {
     expect((await renew(1)).links).toHaveLength(19);
     await f.screen.select(viewers[0]!.caller, selection(bindings[0]!.epoch, null, 2));
     expect((await renew(2)).links).toHaveLength(18);
+  });
+
+  it('protects a legacy publisher from a tenth viewer while allowing viewers to reselect and leave', async () => {
+    const f = fixture(),
+      publisher = f.user(),
+      publisherBinding = await f.bind(publisher),
+      share = await f.publish(publisher.caller, publisherBinding.epoch);
+    const viewers = Array.from({ length: 10 }, () => f.user(undefined, true));
+    const bindings = await Promise.all(viewers.map((viewer) => f.bind(viewer)));
+    const select = (index: number, shareId: string | null, revision = 1) =>
+      f.screen.select(viewers[index]!.caller, selection(bindings[index]!.epoch, shareId, revision));
+    const firstNine = await Promise.all(
+      viewers.slice(0, 9).map((_, index) => select(index, share.id)),
+    );
+    await expect(select(9, share.id)).rejects.toMatchObject({ code: 'capacity' });
+    const renew = (revision: number) =>
+      f.screen.renew(publisher.caller, {
+        epoch: publisherBinding.epoch,
+        requestId: randomUUID(),
+        revision,
+      });
+    expect((await renew(1)).links.map(({ link }) => link.id)).toEqual(
+      firstNine.map((grant) => grant!.link.id),
+    );
+    await expect(select(0, share.id, 2)).resolves.toMatchObject({
+      link: { viewerId: viewers[0]!.lease.userId },
+    });
+    await select(0, null, 3);
+    await expect(select(9, share.id)).resolves.toMatchObject({
+      link: { viewerId: viewers[9]!.lease.userId },
+    });
+    expect((await renew(2)).links).toHaveLength(9);
   });
 
   it('adds and removes multiple stream selections without replacing their siblings', async () => {
