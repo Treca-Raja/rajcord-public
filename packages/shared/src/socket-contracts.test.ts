@@ -3,6 +3,19 @@ import { invalidClientSocketAck, validateClientSocketPacket } from './socket-con
 
 const ack = () => {};
 
+it('accepts renewal continuations only at bounded page offsets', () => {
+  const request = {
+    epoch: '00000000-0000-4000-8000-000000000001',
+    requestId: '00000000-0000-4000-8000-000000000002',
+    revision: 1,
+  };
+  expect(validateClientSocketPacket('screen:renew', [request, ack])).toBe(true);
+  for (const offset of [128, 256])
+    expect(validateClientSocketPacket('screen:renew', [{ ...request, offset }, ack])).toBe(true);
+  for (const offset of [0, -128, 1, 128.5, '128', 2 ** 53])
+    expect(validateClientSocketPacket('screen:renew', [{ ...request, offset }, ack])).toBe(false);
+});
+
 it('validates bounded multi-view selection fields before screen authorization', () => {
   const request = {
     epoch: '00000000-0000-4000-8000-000000000001',

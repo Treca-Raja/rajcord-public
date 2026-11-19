@@ -145,6 +145,10 @@ Both video links first exceeded 90% of the capped run's single-viewer baseline i
 
 Local regressions cover version 2 publication and selection validation, admission of nine viewers for a publisher that does not advertise support for more, and nineteen independent links for a publisher that opts in. A disposable LiveKit room created with a legacy cap retained it when Rajcord requested zero. Ten voice reservations succeeded, the eleventh returned HTTP 409, and a new reservation succeeded after a seat was released. A separate room created with the bundled defaults admitted twenty-one accounts.
 
+A service regression created 200 screen link grants. The single acknowledgement exceeded the 64 KiB output budget. Pages of 128 and 72 grants each fit, and revoking a viewer on the second page prevented its delivery. This check exercised signaling with fixture leases. Media capacity still depends on the workload.
+
+The native Edge ICE-restart test used the application's receive lane and observed incoming RTP statistics, new video frames and decoded source audio after recovery. A separate receiver unit test rotated synthetic TURN credentials during an outstanding statistics read and confirmed that the receiver applied the new configuration and answered the restart offer.
+
 # Earlier six-person voice calls with adaptive gameplay sharing — 2026-11-19
 
 Six isolated Edge clients joined the same voice channel on a Ryzen 5 5600 PC with 32 GiB RAM. Selected publishers sent video directly to their assigned viewers and every participant kept synthetic microphone audio active. The application used its normal WebRTC negotiation, encoder budgets and adaptive resolution. Thirteen five-second intervals measured received video payload bitrate, rendered FPS, decoded picture dimensions and freezes for each expected subscription.

@@ -54,7 +54,7 @@ export type ScreenReceiveState = Readonly<{
     late?: 'succeeded' | 'failed';
   }>;
 }>;
-type Slot = 'rtc' | 'playback' | 'signal' | 'cleanup';
+type Slot = 'rtc' | 'statistics' | 'playback' | 'signal' | 'cleanup';
 type LaneOptions = {
   iceServers?: readonly RTCIceServer[];
   createRtc(configuration: RTCConfiguration): ScreenRtcPeer;
@@ -141,7 +141,7 @@ class ReceiveLane {
       disposed: this.disposed,
       pending: Object.freeze(
         Object.fromEntries(
-          (['rtc', 'playback', 'signal', 'cleanup'] as const).map((slot) => [
+          (['rtc', 'statistics', 'playback', 'signal', 'cleanup'] as const).map((slot) => [
             slot,
             this.slots.has(slot),
           ]),
@@ -174,11 +174,14 @@ class ReceiveLane {
     const raw = this.options.createRtc(configuration);
     if (rawPeers.has(raw)) throw error('invalid', 'Receiver requires a fresh native peer.');
     rawPeers.add(raw);
+    const getStats = raw.getStats?.bind(raw);
     return {
       get connectionState() {
         return raw.connectionState;
       },
       getConfiguration: raw.getConfiguration.bind(raw),
+      ...(raw.setConfiguration && { setConfiguration: raw.setConfiguration.bind(raw) }),
+      ...(getStats && { getStats: () => this.run('statistics', getStats) }),
       getTransceivers: raw.getTransceivers.bind(raw),
       addTransceiver: raw.addTransceiver.bind(raw),
       addEventListener: raw.addEventListener.bind(raw),
@@ -645,6 +648,7 @@ export function createScreenReceiveLane(options: LaneOptions): ScreenReceiveLane
       const states = [...lanes.values()].map((lane) => lane.inspect());
       const pending = Object.freeze({
         rtc: states.some((state) => state.pending.rtc),
+        statistics: states.some((state) => state.pending.statistics),
         playback: states.some((state) => state.pending.playback),
         signal: states.some((state) => state.pending.signal),
         cleanup: states.some((state) => state.pending.cleanup),

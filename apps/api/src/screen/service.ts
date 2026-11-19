@@ -2,6 +2,7 @@ import { screenRelayServers } from './relay.js';
 import { randomUUID } from 'node:crypto';
 import {
   SCREEN_PROTOCOL_VERSION,
+  SCREEN_RENEWAL_PAGE_SIZE,
   SCREEN_PROFILES,
   SCREEN_VIDEO_BITRATES,
   SCREEN_RESOLUTIONS,
@@ -29,6 +30,7 @@ export type ScreenCaller = {
   transportId: string;
   isConnected: () => boolean;
   supportsMoreThanNineViewers?: boolean;
+  renewalPages?: boolean;
 };
 type Voice = Pick<
   VoiceService,
@@ -42,6 +44,7 @@ type Binding = {
   channelId: string;
   transportId: string;
   supportsMoreThanNineViewers: boolean;
+  renewalPages: boolean;
   epoch: string;
   sourceGeneration: number;
   selectionRevision: number;
@@ -292,6 +295,14 @@ export class ScreenService {
       remainingMs: Math.max(0, Math.min(expires, link.expires) - this.now()),
     };
   }
+  private checkRenewalCapacity(binding: Binding, additional: number) {
+    if (binding.renewalPages || additional <= 0) return;
+    let count = binding.selections.size + additional;
+    if (binding.share)
+      for (const link of this.links.values()) if (link.share === binding.share) count++;
+    if (count > SCREEN_RENEWAL_PAGE_SIZE)
+      throw new ScreenError('capacity', 409, 'Update the screen client to renew more links.');
+  }
   private dropLink(link: Link) {
     if (this.links.get(link.value.id) === link) {
       this.links.delete(link.value.id);
@@ -384,6 +395,7 @@ export class ScreenService {
           channelId: lease.channelId,
           transportId: caller.transportId,
           supportsMoreThanNineViewers: caller.supportsMoreThanNineViewers === true,
+          renewalPages: caller.renewalPages === true,
           isConnected: caller.isConnected,
           requests: new Map(),
           selections: new Map(),
@@ -574,6 +586,10 @@ export class ScreenService {
               'This publisher can share with up to nine viewers.',
             );
         }
+        if (!viewer.selections.has(share.value.id)) {
+          this.checkRenewalCapacity(share.publisher, 1);
+          this.checkRenewalCapacity(viewer, mode === 'replace' ? 1 - viewer.selections.size : 1);
+        }
       }
       if (mode === 'replace') for (const old of viewer.selections.values()) this.dropLink(old);
       const existing = viewer.selections.get(shareId!);
@@ -630,7 +646,7 @@ export class ScreenService {
     deliver: (snapshot: ScreenSnapshot) => void,
     knownRevision: number,
     known?: SnapshotMembership,
-  ): Promise<ScreenDirectory | null>;
+  ): Promise<number | null>;
   async snapshot(
     caller: ScreenCaller,
     value: unknown,
@@ -643,13 +659,13 @@ export class ScreenService {
     // If the revision changes during authorization, the next poll will send it.
     if (knownRevision === this.stateRevision) {
       await this.bound(caller, body.epoch);
-      return null;
+      return knownRevision;
     }
     return this.run(async () => {
       const binding = await this.bound(caller, body.epoch);
       // Unchanged polls authorize the recipient but deliver nothing. A changed
       // snapshot still freshly authorizes every source and link below.
-      if (knownRevision === this.stateRevision) return null;
+      if (knownRevision === this.stateRevision) return knownRevision;
       const shares = [...this.shares.values()].filter(
         (s) => s.publisher.channelId === binding.channelId,
       );
@@ -665,7 +681,7 @@ export class ScreenService {
         shares.every((share) => known.shares.has(share.value.id)) &&
         links.every((link) => known.links.has(link.value.id))
       )
-        return null;
+        return this.stateRevision;
       const peers = new Set(shares.map((s) => s.publisher));
       for (const link of links) {
         peers.add(link.viewer);
@@ -686,7 +702,8 @@ export class ScreenService {
         links: links.map((l) => this.grant(l)),
       };
       deliver(snapshot);
-      return snapshot.directory;
+      // The transport records delivery only after every packet fits its output budget.
+      return knownRevision === undefined ? snapshot.directory : null;
     });
   }
   relay(
@@ -778,7 +795,10 @@ export class ScreenService {
     value: unknown,
     deliver?: (renewal: ScreenRenewal) => void,
   ): Promise<ScreenRenewal> {
-    const body = input(value, ['epoch', 'requestId', 'revision']);
+    const body = input(value, ['epoch', 'requestId', 'revision', 'offset']);
+    const offset = body.offset === undefined ? 0 : revision(body.offset);
+    if (offset % SCREEN_RENEWAL_PAGE_SIZE !== 0)
+      throw new ScreenError('invalid', 400, 'Invalid screen renewal offset.');
     const requestId = uuid(body.requestId),
       next = revision(body.revision),
       fingerprint = JSON.stringify(['renew', requestId, next]);
@@ -791,9 +811,12 @@ export class ScreenService {
       )
         throw stale();
       const replay = next === binding.renewalRevision;
+      if (offset && (!binding.renewalPages || !replay || offset >= binding.renewal!.links.length))
+        throw stale();
+      const end = binding.renewalPages ? offset + SCREEN_RENEWAL_PAGE_SIZE : undefined;
       const own = replay ? binding.renewal!.publication?.share : binding.share;
       const links = replay
-        ? binding.renewal!.links.map((item) => item.link)
+        ? binding.renewal!.links.slice(offset, end).map((item) => item.link)
         : [...this.links.values()].filter(
             (link) => link.viewer === binding || link.share.publisher === binding,
           );
@@ -835,7 +858,10 @@ export class ScreenService {
           0,
           Math.min(binding.renewal!.expires, binding.lease.expires) - this.now(),
         ),
-        links: binding.renewal!.links.map((item) => this.grant(item.link, item.expires)),
+        ...(end !== undefined && end < binding.renewal!.links.length ? { nextOffset: end } : {}),
+        links: binding
+          .renewal!.links.slice(offset, end)
+          .map((item) => this.grant(item.link, item.expires)),
         publication: binding.renewal!.publication
           ? this.publication(
               binding.renewal!.publication.share,

@@ -8,25 +8,34 @@ async function withConnection(
   batch: boolean,
   run: (fixture: {
     update(snapshot: ScreenSnapshot): Promise<unknown>;
+    onUnchangedPoll(handler: (knownRevision: number) => number): void;
     emit: ReturnType<typeof vi.fn>;
     caller: ScreenCaller | undefined;
   }) => Promise<void>,
   viewerCapability?: unknown,
+  renewalPages?: unknown,
 ) {
   const io = new EventEmitter();
   const inbound = new EventEmitter();
   const emit = vi.fn();
   const directory = { epoch: 'epoch', revision: 1, shares: [] };
   let snapshot: ScreenSnapshot = { directory, links: [] };
+  let unchangedPoll: ((knownRevision: number) => number) | undefined;
   const bind = vi.fn(async (_caller: ScreenCaller) => ({ epoch: directory.epoch }));
   const stop = registerScreen(
     io as unknown as Parameters<typeof registerScreen>[0],
     {
       onChange: () => () => {},
       bind,
-      snapshot: async (_caller: unknown, _body: unknown, send: (item: ScreenSnapshot) => void) => {
+      snapshot: async (
+        _caller: unknown,
+        _body: unknown,
+        send: (item: ScreenSnapshot) => void,
+        knownRevision?: number,
+      ) => {
+        if (knownRevision !== undefined && unchangedPoll) return unchangedPoll(knownRevision);
         send(snapshot);
-        return snapshot.directory;
+        return knownRevision === undefined ? snapshot.directory : null;
       },
       disconnect: () => {},
     } as unknown as Parameters<typeof registerScreen>[1],
@@ -44,7 +53,11 @@ async function withConnection(
       connected: true,
       data: { token: 'session', auth: { user: { id: 'viewer' } } },
       handshake: {
-        auth: { screenSnapshotBatch: batch, screenMoreThanNineViewers: viewerCapability },
+        auth: {
+          screenSnapshotBatch: batch,
+          screenMoreThanNineViewers: viewerCapability,
+          screenRenewalPages: renewalPages,
+        },
       },
       conn: { transport: { writable: true } },
       on: inbound.on.bind(inbound),
@@ -56,6 +69,9 @@ async function withConnection(
     emit.mockClear();
     await run({
       emit,
+      onUnchangedPoll: (handler) => {
+        unchangedPoll = handler;
+      },
       caller: bind.mock.calls[0]?.[0],
       update: (next) => {
         snapshot = next;
@@ -66,6 +82,21 @@ async function withConnection(
     stop();
   }
 }
+
+it('carries an unchanged membership revision into the next scheduled poll', async () => {
+  vi.useFakeTimers();
+  try {
+    await withConnection(true, async ({ onUnchangedPoll, emit }) => {
+      const poll = vi.fn(() => 2);
+      onUnchangedPoll(poll);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(poll.mock.calls).toEqual([[1], [2]]);
+      expect(emit).not.toHaveBeenCalled();
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 const snapshot: ScreenSnapshot = {
   directory: { epoch: 'epoch', revision: 2, shares: [] },
@@ -108,18 +139,24 @@ it('resumes a partial snapshot using only individual events for an older client'
 });
 
 it.each([
-  [undefined, false],
-  ['true', false],
+  [undefined, undefined],
+  ['true', 'true'],
+  [true, undefined],
+  [undefined, true],
   [true, true],
 ])(
-  'requires an explicit publisher opt-in for more than nine viewers (%s)',
-  async (value, enabled) => {
+  'negotiates larger audiences (%s) independently of renewal pages (%s)',
+  async (audience, pages) => {
     await withConnection(
       false,
       async ({ caller }) => {
-        expect(caller).toMatchObject({ supportsMoreThanNineViewers: enabled });
+        expect(caller).toMatchObject({
+          supportsMoreThanNineViewers: audience === true,
+          renewalPages: pages === true,
+        });
       },
-      value,
+      audience,
+      pages,
     );
   },
 );

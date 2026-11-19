@@ -123,13 +123,15 @@ export function registerScreen(
       release = budget.acquire(c.socket.data.auth.user.id, 'snapshot', 0);
       c.refreshing = true;
       c.dirty = false;
-      await service.snapshot(
+      const unchangedRevision = await service.snapshot(
         c.caller,
         { epoch },
         (snapshot) => sendSnapshot(c, snapshot),
         c.completeRevision,
         c.revision > 0 ? c : undefined,
       );
+      if (c.epoch === epoch && unchangedRevision !== null)
+        c.completeRevision = Math.max(c.completeRevision, unchangedRevision);
     } catch (error) {
       if (error instanceof ScreenError && error.code === 'throttled') c.dirty = true;
       else if (c.epoch === epoch) {
@@ -201,6 +203,7 @@ export function registerScreen(
         token: socket.data.token,
         transportId: socket.id,
         supportsMoreThanNineViewers: socket.handshake.auth.screenMoreThanNineViewers === true,
+        renewalPages: socket.handshake.auth.screenRenewalPages === true,
         isConnected: () => socket.connected && !disposed,
       },
       snapshotBatch: socket.handshake.auth.screenSnapshotBatch === true,
@@ -276,7 +279,11 @@ export function registerScreen(
       ),
     );
     socket.on('screen:renew', (data, ack) =>
-      rejectUnexpected(handle('renew', data, ack, (reply) => service.renew(c.caller, data, reply))),
+      rejectUnexpected(
+        handle(data?.offset === undefined ? 'renew' : 'control', data, ack, (reply) =>
+          service.renew(c.caller, data, reply),
+        ),
+      ),
     );
     socket.on('screen:directory', (data, ack) =>
       rejectUnexpected(

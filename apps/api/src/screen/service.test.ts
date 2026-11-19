@@ -1,5 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ScreenSelectRequest } from '@tricord/shared';
+import { SCREEN_RENEWAL_PAGE_SIZE } from '@tricord/shared';
+import { ScreenOutput } from './budget.js';
 import type { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VoiceService, type Lease } from '../voice/service.js';
@@ -49,7 +51,7 @@ it('skips unchanged snapshot delivery while still authorizing the polling recipi
   deliver.mockClear();
   expect(
     await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver, first.revision),
-  ).toBeNull();
+  ).toBe(first.revision);
   expect(f.voice.authorize).toHaveBeenCalledExactlyOnceWith(
     f.viewer.caller.token,
     f.viewer.lease.id,
@@ -64,7 +66,7 @@ it('skips unchanged snapshot delivery while still authorizing the polling recipi
   ).rejects.toMatchObject({ code: 'not_authorized' });
   expect(deliver).not.toHaveBeenCalled();
 });
-it('avoids reauthorizing unchanged peers after a revision change in another channel', async () => {
+it('skips the voice lock on the second poll after a change in another channel', async () => {
   const f = await signalingFixture(),
     deliver = vi.fn();
   const first = await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver);
@@ -77,13 +79,19 @@ it('avoids reauthorizing unchanged peers after a revision change in another chan
   await f.publish(outsider.caller, other.epoch);
   deliver.mockClear();
   vi.mocked(f.voice.authorize).mockClear();
-  expect(
-    await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver, first.revision, known),
-  ).toBeNull();
+  const request = { epoch: f.v.epoch };
+  const matched = await f.screen.snapshot(f.viewer.caller, request, deliver, first.revision, known);
+  expect(matched).toBeGreaterThan(first.revision);
   expect(f.voice.authorize).toHaveBeenCalledExactlyOnceWith(
     f.viewer.caller.token,
     f.viewer.lease.id,
   );
+  const exclusive = vi.spyOn(f.voice, 'exclusive');
+  await expect(f.screen.snapshot(f.viewer.caller, request, deliver, matched!, known)).resolves.toBe(
+    matched,
+  );
+  expect(exclusive).not.toHaveBeenCalled();
+  expect(f.voice.authorize).toHaveBeenCalledTimes(2);
   expect(deliver).not.toHaveBeenCalled();
 });
 it('authorizes unchanged polls without waiting behind the voice mutation queue', async () => {
@@ -102,12 +110,41 @@ it('authorizes unchanged polls without waiting behind the voice mutation queue',
   try {
     await expect(
       f.screen.snapshot(f.viewer.caller, request, deliver, first.revision),
-    ).resolves.toBeNull();
+    ).resolves.toBe(first.revision);
     expect(deliver).not.toHaveBeenCalled();
   } finally {
     gate.resolve();
     await mutation;
   }
+});
+it('retains a change made during authorization for the next poll', async () => {
+  const f = await signalingFixture(),
+    another = f.user(),
+    publisher = await f.bind(another);
+  const request = { epoch: f.v.epoch };
+  const deliver = vi.fn();
+  const first = await f.screen.snapshot(f.viewer.caller, request, deliver);
+  deliver.mockClear();
+  const entered = deferred(),
+    gate = deferred();
+  f.setHook(async (token) => {
+    if (token === f.viewer.caller.token) {
+      entered.resolve();
+      await gate.promise;
+    }
+  });
+  const pending = f.screen.snapshot(f.viewer.caller, request, deliver, first.revision);
+  await entered.promise;
+  try {
+    await f.publish(another.caller, publisher.epoch);
+  } finally {
+    gate.resolve();
+  }
+  const matched = await pending;
+  expect(matched).toBe(first.revision);
+  expect(deliver).not.toHaveBeenCalled();
+  await f.screen.snapshot(f.viewer.caller, request, deliver, matched!);
+  expect(deliver).toHaveBeenCalledOnce();
 });
 it('rejects revoked recipients even when their snapshot revision is unchanged', async () => {
   const f = await signalingFixture(),
@@ -801,6 +838,63 @@ describe('ephemeral screen authorization', () => {
         })
       ).link.id,
     ).toBe(capped.link.id);
+  });
+
+  it.each([true, false])('keeps renewals within the output window (paging: %s)', async (paged) => {
+    const f = fixture(),
+      publisher = f.user(undefined, true);
+    publisher.caller.renewalPages = paged;
+    const { epoch } = await f.bind(publisher);
+    const share = await f.publish(publisher.caller, epoch);
+    const ids: string[] = [];
+    let lastViewer: ReturnType<typeof f.user> | undefined;
+    for (let i = 0; i < (paged ? 200 : SCREEN_RENEWAL_PAGE_SIZE + 1); i++) {
+      const viewer = f.user(),
+        binding = await f.bind(viewer);
+      const work = f.screen.select(viewer.caller, {
+        ...selection(binding.epoch, share.id),
+        resolution: 1080,
+        frameRate: 60,
+      });
+      if (!paged && i === SCREEN_RENEWAL_PAGE_SIZE) {
+        await expect(work).rejects.toMatchObject({ code: 'capacity' });
+      } else {
+        ids.push((await work)!.link.id);
+        lastViewer = viewer;
+      }
+    }
+    const request = { epoch, revision: 1, requestId: randomUUID() };
+    const send = vi.fn();
+    const cursor = { ...request, offset: SCREEN_RENEWAL_PAGE_SIZE };
+    await expect(f.screen.renew(publisher.caller, cursor, send)).rejects.toMatchObject({
+      code: 'stale',
+    });
+    expect(send).not.toHaveBeenCalled();
+    const first = await f.screen.renew(publisher.caller, request);
+    const output = new ScreenOutput();
+    const fits = (page: typeof first) => output.take(true, [{ ok: true, data: page }]);
+    expect(fits(first)).toBe(true);
+    expect(first.links.map(({ link }) => link.id)).toEqual(ids.slice(0, SCREEN_RENEWAL_PAGE_SIZE));
+    if (!paged) {
+      expect(first.nextOffset).toBeUndefined();
+      return;
+    }
+    expect(first.nextOffset).toBe(cursor.offset);
+    f.setTime(f.time() + 1000);
+    const last = await f.screen.renew(publisher.caller, cursor);
+    expect(last.links.map(({ link }) => link.id)).toEqual(ids.slice(SCREEN_RENEWAL_PAGE_SIZE));
+    expect(last.nextOffset).toBeUndefined();
+    expect(last.links[0]!.remainingMs).toBe(first.links[0]!.remainingMs - 1000);
+    expect(fits(last)).toBe(true);
+    expect(fits({ ...first, links: [...first.links, ...last.links] })).toBe(false);
+    await expect(
+      f.screen.renew(publisher.caller, { ...cursor, requestId: randomUUID() }, send),
+    ).rejects.toMatchObject({ code: 'stale' });
+    lastViewer!.auth.revoked = true;
+    await expect(f.screen.renew(publisher.caller, cursor, send)).rejects.toMatchObject({
+      code: 'not_authorized',
+    });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('keeps nineteen selected viewers independent and removes only the viewer that closes', async () => {

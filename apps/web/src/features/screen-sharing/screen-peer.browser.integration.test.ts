@@ -247,22 +247,26 @@ async function withPeers(
 }
 
 it('restarts native ICE with authenticated signaling while retaining capture and source sound', async () => {
-  await withPeers(async (publisher, viewer) => {
-    const before = (await viewer.js(`${f}.snapshot().frames`)) as number;
-    await publisher.js(`${f}.restartIce()`);
-    for (const browser of [publisher, viewer])
-      await browser.wait(
-        `${f}.snapshot().phase==='stable' && ${f}.snapshot().connection==='connected'`,
-      );
-    await viewer.wait(`${f}.snapshot().frames>${before + 3} && ${f}.snapshot().rms>0.001`);
-    for (const browser of [publisher, viewer]) {
-      await browser.wait(`${f}.mediaStatistics()?.statistics==='available'`);
-      expect(await browser.js(`${f}.mediaStatistics()`)).toMatchObject({
-        sample: { route: 'direct' },
-      });
-      expect(await browser.js(`${f}.snapshot().peerErrors`)).toEqual([]);
-    }
-  });
+  await withPeers(
+    async (publisher, viewer) => {
+      const before = (await viewer.js(`${f}.snapshot().frames`)) as number;
+      await publisher.js(`${f}.restartIce()`);
+      for (const browser of [publisher, viewer])
+        await browser.wait(
+          `${f}.snapshot().phase==='stable' && ${f}.snapshot().connection==='connected'`,
+        );
+      await viewer.wait(`${f}.snapshot().frames>${before + 3} && ${f}.snapshot().rms>0.001`);
+      for (const browser of [publisher, viewer]) {
+        await browser.wait(`${f}.mediaStatistics()?.statistics==='available'`);
+        expect(await browser.js(`${f}.mediaStatistics()`)).toMatchObject({
+          sample: { route: 'direct', direction: browser === viewer ? 'inbound' : 'outbound' },
+        });
+        expect(await browser.js(`${f}.snapshot().peerErrors`)).toEqual([]);
+      }
+    },
+    undefined,
+    'lane',
+  );
 });
 
 it('switches content policy for real moving and static capture without changing selected FPS', async () => {

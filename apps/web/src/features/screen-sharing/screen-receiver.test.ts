@@ -56,6 +56,10 @@ class Rtc extends EventTarget {
     super.removeEventListener(name, callback);
   });
   getConfiguration = vi.fn(() => this.config);
+  setConfiguration = vi.fn((config: RTCConfiguration) => {
+    this.config = config;
+  });
+  getStats = vi.fn(async () => new Map() as RTCStatsReport);
   getTransceivers = vi.fn(() => this.transceivers);
   addTransceiver = vi.fn((_kind: string, init: RTCRtpTransceiverInit) => {
     const transceiver = { direction: init.direction };
@@ -229,6 +233,50 @@ afterEach(async () => {
   for (const check of checks.splice(0)) check();
   expect(vi.getTimerCount()).toBe(0);
   vi.useRealTimers();
+});
+
+it('answers an ICE restart with rotated TURN credentials while a statistics read is pending', async () => {
+  const f = fixture('none');
+  const { request } = f.selection();
+  const initial = [
+    { urls: ['turn:relay.example:3478'], username: 'firstUser', credential: 'firstPassword' },
+  ];
+  let servers = initial;
+  const receiver = f.lane.open({
+    ...request,
+    iceServers: initial,
+    currentIceServers: () => servers,
+  });
+  const rtc = f.rtcs[0]!;
+  const offer = (revision: number) =>
+    receiver.receive({
+      epoch: request.endpoint.epoch,
+      linkId: request.endpoint.linkId,
+      revision,
+      sequence: revision,
+      payload: { type: 'offer', sdp: screenSdp('offer', false, 'test' + revision) },
+    });
+  await offer(1);
+  expect(rtc.setConfiguration).not.toHaveBeenCalled();
+  rtc.deliver(new Track());
+  const stats = deferred<RTCStatsReport>();
+  rtc.getStats.mockReturnValueOnce(stats.promise);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(rtc.getStats).toHaveBeenCalledOnce();
+  expect(f.lane.inspect().pending.statistics).toBe(true);
+  servers = [{ ...initial[0]!, username: 'renewedUser', credential: 'renewedPassword' }];
+  await offer(2);
+  expect(rtc.setConfiguration).toHaveBeenCalledExactlyOnceWith({
+    ...rtc.config,
+    iceServers: servers,
+  });
+  expect(rtc.createAnswer).toHaveBeenCalledTimes(2);
+  expect(receiver.inspect().phase).toBe('ready');
+  receiver.stop();
+  expect(f.lane.inspect().pending.statistics).toBe(true);
+  stats.resolve(new Map() as RTCStatsReport);
+  await flush();
+  expect(f.lane.inspect().pending.statistics).toBe(false);
 });
 
 it('owns one direct recvonly peer and exposes a narrow lane with immutable local state', async () => {

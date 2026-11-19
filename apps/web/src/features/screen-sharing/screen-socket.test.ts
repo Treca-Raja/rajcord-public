@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { ScreenSocket } from './screen-socket';
-const wire = vi.hoisted(() => ({ current: undefined as unknown }));
-vi.mock('socket.io-client', () => ({ io: () => wire.current }));
+const wire = vi.hoisted(() => ({ io: vi.fn() }));
+vi.mock('socket.io-client', () => ({ io: wire.io }));
 const sockets: ScreenSocket[] = [],
   drains: (() => void)[] = [];
 const flush = async () => {
@@ -23,7 +23,7 @@ function fixture() {
         }),
     ),
   });
-  wire.current = raw;
+  wire.io.mockReturnValue(raw);
   const socket = new ScreenSocket('owned-test-csrf');
   sockets.push(socket);
   drains.push(() =>
@@ -52,6 +52,12 @@ it('serializes commands across peers and snapshots queued bodies', async () => {
   expect(f.raw.emitWithAck).toHaveBeenLastCalledWith('screen:renew', { revision: 1 });
   f.pending[1]!.resolve({ ok: true, data: 'next' });
   expect(await next).toBe('next');
+});
+it('opts into paged renewal acknowledgements on the application socket', () => {
+  fixture();
+  expect(wire.io).toHaveBeenLastCalledWith(
+    expect.objectContaining({ auth: expect.objectContaining({ screenRenewalPages: true }) }),
+  );
 });
 it('unpacks a bounded snapshot batch in the same lifecycle order as individual events', () => {
   const f = fixture(),

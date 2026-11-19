@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { SCREEN_RENEWAL_PAGE_SIZE } from '@tricord/shared';
 import type { ScreenLinkGrant, ScreenQuality, ScreenSelectRequest } from '@tricord/shared';
 import { ScreenCall } from './screen-call';
 import { ScreenLifetime } from './capture-session';
@@ -297,6 +298,155 @@ it('bounds consecutive unavailable renewal retries and retires the binding on ex
   await vi.advanceTimersByTimeAsync(12100);
   expect(f.binding.release).toHaveBeenCalledTimes(1);
   expect(f.call.inspect().watching).toBeNull();
+});
+
+function firstRenewalPage(grant: ScreenLinkGrant) {
+  return {
+    remainingMs: 45000,
+    publication: null,
+    links: Array.from({ length: SCREEN_RENEWAL_PAGE_SIZE }, (_, index) =>
+      index ? { ...grant, link: { ...grant.link, id: crypto.randomUUID() } } : grant,
+    ),
+    nextOffset: SCREEN_RENEWAL_PAGE_SIZE,
+  };
+}
+
+it('collects 200 grants before adopting either page and retries the same throttled offset', async () => {
+  const f = await fixture(),
+    first = firstRenewalPage(f.notice().grant);
+  const other = f.addShare();
+  await f.call.watchMultiple(other.id, f.quality);
+  const grant = f.notice().grant;
+  f.command
+    .mockClear()
+    .mockResolvedValueOnce(first)
+    .mockRejectedValueOnce(Object.assign(new Error('Busy'), { code: 'throttled' }))
+    .mockResolvedValueOnce({
+      remainingMs: 44000,
+      publication: null,
+      links: Array.from({ length: 200 - first.links.length }, (_, i) =>
+        i ? { ...grant, link: { ...grant.link, id: crypto.randomUUID() } } : grant,
+      ),
+    });
+  await vi.advanceTimersByTimeAsync(10100);
+  const request = f.command.mock.calls[0]![1];
+  expect(f.command.mock.calls[1]).toEqual([
+    'screen:renew',
+    { ...request, offset: first.nextOffset },
+  ]);
+  expect(f.binding.adoptRenewal).not.toHaveBeenCalled();
+  for (const { value } of f.openIncoming.mock.results)
+    expect(value.adoptRenewal).not.toHaveBeenCalled();
+  expect(f.call.inspect().watchingShareIds).toEqual([f.share.id, other.id]);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.command.mock.calls[2]).toEqual(f.command.mock.calls[1]);
+  expect(f.binding.adoptRenewal).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({
+      deadline: 155100,
+      revision: request.revision,
+    }),
+  );
+  for (const { value } of f.openIncoming.mock.results)
+    expect(value.adoptRenewal).toHaveBeenCalledOnce();
+  expect(f.call.inspect().watchingShareIds).toEqual([f.share.id, other.id]);
+});
+
+it('restarts a stale continuation from a fresh revision without adopting the partial renewal', async () => {
+  const f = await fixture(),
+    first = firstRenewalPage(f.notice().grant);
+  f.command
+    .mockClear()
+    .mockResolvedValueOnce(first)
+    .mockRejectedValueOnce(Object.assign(new Error('Changed'), { code: 'stale' }));
+  await vi.advanceTimersByTimeAsync(10100);
+  expect(f.binding.adoptRenewal).not.toHaveBeenCalled();
+  expect(f.binding.release).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1000);
+  const requests = f.command.mock.calls.map(([, request]) => request);
+  expect(requests[2]).not.toHaveProperty('offset');
+  expect(requests[2]!.revision).toBe(requests[0]!.revision + 1);
+  expect(requests[2]!.requestId).not.toBe(requests[0]!.requestId);
+  expect(f.binding.adoptRenewal).toHaveBeenCalledOnce();
+});
+
+it('does not reopen an outgoing link closed between renewal pages', async () => {
+  const f = await fixture(),
+    gate = deferred(),
+    life = new ScreenLifetime(Date.now() + 45000);
+  const own = { ...f.share, id: crypto.randomUUID(), publisherId: crypto.randomUUID() };
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
+  const publication = { share: own, remainingMs: 45000 };
+  const first = { ...firstRenewalPage(f.notice().grant), publication };
+  const closing = { ...first.links[1]!.link, shareId: own.id, publisherId: own.publisherId };
+  first.links[1] = { link: closing, remainingMs: 45000 };
+  const healthy = { ...closing, id: crypto.randomUUID() };
+  const open = vi
+    .spyOn(
+      f.call as unknown as { openPublisher(link: ScreenLinkGrant['link']): Promise<void> },
+      'openPublisher',
+    )
+    .mockResolvedValue();
+  f.command.mockResolvedValueOnce(first as never).mockImplementationOnce(async () => {
+    await gate.promise;
+    return {
+      publication,
+      remainingMs: 45000,
+      links: [{ link: healthy, remainingMs: 45000 }],
+    } as never;
+  });
+  await vi.advanceTimersByTimeAsync(10100);
+  f.emit('closed', {
+    epoch: f.binding.binding.epoch,
+    revision: 2,
+    linkId: closing.id,
+    reason: 'ended',
+  });
+  gate.resolve();
+  await flush();
+  expect(open.mock.calls.map(([link]) => link)).toEqual([healthy]);
+  expect(f.binding.adoptRenewal).toHaveBeenCalledOnce();
+  expect(f.call.inspect().watching).toBe(f.share.id);
+  open.mockRestore();
+});
+
+it('retires a stale initial renewal without requesting another revision', async () => {
+  const f = await fixture();
+  f.command.mockClear().mockRejectedValueOnce(Object.assign(new Error('Stale'), { code: 'stale' }));
+  await vi.advanceTimersByTimeAsync(12000);
+  expect(f.command.mock.calls.filter(([event]) => event === 'screen:renew')).toHaveLength(1);
+  expect(f.binding.release).toHaveBeenCalledOnce();
+  expect(f.binding.adoptRenewal).not.toHaveBeenCalled();
+});
+
+it('rejects a repeated continuation offset before adopting any grants', async () => {
+  const f = await fixture(),
+    first = firstRenewalPage(f.notice().grant);
+  f.command.mockResolvedValueOnce(first).mockResolvedValueOnce(first);
+  await vi.advanceTimersByTimeAsync(10100);
+  expect(f.binding.adoptRenewal).not.toHaveBeenCalled();
+  expect(f.binding.release).toHaveBeenCalledOnce();
+  expect(f.call.inspect().error).toContain('Invalid screen renewal page');
+});
+
+it('discards an expired first page even when the last page has a live deadline', async () => {
+  const f = await fixture(),
+    first = firstRenewalPage(f.notice().grant);
+  first.remainingMs = 100;
+  const gate = deferred();
+  f.command.mockResolvedValueOnce(first).mockImplementationOnce(async () => {
+    await gate.promise;
+    return {
+      remainingMs: 45000,
+      publication: null,
+      links: [{ ...f.notice().grant, link: { ...f.notice().grant.link, id: crypto.randomUUID() } }],
+    };
+  });
+  await vi.advanceTimersByTimeAsync(10200);
+  gate.resolve();
+  await flush();
+  expect(f.binding.adoptRenewal).not.toHaveBeenCalled();
+  expect(f.call.inspect().error).toContain('renewal expired');
 });
 
 it('serializes recovery of simultaneously failed watched streams', async () => {

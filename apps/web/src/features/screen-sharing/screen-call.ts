@@ -1,4 +1,5 @@
 import { runInBackground } from '../../shared/background';
+import { SCREEN_RENEWAL_PAGE_SIZE } from '@tricord/shared';
 import type {
   ScreenQuality,
   ScreenSound,
@@ -194,7 +195,7 @@ export class ScreenCall {
   private generation = 0;
   private active = true;
   private connecting?: Promise<void>;
-  private renewing?: object;
+  private renewing?: Set<string>;
   private renewalFailures = 0;
   private publishing = false;
   private preparing = false;
@@ -448,6 +449,7 @@ export class ScreenCall {
         this.disconnect();
         return;
       }
+      this.renewing?.add(notice.linkId);
       this.closeOutgoing(notice.linkId);
       const incoming = [...this.receiving.values()].find((item) => item.id === notice.linkId);
       if (incoming) this.stopWatchingShare(incoming.shareId);
@@ -743,36 +745,117 @@ export class ScreenCall {
       runInBackground(this.renew());
     }, 100);
   }
+  private async renewalPages(
+    binding: OwnedScreenBinding,
+    socket: ScreenSocket,
+    revision: number,
+    closedLinks: ReadonlySet<string>,
+  ) {
+    const request = { epoch: binding.binding.epoch, requestId: crypto.randomUUID(), revision };
+    const links = new Map<string, ReturnType<ScreenCall['linkGrant']>>();
+    let offset = 0,
+      retries = 0,
+      deadline = Infinity,
+      publicationDeadline = Infinity;
+    let shareId: string | undefined;
+    let servers: RTCIceServer[] | undefined;
+    while (this.current(binding)) {
+      const started = Date.now();
+      if (started >= deadline) throw new Error('Screen renewal expired.');
+      let page: Record<string, unknown>;
+      try {
+        page = record(
+          await socket.command<ScreenRenewal>(
+            'screen:renew',
+            offset ? { ...request, offset } : request,
+          ),
+        );
+      } catch (cause) {
+        const code = (cause as { code?: string })?.code;
+        if (offset && code === 'stale')
+          throw Object.assign(new Error('Screen links changed during renewal.', { cause }), {
+            code: 'renewal_changed',
+          });
+        if (!offset || code !== 'throttled' || retries >= 2 || Date.now() + 1000 >= deadline)
+          throw cause;
+        retries++;
+        let resume!: () => void;
+        const delay = new Promise<void>((resolve) => {
+          resume = resolve;
+        });
+        const timer = setTimeout(resume, 1000);
+        const unsubscribe = binding.onInvalidated(resume);
+        await delay;
+        unsubscribe();
+        clearTimeout(timer);
+        continue;
+      }
+      if (!this.current(binding)) return;
+      if (!Array.isArray(page.links) || !Object.hasOwn(page, 'publication'))
+        throw new Error('Invalid screen renewal.');
+      const more = Object.hasOwn(page, 'nextOffset');
+      if (
+        (more &&
+          (page.nextOffset !== offset + SCREEN_RENEWAL_PAGE_SIZE ||
+            page.links.length !== SCREEN_RENEWAL_PAGE_SIZE)) ||
+        (offset && (!page.links.length || page.links.length > SCREEN_RENEWAL_PAGE_SIZE))
+      )
+        throw new Error('Invalid screen renewal page.');
+      deadline = Math.min(deadline, lifetime(page.remainingMs, started));
+      const proof = page.publication === null ? null : publication(page.publication, started);
+      if (offset && proof?.grant.share.id !== shareId)
+        throw new Error('Screen publication changed during renewal.');
+      if (proof) {
+        shareId = proof.grant.share.id;
+        publicationDeadline = Math.min(publicationDeadline, proof.deadline);
+        proof.deadline = publicationDeadline;
+      }
+      if (Object.hasOwn(page, 'iceServers'))
+        servers = screenIceServers(page.iceServers as RTCIceServer[]);
+      for (const value of page.links) {
+        const grant = this.linkGrant(value, started);
+        if (links.has(grant.link.id)) throw new Error('Duplicate screen renewal link.');
+        links.set(grant.link.id, grant);
+      }
+      if (!more) {
+        const now = Date.now();
+        if (
+          deadline <= now ||
+          (proof && proof.deadline <= now) ||
+          [...links.values()].some(
+            (grant) => !closedLinks.has(grant.link.id) && grant.deadline <= now,
+          )
+        )
+          throw new Error('Screen renewal expired.');
+        return { links, proof, deadline, servers };
+      }
+      offset += SCREEN_RENEWAL_PAGE_SIZE;
+      retries = 0;
+    }
+  }
   private async renew() {
     if (this.renewing || !this.current()) return;
-    const operation = {};
-    this.renewing = operation;
+    const closedLinks = new Set<string>();
+    this.renewing = closedLinks;
     const binding = this.binding!,
-      socket = this.socket!,
-      epoch = binding.binding.epoch;
+      socket = this.socket!;
+    const own = this.ownShare,
+      source = this.source;
     const priorWatches = [...this.receiving.values()];
-    const started = Date.now(),
-      revision = ++this.renewalRevision;
+    const revision = ++this.renewalRevision;
     try {
-      const data = record(
-        await socket.command<ScreenRenewal>('screen:renew', {
-          epoch,
-          requestId: crypto.randomUUID(),
-          revision,
-        }),
-      );
-      if (!this.current(binding)) return;
-      const deadline = lifetime(data.remainingMs, started);
-      if (Object.hasOwn(data, 'iceServers'))
-        this.iceServers = screenIceServers(data.iceServers as RTCIceServer[]);
-      if (!Array.isArray(data.links) || !Object.hasOwn(data, 'publication'))
-        throw new Error('Invalid screen renewal.');
+      const pages = await this.renewalPages(binding, socket, revision, closedLinks);
+      if (!pages || !this.current(binding)) return;
+      if (this.source !== source || this.ownShare !== own) {
+        this.requestRenewal();
+        return;
+      }
+      const { links, proof, deadline, servers } = pages;
+      if (servers) this.iceServers = servers;
       binding.adoptRenewal(screenRenewalPermit(binding.inspect()!.generation, deadline, revision));
-      const own = this.ownShare,
-        source = this.source;
       if (own && source) {
-        const proof = publication(data.publication, started);
         if (
+          !proof ||
           proof.grant.share.id !== own.id ||
           proof.grant.share.sourceGeneration !== own.sourceGeneration
         )
@@ -782,11 +865,9 @@ export class ScreenCall {
           screenRenewalPermit(life.generation, Math.min(deadline, proof.deadline), revision),
         );
       }
-      const live = new Set<string>();
-      for (const value of data.links) {
+      for (const grant of links.values()) {
         if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
-        const grant = this.linkGrant(value, started);
-        live.add(grant.link.id);
+        if (closedLinks.has(grant.link.id)) continue;
         const incoming = [...this.receiving.values()].find((item) => item.id === grant.link.id);
         if (incoming) {
           const permit = screenRenewalPermit(
@@ -818,9 +899,9 @@ export class ScreenCall {
           }
         }
       }
-      for (const id of this.outgoing.keys()) if (!live.has(id)) this.closeOutgoing(id);
+      for (const id of this.outgoing.keys()) if (!links.has(id)) this.closeOutgoing(id);
       for (const incoming of priorWatches)
-        if (!live.has(incoming.id) && this.receiving.get(incoming.shareId) === incoming)
+        if (!links.has(incoming.id) && this.receiving.get(incoming.shareId) === incoming)
           this.stopWatchingShare(incoming.shareId);
       this.renewalFailures = 0;
     } catch (cause) {
@@ -828,7 +909,8 @@ export class ScreenCall {
         const code = (cause as { code?: string }).code;
         if (
           code === 'throttled' ||
-          ((code === 'timeout' || code === 'unavailable') && this.renewalFailures++ < 2)
+          ((code === 'timeout' || code === 'unavailable' || code === 'renewal_changed') &&
+            this.renewalFailures++ < 2)
         ) {
           this.renewalTimer = setTimeout(
             () => {
@@ -844,7 +926,7 @@ export class ScreenCall {
         }
       }
     } finally {
-      if (this.renewing === operation) this.renewing = undefined;
+      if (this.renewing === closedLinks) this.renewing = undefined;
     }
   }
   private linkGrant(value: unknown, started: number) {

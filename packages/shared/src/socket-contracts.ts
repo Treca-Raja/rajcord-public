@@ -1,6 +1,6 @@
 import { Type, type TSchema } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
-import { SCREEN_VIDEO_BITRATES } from './screen.js';
+import { SCREEN_RENEWAL_PAGE_SIZE, SCREEN_VIDEO_BITRATES } from './screen.js';
 
 const id = Type.String({
   pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
@@ -60,7 +60,18 @@ const clientPayloads: Record<string, TSchema | undefined> = {
     mode: optional(oneOf('replace', 'add', 'remove', 'clear')),
     removeShareId: optional(id),
   }),
-  'screen:renew': object({ epoch: id, requestId: id, revision }),
+  'screen:renew': object({
+    epoch: id,
+    requestId: id,
+    revision,
+    offset: optional(
+      Type.Integer({
+        minimum: SCREEN_RENEWAL_PAGE_SIZE,
+        multipleOf: SCREEN_RENEWAL_PAGE_SIZE,
+        maximum: Number.MAX_SAFE_INTEGER,
+      }),
+    ),
+  }),
   'screen:directory': boundedRequest,
   'screen:signal': object({
     epoch: id,

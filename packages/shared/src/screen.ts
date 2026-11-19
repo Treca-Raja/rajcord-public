@@ -1,4 +1,6 @@
 export const SCREEN_PROTOCOL_VERSION = 2;
+// With the bounded link fields below, a page fits the 64 KiB socket output window.
+export const SCREEN_RENEWAL_PAGE_SIZE = 128;
 export const SCREEN_RESOLUTIONS = [480, 720, 1080] as const;
 export const SCREEN_FRAME_RATES = [15, 30, 60] as const;
 export type ScreenResolution = (typeof SCREEN_RESOLUTIONS)[number];
@@ -80,8 +82,13 @@ export type ScreenLink = {
   videoBitrate: ScreenVideoBitrate;
 };
 export type ScreenLinkGrant = { link: ScreenLink; remainingMs: number };
-export type ScreenRenewRequest = ScreenBoundRequest & { requestId: string; revision: number };
+export type ScreenRenewRequest = ScreenBoundRequest & {
+  requestId: string;
+  revision: number;
+  offset?: number;
+};
 export type ScreenRenewal = {
+  nextOffset?: number;
   iceServers?: ScreenIceServer[];
   remainingMs: number;
   links: ScreenLinkGrant[];
