@@ -155,6 +155,8 @@ A service regression created 200 screen link grants. The single acknowledgement 
 
 Follow-up regressions revoked viewers on both pages. The stale continuation delivered no grants and a fresh renewal kept the publisher and all authorized links. A background directory refresh also discarded its snapshot when it found a revoked peer, then delivered the updated directory on the next refresh. Revoking the renewal caller still prevented delivery. A database integration case suspended one of two publishers and confirmed that the authorized viewer could renew its other watch while access to the suspended link was denied.
 
+A fake-clock regression processed twelve four-second offers in sequence while an existing watch renewed past its original deadline. The publisher skipped a closed queued link, and a separate test confirmed Stop cleared pending offers while leaving the watch active. A transport regression replaced one of nine viewers before the next directory refresh. The transport sent the older publisher a close before the replacement acknowledgement. With room for only one output packet, it returned a throttled response and sent both in order after retry.
+
 The native Edge ICE-restart test used the application's receive lane and observed incoming RTP statistics, new video frames and decoded source audio after recovery. A separate receiver unit test rotated synthetic TURN credentials during an outstanding statistics read and confirmed that the receiver applied the new configuration and answered the restart offer.
 
 # Earlier six-person voice calls with adaptive gameplay sharing — 2026-11-19

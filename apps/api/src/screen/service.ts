@@ -818,7 +818,10 @@ export class ScreenService {
   renew(
     caller: ScreenCaller,
     value: unknown,
-    deliver?: (renewal: ScreenRenewal) => void,
+    deliver?: (
+      renewal: ScreenRenewal,
+      legacy?: { revision: number; outgoing: ReadonlySet<string> },
+    ) => void,
   ): Promise<ScreenRenewal> {
     const body = input(value, ['epoch', 'requestId', 'revision', 'offset']);
     const offset = body.offset === undefined ? 0 : revision(body.offset);
@@ -903,7 +906,13 @@ export class ScreenService {
             )
           : null,
       };
-      deliver?.(result);
+      if (deliver && !binding.supportsMoreThanNineViewers) {
+        const outgoing = new Set<string>();
+        for (const { link } of binding.renewal!.links)
+          if (link.share.publisher === binding && this.links.get(link.value.id) === link)
+            outgoing.add(link.value.id);
+        deliver(result, { revision: this.stateRevision, outgoing });
+      } else deliver?.(result);
       return result;
     });
   }

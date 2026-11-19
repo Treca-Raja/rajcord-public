@@ -393,7 +393,7 @@ it('retires the binding when the caller loses authorization during a continuatio
   expect(f.binding.adoptRenewal).not.toHaveBeenCalled();
 });
 
-it('coalesces new viewer notices into a follow-up renewal after an active offer', async () => {
+it('coalesces new viewer notices into a follow-up after an active renewal', async () => {
   const f = await fixture(),
     gate = deferred(),
     life = new ScreenLifetime(Date.now() + 45000);
@@ -420,12 +420,12 @@ it('coalesces new viewer notices into a follow-up renewal after an active offer'
       f.call as unknown as { openPublisher(link: ScreenLinkGrant['link']): Promise<void> },
       'openPublisher',
     )
-    .mockImplementationOnce(async () => {
-      await gate.promise;
-    })
     .mockResolvedValue();
   f.command
-    .mockResolvedValueOnce({ remainingMs: 45000, publication, links: [watched, first] })
+    .mockImplementationOnce(async () => {
+      await gate.promise;
+      return { remainingMs: 45000, publication, links: [watched, first] };
+    })
     .mockResolvedValueOnce({
       remainingMs: 45000,
       publication,
@@ -433,7 +433,7 @@ it('coalesces new viewer notices into a follow-up renewal after an active offer'
     });
   const renewals = () => f.command.mock.calls.filter(([event]) => event === 'screen:renew');
   await vi.advanceTimersByTimeAsync(10100);
-  expect(open.mock.calls.map(([link]) => link.id)).toEqual([first.link.id]);
+  expect(open).not.toHaveBeenCalled();
   f.emit('link', { ...f.notice(), revision: 2, grant: second });
   f.emit('link', { ...f.notice(), revision: 3, grant: third });
   await vi.advanceTimersByTimeAsync(200);
@@ -590,7 +590,7 @@ it('does not clear a replacement renewal admission when an old request settles',
   expect(Reflect.get(f.call, 'renewing')).toBe(replacement);
 });
 
-it('does not tear down watching when a stopped publication interrupts outgoing renewal work', async () => {
+it('discards queued offers on Stop and preserves an existing watch', async () => {
   const f = await fixture(),
     gate = deferred(),
     life = new ScreenLifetime(Date.now() + 45000);
@@ -628,6 +628,7 @@ it('does not tear down watching when a stopped publication interrupts outgoing r
   f.call.stopSource();
   gate.resolve();
   await flush();
+  expect(open).toHaveBeenCalledOnce();
   expect(f.binding.release).not.toHaveBeenCalled();
   expect(f.call.inspect().watching).toBe(f.share.id);
   open.mockRestore();
@@ -710,45 +711,22 @@ it('opens independent profile-only senders and isolates a viewer whose peer cann
   expect(f.binding.release).not.toHaveBeenCalled();
 });
 
-it('preserves a watch selected while renewal waits for an outgoing offer', async () => {
+it('preserves a watch selected before the renewal acknowledgement arrives', async () => {
   const f = await fixture(),
     next = f.addShare(),
-    gate = deferred(),
-    life = new ScreenLifetime(Date.now() + 45000);
-  const own = { ...f.share, id: crypto.randomUUID(), publisherId: crypto.randomUUID() };
-  Reflect.set(f.call, 'ownShare', own);
-  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
-  const command = f.command.getMockImplementation()!;
-  f.command.mockImplementation(async (event, request) => {
-    if (event !== 'screen:renew') return command(event, request);
-    return {
-      remainingMs: 45000,
-      publication: { share: own, remainingMs: 45000 },
-      links: [
-        {
-          link: {
-            ...f.notice().grant.link,
-            id: crypto.randomUUID(),
-            shareId: own.id,
-            publisherId: own.publisherId,
-          },
-          remainingMs: 45000,
-        },
-      ],
-    } as never;
+    gate = deferred();
+  f.command.mockImplementationOnce(async () => {
+    await gate.promise;
+    return { remainingMs: 45000, publication: null, links: [] };
   });
-  const open = vi
-    .spyOn(f.call as unknown as { openPublisher(): Promise<void> }, 'openPublisher')
-    .mockImplementation(() => gate.promise);
   await vi.advanceTimersByTimeAsync(10100);
-  expect(open).toHaveBeenCalledOnce();
+  expect(f.command).toHaveBeenLastCalledWith('screen:renew', expect.anything());
   await f.call.watchMultiple(next.id, f.quality);
   gate.resolve();
   await flush();
   expect(f.call.inspect().watchingShareIds).toEqual([next.id]);
   expect(f.openIncoming.mock.results[0]!.value.stop).toHaveBeenCalledOnce();
   expect(f.openIncoming.mock.results[1]!.value.stop).not.toHaveBeenCalled();
-  open.mockRestore();
 });
 
 it('renews an existing watch before waiting for a new publisher offer', async () => {
@@ -791,6 +769,73 @@ it('renews an existing watch before waiting for a new publisher offer', async ()
   open.mockRestore();
   expect(stillWatching?.deadline).toBeGreaterThan(originalDeadline);
   expect(f.binding.release).not.toHaveBeenCalled();
+});
+
+it('keeps renewing media throughout a slow offer queue and drops closed queued links', async () => {
+  const f = await fixture();
+  const watched = f.notice().grant;
+  const watchLife = f.openIncoming.mock.calls[0]![0].lifecycle;
+  const life = new ScreenLifetime(Date.now() + 45000);
+  const own = { ...f.share, id: crypto.randomUUID(), publisherId: crypto.randomUUID() };
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
+  const pending = Array.from({ length: 13 }, () => ({
+    remainingMs: 45000,
+    link: {
+      ...watched.link,
+      id: crypto.randomUUID(),
+      shareId: own.id,
+      publisherId: own.publisherId,
+      viewerId: crypto.randomUUID(),
+    },
+  }));
+  const closed = pending[1]!;
+  const command = f.command.getMockImplementation()!;
+  f.command.mockImplementation(async (event, request) =>
+    event === 'screen:renew'
+      ? {
+          remainingMs: 45000,
+          publication: { share: own, remainingMs: 45000 },
+          links: [watched, ...pending],
+        }
+      : command(event, request),
+  );
+  const outgoing = Reflect.get(f.call, 'outgoing');
+  const open = vi
+    .spyOn(
+      f.call as unknown as {
+        openPublisher(link: ScreenLinkGrant['link'], deadline: number): Promise<void>;
+      },
+      'openPublisher',
+    )
+    .mockImplementation(async (link, deadline) => {
+      outgoing.set(link.id, {
+        peer: { adoptRenewal: vi.fn(), dispose: vi.fn() },
+        life: new ScreenLifetime(deadline),
+        shareId: own.id,
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 4000));
+    });
+  const renewal = (f.call as unknown as { renew(): Promise<void> }).renew();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(open).toHaveBeenCalledOnce();
+  pending.splice(1, 1);
+  f.emit('closed', {
+    epoch: f.binding.binding.epoch,
+    revision: 2,
+    linkId: closed.link.id,
+    reason: 'ended',
+  });
+  await vi.advanceTimersByTimeAsync(46000);
+  const duringOffers = watchLife.inspect();
+  const checkedAt = Date.now();
+  const renewals = f.command.mock.calls.filter(([event]) => event === 'screen:renew').length;
+  await vi.advanceTimersByTimeAsync(2000);
+  await renewal;
+  expect(renewals).toBeGreaterThan(1);
+  expect(duringOffers?.deadline).toBeGreaterThan(checkedAt);
+  expect(f.binding.release).not.toHaveBeenCalled();
+  expect(open.mock.calls.map(([link]) => link.id)).toEqual(pending.map(({ link }) => link.id));
 });
 
 it.each(['stop', 'hide', 'binding', 'source', 'dispose'] as const)(

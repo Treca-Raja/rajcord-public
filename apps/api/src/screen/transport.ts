@@ -5,6 +5,7 @@ import type {
   ServerToClientEvents,
   ScreenAck,
   ScreenBinding,
+  ScreenClosed,
   ScreenDirectory,
   ScreenDirectoryReply,
 } from '@tricord/shared';
@@ -23,10 +24,23 @@ type Connection = {
   completeRevision: number;
   links: Set<string>;
   shares: Set<string>;
+  legacyOutgoing: Set<string>;
   dirty: boolean;
   refreshing: boolean;
   output: ScreenOutput;
 };
+type ClosedLink = ScreenClosed & { linkId: string };
+const closedLink = (epoch: string, revision: number, linkId: string): ClosedLink => ({
+  epoch,
+  revision,
+  linkId,
+  reason: 'ended',
+});
+function emitClosed(c: Connection, notice: ClosedLink) {
+  c.socket.emit('screen:closed', notice);
+  c.links.delete(notice.linkId);
+  c.legacyOutgoing.delete(notice.linkId);
+}
 function sendDirectoryChanges(c: Connection, directory: ScreenDirectory) {
   const { epoch, revision, shares } = directory;
   const current = new Set(shares.map((share) => share.id));
@@ -88,12 +102,7 @@ export function registerScreen(
     const current = new Set(links.map((l) => l.link.id));
     const closed = [...c.links]
       .filter((id) => !current.has(id))
-      .map((linkId) => ({
-        epoch: c.epoch!,
-        revision: directory.revision,
-        linkId,
-        reason: 'ended' as const,
-      }));
+      .map((linkId) => closedLink(directory.epoch, directory.revision, linkId));
     const added = links.filter((grant) => !c.links.has(grant.link.id));
     const notices = added.map((grant) => ({
       epoch: c.epoch!,
@@ -117,7 +126,7 @@ export function registerScreen(
       !largeDirectory &&
       c.output.take(false, [...closed, ...(needsDirectory ? [directory] : []), ...notices])
     ) {
-      for (const notice of closed) c.socket.emit('screen:closed', notice);
+      for (const notice of closed) emitClosed(c, notice);
       if (needsDirectory) sendDirectory();
       for (const notice of notices) c.socket.emit('screen:link', notice);
     } else {
@@ -125,6 +134,7 @@ export function registerScreen(
         const batch = { directory, links: added, closed: closed.map((notice) => notice.linkId) };
         if (c.output.take(false, [batch])) {
           c.socket.emit('screen:snapshot', batch);
+          for (const id of batch.closed) c.legacyOutgoing.delete(id);
           c.shares = new Set(directory.shares.map((share) => share.id));
           c.revision = c.completeRevision = directory.revision;
           c.directoryPending = false;
@@ -135,8 +145,7 @@ export function registerScreen(
       // Preserve progress when an entire batch exceeds even a drained output window.
       for (const notice of closed) {
         if (!c.output.take(false, [notice])) return defer();
-        c.socket.emit('screen:closed', notice);
-        c.links.delete(notice.linkId);
+        emitClosed(c, notice);
       }
       if (needsDirectory) {
         if (largeDirectory) {
@@ -188,6 +197,7 @@ export function registerScreen(
         c.epoch = undefined;
         c.links.clear();
         c.shares.clear();
+        c.legacyOutgoing.clear();
       }
     } finally {
       release?.();
@@ -204,6 +214,7 @@ export function registerScreen(
       c.dirty = false;
       c.links.clear();
       c.shares.clear();
+      c.legacyOutgoing.clear();
       service.disconnect(c.socket.id, epoch);
     }
   };
@@ -257,6 +268,7 @@ export function registerScreen(
       completeRevision: 0,
       links: new Set(),
       shares: new Set(),
+      legacyOutgoing: new Set(),
       dirty: false,
       refreshing: false,
       output: new ScreenOutput(),
@@ -266,7 +278,7 @@ export function registerScreen(
       kind: 'control' | 'signal' | 'renew',
       data: unknown,
       ack: (response: ScreenAck<T>) => void,
-      work: (reply: (result: T) => void) => Promise<T>,
+      work: (reply: (result: T, closed?: readonly ClosedLink[]) => boolean) => Promise<T>,
     ) => {
       if (typeof ack !== 'function' || disposed) return;
       let release: (() => void) | undefined;
@@ -276,12 +288,18 @@ export function registerScreen(
           throw new HttpError(400, 'Invalid screen envelope.');
         release = budget.acquire(socket.data.auth.user.id, kind, Buffer.byteLength(encoded));
         let answered = false;
-        const reply = (result: T) => {
-          if (answered) return;
+        const reply = (result: T, closed: readonly ClosedLink[] = []) => {
+          if (answered || !socket.connected) return false;
           answered = true;
           const response: ScreenAck<T> = { ok: true, data: result };
-          if (socket.connected && c.output.take(socket.conn.transport.writable, [response]))
-            ack(response);
+          if (!c.output.take(socket.conn.transport.writable, [...closed, response])) {
+            if (closed.length)
+              throw new ScreenError('throttled', 429, 'Screen delivery is busy. Retry later.');
+            return false;
+          }
+          for (const notice of closed) emitClosed(c, notice);
+          ack(response);
+          return true;
         };
         const result = await work(reply);
         reply(result);
@@ -307,6 +325,7 @@ export function registerScreen(
             c.directoryPending = false;
             c.links.clear();
             c.shares.clear();
+            c.legacyOutgoing.clear();
           }
           c.epoch = binding.epoch;
           schedule();
@@ -328,7 +347,19 @@ export function registerScreen(
     socket.on('screen:renew', (data, ack) =>
       rejectUnexpected(
         handle(data?.offset === undefined ? 'renew' : 'control', data, ack, (reply) =>
-          service.renew(c.caller, data, reply),
+          service.renew(c.caller, data, (renewal, legacy) => {
+            if (!legacy) {
+              reply(renewal);
+              return;
+            }
+            // Released publishers open new peers before pruning peers absent from the grant.
+            const closed = [...c.legacyOutgoing]
+              .filter((id) => !legacy.outgoing.has(id))
+              .map((id) => closedLink(data.epoch, legacy.revision, id));
+            if (reply(renewal, closed))
+              for (const { link } of renewal.links)
+                if (legacy.outgoing.has(link.id)) c.legacyOutgoing.add(link.id);
+          }),
         ),
       ),
     );

@@ -102,6 +102,7 @@ type Incoming = {
   selection: ScreenSelectRequest;
 };
 type Outgoing = { peer: ScreenPeer; life: ScreenLifetime; shareId: string };
+type PublisherOffer = { link: ScreenLinkGrant['link']; deadline: number };
 type WatchRecovery = { attempts: number; readyAt: number; timer?: ReturnType<typeof setTimeout> };
 const qualityOnly = (quality: ScreenQuality): ScreenQuality => ({
   profile: quality.profile,
@@ -165,6 +166,8 @@ export class ScreenCall {
   private cleanupTail: Promise<void> = Promise.resolve();
   private iceServers: RTCIceServer[] = screenIceServers(publicScreenIceServers);
   private outgoing = new Map<string, Outgoing>();
+  private publisherOffers = new Map<string, PublisherOffer>();
+  private offeringLinkId?: string;
   private watchRecoveries = new Map<string, WatchRecovery>();
   private preferredWatch?: string;
   private publisherLinks = new Map<string, ScreenLinkGrant['link']>();
@@ -667,6 +670,7 @@ export class ScreenCall {
     this.source = undefined;
     this.ownShare = undefined;
     this.prepared = undefined;
+    this.publisherOffers.clear();
     try {
       source?.stop();
     } catch (cause) {
@@ -821,7 +825,7 @@ export class ScreenCall {
           screenRenewalPermit(life.generation, Math.min(deadline, proof.deadline), revision),
         );
       }
-      const newPublishers: { link: ScreenLinkGrant['link']; deadline: number }[] = [];
+      const newPublishers = new Map<string, PublisherOffer>();
       for (const grant of links.values()) {
         if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
         if (closedLinks.has(grant.link.id)) continue;
@@ -850,22 +854,22 @@ export class ScreenCall {
             const permit = screenRenewalPermit(existing.life.generation, peerDeadline, revision);
             existing.life.renew(permit);
             existing.peer.adoptRenewal(permit);
-          } else newPublishers.push({ link: grant.link, deadline: peerDeadline });
-        }
-      }
-      // Existing media must adopt its new deadline before signaling a new peer.
-      if (own && source) {
-        for (const { link, deadline } of newPublishers) {
-          if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
-          if (closedLinks.has(link.id) || deadline <= Date.now()) continue;
-          await this.openPublisher(link, deadline, source, own);
-          if (!this.current(binding) || this.source !== source || this.ownShare !== own) return;
+          } else if (grant.link.id !== this.offeringLinkId) {
+            newPublishers.set(grant.link.id, { link: grant.link, deadline: peerDeadline });
+          }
         }
       }
       for (const id of this.outgoing.keys()) if (!links.has(id)) this.closeOutgoing(id);
       for (const incoming of priorWatches)
         if (!links.has(incoming.id) && this.receiving.get(incoming.shareId) === incoming)
           this.stopWatchingShare(incoming.shareId);
+      if (this.current(binding) && this.source === source && this.ownShare === own) {
+        for (const id of closedLinks) newPublishers.delete(id);
+        for (const id of this.publisherOffers.keys())
+          if (!newPublishers.has(id)) this.publisherOffers.delete(id);
+        for (const [id, offer] of newPublishers) this.publisherOffers.set(id, offer);
+        runInBackground(this.drainPublisherOffers());
+      }
       this.renewalFailures = 0;
     } catch (cause) {
       if (this.current(binding)) {
@@ -923,6 +927,23 @@ export class ScreenCall {
     screenVideoRequest({ revision: 1, publisher: link.quality, viewer: link.quality });
     return { link: link as ScreenLinkGrant['link'], deadline: lifetime(data.remainingMs, started) };
   }
+  private async drainPublisherOffers() {
+    if (this.offeringLinkId) return;
+    // Keep one offer in flight while renewal replaces the pending grants.
+    while (this.current() && this.source && this.ownShare) {
+      const offer = this.publisherOffers.values().next().value;
+      if (!offer) return;
+      const { link, deadline } = offer;
+      this.publisherOffers.delete(link.id);
+      if (deadline <= Date.now() || this.outgoing.has(link.id)) continue;
+      this.offeringLinkId = link.id;
+      try {
+        await this.openPublisher(link, deadline, this.source, this.ownShare);
+      } finally {
+        this.offeringLinkId = undefined;
+      }
+    }
+  }
   private async openPublisher(
     link: ScreenLinkGrant['link'],
     deadline: number,
@@ -977,6 +998,7 @@ export class ScreenCall {
     if (this.current(binding)) this.update({ viewers: this.outgoing.size });
   }
   private closeOutgoing(id: string) {
+    this.publisherOffers.delete(id);
     const owned = this.outgoing.get(id);
     if (!owned) return;
     this.outgoing.delete(id);

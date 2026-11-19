@@ -1,15 +1,23 @@
 import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
-import type { ScreenAck, ScreenDirectoryChanges, ScreenShare } from '@tricord/shared';
-import type { ScreenCaller, ScreenSnapshot } from './service.js';
+import type {
+  ScreenAck,
+  ScreenDirectoryChanges,
+  ScreenRenewal,
+  ScreenShare,
+} from '@tricord/shared';
+import type { ScreenCaller, ScreenService, ScreenSnapshot } from './service.js';
 import { registerScreen } from './transport.js';
 
 async function withConnection(
   batch: boolean,
   run: (fixture: {
     update(snapshot: ScreenSnapshot): Promise<unknown>;
+    renew(handler: ScreenService['renew']): Promise<unknown>;
+    setWritable(writable: boolean): void;
     onUnchangedPoll(handler: (knownRevision: number) => number): void;
     emit: ReturnType<typeof vi.fn>;
+    replies: ReturnType<typeof vi.fn>;
     caller: ScreenCaller | undefined;
   }) => Promise<void>,
   viewerCapability?: unknown,
@@ -17,10 +25,13 @@ async function withConnection(
 ) {
   const io = new EventEmitter();
   const inbound = new EventEmitter();
-  const emit = vi.fn();
+  const emit = vi.fn(),
+    replies = vi.fn();
+  const transport = { writable: true };
   const directory = { epoch: 'epoch', revision: 1, shares: [] };
   let snapshot: ScreenSnapshot = { directory, links: [] };
   let unchangedPoll: ((knownRevision: number) => number) | undefined;
+  let renew: ScreenService['renew'];
   const bind = vi.fn(async (_caller: ScreenCaller) => ({ epoch: directory.epoch }));
   const stop = registerScreen(
     io as unknown as Parameters<typeof registerScreen>[0],
@@ -38,13 +49,15 @@ async function withConnection(
         return knownRevision === undefined ? snapshot.directory : null;
       },
       disconnect: () => {},
+      renew: (...args: Parameters<ScreenService['renew']>) => renew(...args),
     } as unknown as Parameters<typeof registerScreen>[1],
   );
-  const command = (event: string) =>
+  const command = (event: string, data = {}) =>
     new Promise<unknown>((resolve, reject) => {
-      inbound.emit(event, {}, (ack: ScreenAck<unknown>) => {
+      inbound.emit(event, data, (ack: ScreenAck<unknown>) => {
+        replies(event, ack);
         if (ack.ok) resolve(ack.data);
-        else reject(new Error(ack.error));
+        else reject(Object.assign(new Error(ack.error), { code: ack.code }));
       });
     });
   try {
@@ -60,7 +73,7 @@ async function withConnection(
           screenDirectoryChanges: batch,
         },
       },
-      conn: { transport: { writable: true } },
+      conn: { transport },
       on: inbound.on.bind(inbound),
       once: inbound.once.bind(inbound),
       emit,
@@ -70,6 +83,14 @@ async function withConnection(
     emit.mockClear();
     await run({
       emit,
+      replies,
+      setWritable: (writable) => {
+        transport.writable = writable;
+      },
+      renew: (handler) => {
+        renew = handler;
+        return command('screen:renew', { epoch: directory.epoch });
+      },
       onUnchangedPoll: (handler) => {
         unchangedPoll = handler;
       },
@@ -161,6 +182,40 @@ const snapshot: ScreenSnapshot = {
     },
   })),
 };
+
+it.each([false, true])(
+  'closes a departed legacy viewer before acknowledging the replacement (output full: %s)',
+  async (outputFull) => {
+    await withConnection(false, async ({ emit, replies, renew, setWritable, update }) => {
+      const links = snapshot.links.slice(0, 9);
+      const send = (links: ScreenRenewal['links'], revision: number) =>
+        renew(async (_caller, _body, deliver) => {
+          const renewal = { remainingMs: 45000, publication: null, links };
+          deliver?.(renewal, { revision, outgoing: new Set(links.map(({ link }) => link.id)) });
+          return renewal;
+        });
+      await send(links, 1);
+      const departed = links[0]!.link.id;
+      const replacement = snapshot.links[9]!;
+      const replaced = [...links.slice(1), replacement];
+      if (outputFull) {
+        setWritable(false);
+        await update({ ...snapshot, links: snapshot.links.slice(0, 28) });
+        emit.mockClear();
+        await expect(send(replaced, 3)).rejects.toMatchObject({ code: 'throttled' });
+        expect(emit).not.toHaveBeenCalled();
+        setWritable(true);
+      }
+      await expect(send(replaced, 3)).resolves.toMatchObject({ links: replaced });
+      expect(emit.mock.calls).toEqual([
+        ['screen:closed', { epoch: 'epoch', revision: 3, linkId: departed, reason: 'ended' }],
+      ]);
+      expect(emit.mock.invocationCallOrder[0]).toBeLessThan(
+        replies.mock.invocationCallOrder.at(-1)!,
+      );
+    });
+  },
+);
 
 it('sends a large snapshot as a single event when the client opted in', async () => {
   await withConnection(true, async ({ emit, update }) => {

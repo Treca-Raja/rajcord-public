@@ -991,12 +991,12 @@ describe('ephemeral screen authorization', () => {
       viewers.slice(0, 9).map((_, index) => select(index, share.id)),
     );
     await expect(select(9, share.id)).rejects.toMatchObject({ code: 'capacity' });
-    const renew = (revision: number) =>
-      f.screen.renew(publisher.caller, {
-        epoch: publisherBinding.epoch,
-        requestId: randomUUID(),
-        revision,
-      });
+    const renew = (revision: number, deliver?: Parameters<ScreenService['renew']>[2]) =>
+      f.screen.renew(
+        publisher.caller,
+        { epoch: publisherBinding.epoch, requestId: randomUUID(), revision },
+        deliver,
+      );
     expect((await renew(1)).links.map(({ link }) => link.id)).toEqual(
       firstNine.map((grant) => grant!.link.id),
     );
@@ -1007,7 +1007,13 @@ describe('ephemeral screen authorization', () => {
     await expect(select(9, share.id)).resolves.toMatchObject({
       link: { viewerId: viewers[9]!.lease.userId },
     });
-    expect((await renew(2)).links).toHaveLength(9);
+    const deliver = vi.fn();
+    const result = await renew(2, deliver);
+    expect(result.links).toHaveLength(9);
+    expect(deliver).toHaveBeenCalledWith(result, {
+      revision: expect.any(Number),
+      outgoing: new Set(result.links.map(({ link }) => link.id)),
+    });
   });
 
   it('adds and removes multiple stream selections without replacing their siblings', async () => {
