@@ -141,6 +141,66 @@ it('one active session per account is enforced across concurrent devices', async
   expect(results.map((r) => r.statusCode).sort()).toEqual([200, 409]);
   expect(server.voice!.leases.size).toBe(1);
 });
+it('admits more than twenty approved accounts without a fixed room headcount cap', async () => {
+  for (let index = 0; index < 21; index++) {
+    const account = await user('voice_capacity_' + index);
+    await join(account);
+  }
+  expect(server.voice!.leases.size).toBe(21);
+  const room = [...server.voice!.leases.values()][0]!.room;
+  expect((await server.voice!.media.listRooms([room]))[0]!.maxParticipants).toBe(0);
+  expect((await request(pending, '/join', 'POST', { channelId: channel })).statusCode).toBe(403);
+});
+it('honors a ten-person limit reported by an existing LiveKit room during upgrade', async () => {
+  const voice = server.voice!;
+  await voice.initialize();
+  const legacyChannel = (
+    await request(owner, '/channels', 'POST', { name: 'Legacy cap room' })
+  ).json().channel.id as string;
+  const room = voice.prefix + legacyChannel;
+  await voice.media.createRoom({ name: room, maxParticipants: 10, emptyTimeout: 60 });
+  for (let index = 0; index < 10; index++) {
+    const account = await user('voice_legacy_capacity_' + index);
+    await join(account, legacyChannel);
+  }
+  const newcomer = await user('voice_legacy_newcomer');
+  const response = await request(newcomer, '/join', 'POST', { channelId: legacyChannel });
+  expect(response.statusCode).toBe(409);
+  expect(voice.leases.has(newcomer.id)).toBe(false);
+  expect((await voice.media.listRooms([room]))[0]!.maxParticipants).toBe(10);
+  const existing = [...voice.leases.values()].find((lease) => lease.room === room)!;
+  await voice.remove(existing);
+  await join(newcomer, legacyChannel);
+});
+it('batch authorization preserves request order and rejects revoked sessions and mismatched leases', async () => {
+  const disposable = await user('voice_batch_member');
+  const memberLease = await join(disposable);
+  const ownerLease = await join(owner);
+  const voice = server.voice!;
+  const credentials = [
+    { token: owner.token, credential: ownerLease.id },
+    { token: disposable.token, credential: ownerLease.id },
+    { token: disposable.token, credential: memberLease.id },
+  ];
+  expect(await voice.authorizeBatch(credentials)).toMatchObject([
+    { id: ownerLease.id },
+    { statusCode: 401 },
+    { id: memberLease.id },
+  ]);
+  const otherSession = await login(disposable.username);
+  expect(
+    await voice.authorizeBatch([{ token: otherSession.token, credential: memberLease.id }]),
+  ).toMatchObject([{ statusCode: 401 }]);
+  const lease = voice.leases.get(disposable.id)!;
+  await fixture.database.pool.query('UPDATE sessions SET revoked_at=now() WHERE id=$1', [
+    lease.sessionId,
+  ]);
+  expect(await voice.authorizeBatch(credentials)).toMatchObject([
+    { id: ownerLease.id },
+    { statusCode: 401 },
+    { statusCode: 401 },
+  ]);
+});
 it('same lease retries are idempotent but another room requires leaving first', async () => {
   const lease = await join(member);
   expect(

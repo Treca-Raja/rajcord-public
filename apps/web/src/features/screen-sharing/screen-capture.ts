@@ -50,6 +50,26 @@ type DisplayOptions = DisplayMediaStreamOptions & {
 };
 type Attempt = { cancel: (reason: CaptureEnd) => void };
 
+export async function setScreenCaptureFormat(
+  video: MediaStreamTrack,
+  height: ScreenResolution,
+  frameRate: ScreenFrameRate,
+) {
+  const message = `The selected source cannot capture ${height}p at ${frameRate} fps. Choose another source or change the capture settings.`;
+  try {
+    // An explicit frame-rate constraint can discard early frames even on a native
+    // 60 Hz source. Keep its native cadence when it already matches the selection.
+    await video.applyConstraints({ height: { exact: height } });
+    if (video.getSettings().frameRate !== frameRate)
+      await video.applyConstraints({ height: { exact: height }, frameRate: { exact: frameRate } });
+  } catch (cause) {
+    throw new ScreenCaptureError('unsupported', message, { cause });
+  }
+  const settings = video.getSettings();
+  if (settings.height !== height || settings.frameRate !== frameRate)
+    throw new ScreenCaptureError('unsupported', message);
+}
+
 export class WebScreenCapture {
   private current?: Attempt;
   private pickerPending = false;
@@ -205,7 +225,7 @@ export class WebScreenCapture {
       return result;
     }
     void picker.then(
-      (received) => {
+      async (received) => {
         this.pickerPending = false;
         stream = received;
         if (terminal || this.current !== attempt) {
@@ -281,6 +301,8 @@ export class WebScreenCapture {
           if (audio) listen(audio, 'ended', () => cancel('audio-ended'));
           listen(stream, 'addtrack', () => cancel('stream-changed'));
           listen(stream, 'removetrack', () => cancel('stream-changed'));
+          if (explicit)
+            await setScreenCaptureFormat(video, request.resolution!, request.frameRate!);
           if (tracks.some((track) => track.readyState !== 'live'))
             throw new ScreenCaptureError(
               'source_ended',

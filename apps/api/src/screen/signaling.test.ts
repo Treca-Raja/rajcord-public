@@ -167,6 +167,17 @@ describe('screen work admission', () => {
     for (let i = 0; i < 10; i++) bytes.acquire('a' + i, 'signal', 524288)();
     expect(() => bytes.acquire('new', 'signal', 1)).toThrow(/budget/);
   });
+  it('allows twenty steady renewals plus link-discovery renewals while bounding aggregate bursts', () => {
+    let now = 0;
+    const budget = new ScreenBudget(() => now);
+    for (let cycle = 0; cycle < 8; cycle++, now += 10000) {
+      for (let account = 0; account < 20; account++)
+        budget.acquire('steady-' + account, 'renew', 100)();
+      for (let account = 0; account < 20; account++)
+        budget.acquire('steady-' + account, 'renew', 100)();
+      expect(() => budget.acquire('overflow', 'renew', 100)).toThrow(/budget/);
+    }
+  });
 });
 
 it('accepts a bounded TURN relay candidate while preserving the strict candidate envelope', () => {

@@ -26,6 +26,7 @@ async function fixture(failDisposal = false) {
     readyState: 'live',
     label: 'Owned synthetic source',
     getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720, frameRate: 60 }),
+    applyConstraints: vi.fn(async () => {}),
     stop: vi.fn(() => {
       video.readyState = 'ended';
     }),
@@ -73,6 +74,27 @@ async function fixture(failDisposal = false) {
   };
   return { session, adapter, video, ended, grant };
 }
+it('shares one codec check across viewers and checks again for a resized source before the next offer', async () => {
+  const encodingInfo = vi.fn(async () => ({ supported: true, smooth: true, powerEfficient: true }));
+  vi.stubGlobal('navigator', { mediaCapabilities: { encodingInfo } });
+  vi.stubGlobal('RTCRtpSender', {
+    getCapabilities: () => ({ codecs: [{ mimeType: 'video/H264' }] }),
+  });
+  try {
+    const { session, video } = await fixture();
+    await Promise.all([session.codecPreference(), session.codecPreference()]);
+    expect(encodingInfo).toHaveBeenCalledTimes(1);
+    const settings = video.getSettings();
+    vi.spyOn(video, 'getSettings').mockReturnValue({ ...settings, width: 1720 });
+    await Promise.all([session.codecPreference(), session.codecPreference()]);
+    expect(encodingInfo).toHaveBeenCalledTimes(2);
+    expect(encodingInfo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ video: expect.objectContaining({ width: 1720, height: 720 }) }),
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 it('atomically replaces preview supervision while retaining the same capture and adapter ownership', async () => {
   const f = await fixture(),
     capture = f.session.borrow(),

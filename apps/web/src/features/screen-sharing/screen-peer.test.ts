@@ -15,6 +15,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 class Track extends EventTarget {
+  contentHint = '';
   readyState = 'live';
   enabled = true;
   settings: MediaTrackSettings = { width: 1920, height: 1080, frameRate: 60 };
@@ -102,7 +103,7 @@ const flush = async () => {
   for (let i = 0; i < 80; i++) await Promise.resolve();
 };
 const ack = (): ScreenAck<{ delivered: true }> => ({ ok: true, data: { delivered: true } });
-it('applies selected initial video ceilings before an offer can send media', () => {
+it('confirms the selected fixed format before creating the first offer', async () => {
   const quality = { profile: 'smooth', resolution: 720, frameRate: 60, videoBitrate: 4000000 };
   const f = fixture('publisher', 'none', (options) => {
     options.initialVideoQuality = {
@@ -115,6 +116,13 @@ it('applies selected initial video ceilings before an offer can send media', () 
     direction: 'sendonly',
     sendEncodings: [{ maxBitrate: 2000000, maxFramerate: 30, scaleResolutionDownBy: 1.5 }],
   });
+  await f.peer.offer();
+  expect(f.rtc.senders[0]!.parameters.degradationPreference).toBe(
+    'maintain-framerate-and-resolution',
+  );
+  expect(f.rtc.senders[0]!.setParameters.mock.invocationCallOrder[0]).toBeLessThan(
+    f.rtc.createOffer.mock.invocationCallOrder[0]!,
+  );
 });
 it('uses only the explicitly supplied screen STUN policy and validates native readback', () => {
   const f = fixture('viewer', 'none', (options) => {
@@ -218,6 +226,46 @@ afterEach(async () => {
   drains.splice(0).forEach((drain) => drain());
   await flush();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+it('prefers qualified H264 without discarding VP8/VP9/AV1 or repair codec fallbacks', async () => {
+  const codecs = [
+    { mimeType: 'video/VP8' },
+    { mimeType: 'video/H264' },
+    { mimeType: 'video/VP9' },
+    { mimeType: 'video/AV1' },
+    { mimeType: 'video/rtx' },
+  ];
+  vi.stubGlobal('RTCRtpSender', { getCapabilities: () => ({ codecs }) });
+  const f = fixture('publisher', 'none', (options) => {
+    options.codecPreference = async () => 'video/H264';
+  });
+  const preferences = vi.fn();
+  Object.assign(f.rtc.transceivers[0]!, { setCodecPreferences: preferences });
+  await stable(f);
+  expect(preferences).toHaveBeenCalledWith([codecs[1], codecs[0], codecs[2], codecs[3], codecs[4]]);
+  expect(f.peer.inspectMedia()).toMatchObject({
+    preferredCodec: 'video/H264',
+    codecPreferenceError: false,
+  });
+});
+
+it('restores browser defaults and exposes native codec-preference failure', async () => {
+  vi.stubGlobal('RTCRtpSender', {
+    getCapabilities: () => ({ codecs: [{ mimeType: 'video/H264' }] }),
+  });
+  const f = fixture('publisher', 'none', (options) => {
+    options.codecPreference = async () => 'video/H264';
+  });
+  const preferences = vi.fn().mockImplementationOnce(() => {
+    throw new Error('Owned preference failure');
+  });
+  Object.assign(f.rtc.transceivers[0]!, { setCodecPreferences: preferences });
+  await stable(f);
+  expect(preferences).toHaveBeenLastCalledWith([]);
+  expect(f.peer.inspectMedia()).toMatchObject({ preferredCodec: null, codecPreferenceError: true });
+  expect(f.peer.inspect().phase).toBe('stable');
 });
 
 it('constructs only one direct peer with borrowed send-only tracks and no negotiation', () => {
@@ -1058,6 +1106,267 @@ it('inspection invalidates readback after external source resize without changin
   await stable(f);
   await f.peer.setVideoQuality(videoRequest());
   f.video.settings.height = 2160;
-  expect(f.peer.inspectVideoQuality()).toMatchObject({ applied: null, closed: true });
+  expect(f.peer.inspectVideoQuality()).toMatchObject({ applied: null, closed: false });
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.peer.inspectVideoQuality()).toMatchObject({
+    applied: { encoding: { scaleResolutionDownBy: 2 } },
+    closed: false,
+  });
   expect(f.video.applyConstraints).not.toHaveBeenCalled();
+});
+
+it('recovers a disconnected publisher using an ICE restart after a grace interval', async () => {
+  const f = fixture();
+  await stable(f);
+  f.rtc.connectionState = 'disconnected';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(2999);
+  expect(f.rtc.createOffer).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(f.rtc.createOffer).toHaveBeenLastCalledWith({ iceRestart: true });
+  await f.peer.receive(f.message({ type: 'answer', sdp: screenSdp('answer', false) }, 2, 2));
+  f.rtc.connectionState = 'connected';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(21000);
+  expect(f.peer.inspect().phase).toBe('stable');
+  expect(f.rtc.createOffer).toHaveBeenCalledTimes(2);
+  expect(f.video.stop).not.toHaveBeenCalled();
+  expect(f.options.onError).not.toHaveBeenCalled();
+});
+
+it.each(['revoke', 'stop', 'source', 'deadline'] as const)(
+  'cancels recovery on %s without reviving the source',
+  async (action) => {
+    const f = fixture();
+    await stable(f);
+    f.rtc.connectionState = 'disconnected';
+    f.rtc.emit('connectionstatechange', {});
+    if (action === 'revoke') f.revoke();
+    else if (action === 'stop') f.peer.dispose();
+    else if (action === 'deadline') f.setCurrent({ ...f.current(), deadline: Date.now() + 1 });
+    if (action === 'source') f.video.dispatchEvent(new Event('ended'));
+    await vi.advanceTimersByTimeAsync(25000);
+    expect(f.rtc.createOffer).toHaveBeenCalledTimes(1);
+    expect(f.peer.inspect().phase).toBe('closed');
+  },
+);
+
+it('allows a viewer to answer a recovery offer while failed, without creating an offer', async () => {
+  const f = fixture('viewer');
+  await stable(f);
+  f.rtc.connectionState = 'failed';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(f.peer.inspect().phase).toBe('stable');
+  await f.peer.receive(f.message({ type: 'offer', sdp: screenSdp('offer', false) }, 2, 2));
+  f.rtc.connectionState = 'connected';
+  f.rtc.emit('connectionstatechange', {});
+  expect(f.rtc.createAnswer).toHaveBeenCalledTimes(2);
+  expect(f.rtc.createOffer).not.toHaveBeenCalled();
+});
+
+it('advances a disconnect grace timer on failure and preserves the restart cooldown', async () => {
+  const f = fixture();
+  await stable(f);
+  f.rtc.connectionState = 'disconnected';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.rtc.createOffer).toHaveBeenCalledTimes(1);
+  f.rtc.connectionState = 'failed';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(1);
+  expect(f.rtc.createOffer).toHaveBeenCalledTimes(2);
+  expect(f.rtc.createOffer).toHaveBeenLastCalledWith({ iceRestart: true });
+  await f.peer.receive(f.message({ type: 'answer', sdp: screenSdp('answer', false) }, 2, 2));
+  f.rtc.connectionState = 'disconnected';
+  f.rtc.emit('connectionstatechange', {});
+  f.rtc.connectionState = 'failed';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(7998);
+  expect(f.rtc.createOffer).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(2);
+  expect(f.rtc.createOffer).toHaveBeenCalledTimes(3);
+});
+
+it('bounds failed recovery rather than generating endless offers', async () => {
+  const f = fixture();
+  await stable(f);
+  f.rtc.connectionState = 'failed';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(1);
+  await f.peer.receive(f.message({ type: 'answer', sdp: screenSdp('answer', false) }, 2, 2));
+  await vi.advanceTimersByTimeAsync(8000);
+  await f.peer.receive(f.message({ type: 'answer', sdp: screenSdp('answer', false) }, 3, 3));
+  await vi.advanceTimersByTimeAsync(8000);
+  expect(f.rtc.createOffer).toHaveBeenCalledTimes(3);
+  expect(f.peer.inspect().phase).toBe('closed');
+  expect(f.video.stop).not.toHaveBeenCalled();
+});
+
+it('refreshes authorized ICE credentials before a recovery offer', async () => {
+  let servers: RTCIceServer[] = [];
+  const f = fixture('publisher', 'none', (options) => {
+    options.currentIceServers = () => servers;
+  });
+  const setConfiguration = vi.fn((configuration: RTCConfiguration) => {
+    f.rtc.config = structuredClone(configuration);
+  });
+  f.rtc.boundary.setConfiguration = setConfiguration;
+  await stable(f);
+  servers = [
+    { urls: ['stun:stun.cloudflare.com:3478'] },
+    {
+      urls: ['turn:relay.example:3478?transport=udp'],
+      username: 'renewedUser',
+      credential: 'renewedPassword',
+    },
+  ];
+  f.rtc.connectionState = 'failed';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(1);
+  expect(setConfiguration).toHaveBeenCalledOnce();
+  expect(f.rtc.config.iceServers).toEqual(servers);
+  expect(f.rtc.createOffer).toHaveBeenLastCalledWith({ iceRestart: true });
+});
+
+it('ignores short transient disconnects without consuming a recovery attempt', async () => {
+  const f = fixture();
+  await stable(f);
+  f.rtc.connectionState = 'disconnected';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(2000);
+  f.rtc.connectionState = 'connected';
+  f.rtc.emit('connectionstatechange', {});
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(f.peer.inspectMedia().recoveryAttempts).toBe(0);
+  expect(f.rtc.createOffer).toHaveBeenCalledTimes(1);
+});
+
+const mediaReport = (timestamp: number, limitation = 'none') =>
+  new Map([
+    [
+      'video',
+      {
+        id: 'video',
+        type: 'outbound-rtp',
+        timestamp,
+        kind: 'video',
+        bytesSent: timestamp * 500,
+        framesEncoded: timestamp * 0.03,
+        frameWidth: 1920,
+        frameHeight: 1080,
+        qualityLimitationReason: limitation,
+      },
+    ],
+  ]) as unknown as RTCStatsReport;
+
+it('samples actual delivery without ratcheting down the ceiling managed by native congestion control', async () => {
+  const f = fixture(),
+    getStats = vi.fn();
+  f.rtc.boundary.getStats = getStats;
+  await stable(f);
+  await f.peer.setVideoQuality(videoRequest());
+  getStats
+    .mockResolvedValueOnce(mediaReport(1000, 'bandwidth'))
+    .mockResolvedValueOnce(mediaReport(3000, 'bandwidth'))
+    .mockResolvedValueOnce(mediaReport(5000, 'bandwidth'));
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(f.peer.inspectMedia()).toMatchObject({
+    statistics: 'available',
+    sample: { bitrate: 4000000, fps: 30, limitation: 'bandwidth' },
+  });
+  expect(f.peer.inspectVideoQuality().applied?.encoding.maxBitrate).toBe(4000000);
+  expect(f.video.applyConstraints).not.toHaveBeenCalled();
+});
+
+it('updates native content policy without changing the selected FPS or replacing capture', async () => {
+  let content: 'detail' | 'motion' = 'detail';
+  const f = fixture('publisher', 'none', (options) => {
+    options.content = () => content;
+  });
+  f.rtc.boundary.getStats = vi.fn(async () => mediaReport(Date.now()));
+  await stable(f);
+  await f.peer.setVideoQuality(videoRequest());
+  expect(f.rtc.senders[0]!.parameters.degradationPreference).toBe('maintain-resolution');
+  content = 'motion';
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.rtc.senders[0]!.parameters.degradationPreference).toBe('maintain-framerate');
+  expect(f.peer.inspectVideoQuality().applied?.encoding.maxFramerate).toBe(60);
+  expect(f.video.applyConstraints).not.toHaveBeenCalled();
+});
+
+it('reapplies updated source dimensions without replacing capture or consuming quality revisions', async () => {
+  const f = fixture();
+  f.rtc.boundary.getStats = vi.fn(async () => mediaReport(Date.now()));
+  await stable(f);
+  await f.peer.setVideoQuality(videoRequest());
+  f.video.settings.width = 3840;
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.peer.inspectVideoQuality()).toMatchObject({
+    requested: { revision: 1 },
+    applied: { encoding: { scaleResolutionDownBy: 2 } },
+    closed: false,
+  });
+  expect(f.video.stop).not.toHaveBeenCalled();
+});
+
+it('keeps stats errors visible without ending healthy media and retains admission for hung native work', async () => {
+  const f = fixture(),
+    raw = deferred<RTCStatsReport>(),
+    getStats = vi.fn(() => raw.promise);
+  drains.push(() => raw.resolve(mediaReport(1000)));
+  f.rtc.boundary.getStats = getStats;
+  await stable(f);
+  await vi.advanceTimersByTimeAsync(13000);
+  expect(getStats).toHaveBeenCalledTimes(1);
+  expect(f.peer.inspectMedia().statistics).toBe('error');
+  expect(f.peer.inspect().phase).toBe('stable');
+  raw.resolve(mediaReport(1000));
+  await flush();
+  getStats.mockResolvedValue(mediaReport(3000));
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.peer.inspectMedia().statistics).toBe('available');
+  f.peer.dispose();
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(getStats).toHaveBeenCalledTimes(2);
+  expect(f.peer.inspectMedia()).toMatchObject({ statistics: 'closed', sample: null });
+});
+
+it('maintains source and content limits even while native statistics remain hung', async () => {
+  let content: 'motion' | 'detail' = 'motion';
+  const f = fixture('publisher', 'none', (options) => {
+    options.content = () => content;
+  });
+  const raw = deferred<RTCStatsReport>();
+  drains.push(() => raw.resolve(mediaReport(1000)));
+  f.rtc.boundary.getStats = vi.fn(() => raw.promise);
+  await stable(f);
+  await f.peer.setVideoQuality(videoRequest());
+  await vi.advanceTimersByTimeAsync(3000);
+  content = 'detail';
+  f.video.settings.width = 3840;
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(f.rtc.senders[0]!.parameters).toMatchObject({
+    degradationPreference: 'maintain-resolution',
+    encodings: [{ maxBitrate: 4000000, scaleResolutionDownBy: 2 }],
+  });
+  expect(f.rtc.boundary.getStats).toHaveBeenCalledTimes(1);
+  expect(f.peer.inspectMedia().statistics).toBe('pending');
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(f.peer.inspectMedia().statistics).toBe('error');
+  expect(f.peer.inspect().phase).toBe('stable');
+});
+
+it('installs the link bitrate before negotiation and keeps it across a sender refresh', async () => {
+  const quality = videoRequest();
+  const f = fixture('publisher', 'none', (options) => {
+    options.initialVideoQuality = quality;
+  });
+  expect(f.video.contentHint).toBe('motion');
+  expect(f.rtc.addTransceiver.mock.calls[0]![1].sendEncodings?.[0]?.maxBitrate).toBe(4000000);
+  await f.peer.offer();
+  expect(f.rtc.senders[0]!.setParameters).not.toHaveBeenCalled();
+  await f.peer.receive(f.message({ type: 'answer', sdp: screenSdp('answer', false) }));
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.peer.inspectVideoQuality().applied?.encoding.maxBitrate).toBe(4000000);
 });

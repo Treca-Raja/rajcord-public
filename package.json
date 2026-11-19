@@ -44,6 +44,8 @@
     "test:presence": "pnpm build && pnpm --filter @tricord/api test:presence",
     "test:voice": "pnpm build && pnpm --filter @tricord/api test:voice",
     "test:screen": "pnpm build:packages && pnpm --filter @tricord/api test:screen",
+    "test:screen:network": "pnpm build:packages && pnpm --filter @tricord/api test:screen:network",
+    "test:screen:load": "pnpm build && pnpm --filter @tricord/api test:screen:load",
     "test:voice:load": "pnpm --filter @tricord/api test:voice:check && pnpm build && pnpm --filter @tricord/api test:voice:load",
     "server:build": "docker build -f infrastructure/server/Dockerfile -t tricord-server:alpha .",
     "test:server-image": "node scripts/server-image-smoke.mjs",
