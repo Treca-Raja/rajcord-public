@@ -171,7 +171,7 @@ The per-viewer software run reported libvpx with power-efficient encoding false.
 
 # Twenty-person direct P2P stress qualification — 2026-11-18
 
-The release target is 20 concurrent 1080p60 publishers, each receiving all 19 other sources through direct P2P, with voice active. The `pnpm test:screen:load` fixture uses the actual app and owned loopback services. It samples all 380 directed subscriptions individually and checks picture dimensions, decoded and rendered frame rates, selected ICE route, media bytes and freeze counters. Thirteen five-second intervals cross the original 45-second authority lifetime. The test also checks source lifetime, advancing voice audio and cleanup.
+The stress target in this run was 20 concurrent 1080p60 publishers, each receiving all 19 other sources through direct P2P, with voice active. The `pnpm test:screen:load` fixture uses the actual app and owned loopback services. It samples all 380 directed subscriptions individually and checks picture dimensions, decoded and rendered frame rates, selected ICE route, media bytes and freeze counters. Thirteen five-second intervals cross the original 45-second authority lifetime. The test also checks source lifetime, advancing voice audio and cleanup.
 
 Voice admission no longer has a configured room headcount cap. The integration suite admitted 21 approved reservations and rejected a pending account. The separate twenty-client synthetic voice soak passed 65 seconds of audio from the other 19 microphones per client, production rate limits, signaling recovery, API restart recovery and cleanup. The screen implementation accepts more than nine viewers and 18 renewal links. Authorization, per-link ownership, and bounded signaling and output budgets still apply.
 
