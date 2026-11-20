@@ -71,6 +71,25 @@ it('disables updates when the packaged publisher is missing', async () => {
   expect(state.create).not.toHaveBeenCalled();
   expect(state.prompt).toHaveBeenCalled();
 });
+it('checks for updates after startup and prompts for consent on a later scheduled check', async () => {
+  updater.checkForUpdates.mockResolvedValueOnce(null);
+  state.prompt.mockResolvedValue({ response: 0 });
+  configureUpdates(vi.fn());
+
+  await vi.advanceTimersByTimeAsync(29_999);
+  expect(updater.checkForUpdates).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+  expect(state.prompt).not.toHaveBeenCalled();
+
+  await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 - 30_000);
+  expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+  expect(state.prompt).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ title: 'Rajcord update', buttons: ['Later', 'Download'] }),
+  );
+  expect(updater.downloadUpdate).not.toHaveBeenCalled();
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
 it('requires download and restart consent and verifies cached files again before installation', async () => {
   const prepare = vi.fn();
   const updates = configureUpdates(prepare);
