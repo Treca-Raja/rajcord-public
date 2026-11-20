@@ -1,5 +1,13 @@
 import { runInBackground } from '../../shared/background';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Mic, MicOff, Headphones, PhoneOff, Volume2, Plus, Settings } from 'lucide-react';
 import { useAuth } from '../account';
 import { useCall, type VoiceControls } from '../../shared/call';
@@ -16,16 +24,19 @@ export type VoiceSessionDock = {
   leave: () => void;
 };
 
+import { NavigationSectionHeader } from '../../shared/NavigationSection';
 import { ScreenLauncher } from '../screen-sharing';
 import { ParticipantVolume } from '../../shared/ParticipantVolume';
 import { createPortal } from 'react-dom';
 export function VoicePanel({
   showDirectory = true,
+  directoryTools,
   onChannels,
   onSession,
   requestedChannel,
 }: {
   showDirectory?: boolean;
+  directoryTools?: ReactNode;
   onChannels?: (channels: VoiceChannel[]) => void;
   onSession?: (session: VoiceSessionDock | null) => void;
   requestedChannel?: { id: string; version: number } | null;
@@ -41,6 +52,7 @@ export function VoicePanel({
   const controlsRef = useRef(call?.controls);
   controlsRef.current = call?.controls;
   const voice = call?.voice;
+  const [expanded, setExpanded] = useState(true);
   const [channels, setChannels] = useState<VoiceChannel[]>([]),
     [error, setError] = useState(''),
     [channelError, setChannelError] = useState(''),
@@ -79,6 +91,7 @@ export function VoicePanel({
       setError('That voice channel is no longer available.');
       return;
     }
+    setExpanded(true);
     requestAnimationFrame(() => {
       const target = document.querySelector<HTMLButtonElement>(
         '.voice-panel [data-voice-channel-id="' + requestedChannel.id + '"]',
@@ -164,8 +177,12 @@ export function VoicePanel({
     return voiceSettingsHost ? createPortal(<VoiceSettings />, voiceSettingsHost) : null;
   return (
     <section className="voice-panel">
-      <div className="section-label voice-label">
-        VOICE CHANNELS
+      <NavigationSectionHeader
+        label="Voice"
+        controls="navigation-voice"
+        expanded={expanded}
+        onToggle={() => setExpanded(!expanded)}
+      >
         <button
           aria-label="Create voice channel"
           onClick={() =>
@@ -183,70 +200,73 @@ export function VoicePanel({
         >
           <Plus size={15} />
         </button>
-      </div>
-      <div className="channels">
-        {channels.map((channel) => (
-          <div key={channel.id}>
-            <button
-              data-voice-channel-id={channel.id}
-              className={voice?.channelId === channel.id ? 'selected' : ''}
-              disabled={busy || !voice}
-              onClick={() =>
-                runInBackground(
-                  action(async (controller) => {
-                    await controller.joinChannel(channel.id);
-                    if (controlsRef.current === controller) await call?.screens?.open();
-                  }),
-                )
-              }
-            >
-              <Volume2 size={17} />
-              <span className="truncate">{channel.name}</span>
-              <small>
-                {voice?.channelId === channel.id && busy
-                  ? 'Joining…'
-                  : channel.participants.length || ''}
-              </small>
-            </button>
-            <ul className="voice-members">
-              {(voice?.channelId === channel.id ? voice.participants : channel.participants).map(
-                (person) => {
-                  const active = voice?.participants.find((item) => item.id === person.id);
-                  const adjustable = !!active && person.id !== auth.user.id;
-                  return (
-                    <li key={person.id} data-speaking={active?.speaking}>
-                      <button
-                        className="voice-member"
-                        disabled={!adjustable}
-                        aria-haspopup={adjustable ? 'dialog' : undefined}
-                        aria-expanded={adjustable ? participantId === person.id : undefined}
-                        onClick={(event) => {
-                          setParticipantAnchor(event.currentTarget);
-                          setParticipantId(person.id);
-                        }}
-                        onContextMenu={(event) => {
-                          if (!adjustable) return;
-                          event.preventDefault();
-                          setParticipantAnchor(event.currentTarget);
-                          setParticipantId(person.id);
-                        }}
-                      >
-                        <span className="voice-member-avatar" aria-hidden="true">
-                          {person.name.slice(0, 1)}
-                        </span>
-                        <span className="truncate">
-                          {person.name}
-                          {person.id === auth.user.id ? ' (you)' : ''}
-                        </span>
-                        {active?.muted && <MicOff size={14} aria-label="Muted" />}
-                      </button>
-                    </li>
-                  );
-                },
-              )}
-            </ul>
-          </div>
-        ))}
+      </NavigationSectionHeader>
+      <div id="navigation-voice" hidden={!expanded}>
+        <div className="channels">
+          {channels.map((channel) => (
+            <div key={channel.id}>
+              <button
+                data-voice-channel-id={channel.id}
+                className={voice?.channelId === channel.id ? 'selected' : ''}
+                disabled={busy || !voice}
+                onClick={() =>
+                  runInBackground(
+                    action(async (controller) => {
+                      await controller.joinChannel(channel.id);
+                      if (controlsRef.current === controller) await call?.screens?.open();
+                    }),
+                  )
+                }
+              >
+                <Volume2 size={17} />
+                <span className="truncate">{channel.name}</span>
+                <small>
+                  {voice?.channelId === channel.id && busy
+                    ? 'Joining…'
+                    : channel.participants.length || ''}
+                </small>
+              </button>
+              <ul className="voice-members">
+                {(voice?.channelId === channel.id ? voice.participants : channel.participants).map(
+                  (person) => {
+                    const active = voice?.participants.find((item) => item.id === person.id);
+                    const adjustable = !!active && person.id !== auth.user.id;
+                    return (
+                      <li key={person.id} data-speaking={active?.speaking}>
+                        <button
+                          className="voice-member"
+                          disabled={!adjustable}
+                          aria-haspopup={adjustable ? 'dialog' : undefined}
+                          aria-expanded={adjustable ? participantId === person.id : undefined}
+                          onClick={(event) => {
+                            setParticipantAnchor(event.currentTarget);
+                            setParticipantId(person.id);
+                          }}
+                          onContextMenu={(event) => {
+                            if (!adjustable) return;
+                            event.preventDefault();
+                            setParticipantAnchor(event.currentTarget);
+                            setParticipantId(person.id);
+                          }}
+                        >
+                          <span className="voice-member-avatar" aria-hidden="true">
+                            {person.name.slice(0, 1)}
+                          </span>
+                          <span className="truncate">
+                            {person.name}
+                            {person.id === auth.user.id ? ' (you)' : ''}
+                          </span>
+                          {active?.muted && <MicOff size={14} aria-label="Muted" />}
+                        </button>
+                      </li>
+                    );
+                  },
+                )}
+              </ul>
+            </div>
+          ))}
+        </div>
+        {directoryTools}
       </div>
       {!onSession && voice && voice.status !== 'idle' && (
         <div className="voice-connection">

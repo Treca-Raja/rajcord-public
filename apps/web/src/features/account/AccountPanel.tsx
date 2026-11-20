@@ -356,7 +356,7 @@ export function AccountPanel({
               <LogOut size={16} /> Sign out of Rajcord
             </button>
             <p className="font-credits">
-              Inter typography & Twemoji artwork · self-hosted ·{' '}
+              IBM Plex typography & Twemoji artwork · self-hosted ·{' '}
               <a href="/font-licenses.txt" target="_blank" rel="noopener noreferrer">
                 Font & emoji licenses
               </a>

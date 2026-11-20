@@ -1,6 +1,7 @@
 import { app, ipcMain, Notification, shell } from 'electron';
 import type { BrowserWindow, IpcMainEvent } from 'electron';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import {
   canCoalesceNativeNotice,
@@ -17,13 +18,24 @@ type TrustedSender = (event: Pick<IpcMainEvent, 'sender' | 'senderFrame'>) => bo
 export function installNotificationMain({
   owner,
   notificationAppId,
+  authSmoke,
   trustedSender,
 }: {
   owner: BrowserWindow;
   notificationAppId: string;
+  authSmoke: boolean;
   trustedSender: TrustedSender;
 }) {
   app.setAppUserModelId(notificationAppId);
+  // Concurrent worktrees may already have a registered development shortcut.
+  const shortcutName = authSmoke
+    ? 'Rajcord smoke ' + randomUUID() + '.lnk'
+    : 'Rajcord development.lnk';
+  let smokeShortcut: string | undefined;
+  if (authSmoke)
+    process.once('exit', () => {
+      if (smokeShortcut) fs.rmSync(smokeShortcut, { force: true });
+    });
   ipcMain.handle('notifications:capabilities', (event) => {
     if (!trustedSender(event)) throw new Error('Untrusted notification request.');
     return { version: 2 };
@@ -38,7 +50,7 @@ export function installNotificationMain({
       'Windows',
       'Start Menu',
       'Programs',
-      'Rajcord development.lnk',
+      shortcutName,
     );
     try {
       if (fs.existsSync(shortcut)) {
@@ -46,13 +58,19 @@ export function installNotificationMain({
         if (existing.target !== process.execPath || existing.appUserModelId !== notificationAppId)
           return false;
       }
-      return shell.writeShortcutLink(shortcut, fs.existsSync(shortcut) ? 'update' : 'create', {
-        target: process.execPath,
-        args: '"' + path.join(__dirname, 'main.js') + '"',
-        cwd: path.resolve(__dirname, '../../..'),
-        appUserModelId: notificationAppId,
-        description: 'Rajcord development app notification registration',
-      });
+      const registered = shell.writeShortcutLink(
+        shortcut,
+        fs.existsSync(shortcut) ? 'update' : 'create',
+        {
+          target: process.execPath,
+          args: '"' + path.join(__dirname, 'main.js') + '"',
+          cwd: path.resolve(__dirname, '../../..'),
+          appUserModelId: notificationAppId,
+          description: 'Rajcord development app notification registration',
+        },
+      );
+      if (registered && authSmoke) smokeShortcut = shortcut;
+      return registered;
     } catch {
       return false;
     }

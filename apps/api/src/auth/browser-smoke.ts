@@ -157,16 +157,15 @@ async function click(label: string) {
       ");if(!b)throw new Error('Button missing');b.click();})()",
   );
 }
-async function showWorkspace(view: 'Channels' | 'Direct Messages') {
-  const selector = JSON.stringify('button[aria-label="' + view + '"]');
-  await wait(`!!document.querySelector(${selector})`);
-  await js(`document.querySelector(${selector}).click()`);
-  await wait(
-    `document.querySelector('.sidebar')?.getAttribute('aria-label')===${JSON.stringify(view)}`,
-  );
+async function showNavigationSection(view: 'Channels' | 'Direct Messages') {
+  const id = view === 'Channels' ? 'navigation-channels' : 'navigation-direct';
+  const toggle = `document.querySelector('button[aria-controls=${id}]')`;
+  await wait('!!' + toggle);
+  await js(`if (${toggle}.getAttribute('aria-expanded')==='false') ${toggle}.click()`);
+  await wait(`document.querySelector('#${id}').checkVisibility()`);
 }
 async function openConversation(id: string, view: 'Channels' | 'Direct Messages') {
-  await showWorkspace(view);
+  await showNavigationSection(view);
   const selector = '[data-conversation-id="' + id + '"]';
   await wait(`!!document.querySelector(${JSON.stringify(selector)})`);
   await js(`document.querySelector(${JSON.stringify(selector)}).click()`);
@@ -381,6 +380,7 @@ try {
 
   // An HTTP login alone is offline. Two independent application connections still
   // produce one account row, and closing either cannot erase the other connection.
+  await js("document.querySelector('button[aria-controls=workspace-activity]').click()");
   const ownerRow = `[data-member-id="${owner.id}"]`;
   await wait(`document.querySelector('${ownerRow}')?.dataset.presence==='offline'`);
   async function connectPresencePeer() {
@@ -784,16 +784,24 @@ try {
   );
   assert.equal(
     await js(
-      "getComputedStyle(document.querySelector('.manage-categories-link')).transitionDuration",
+      "getComputedStyle(document.querySelector('.channel-management-actions button')).transitionDuration",
     ),
     '0s',
   );
   await call('Emulation.setEmulatedMedia', { features: [] });
-  await click('Pinned messages');
+  assert.equal(
+    await js("document.activeElement===document.querySelector('.chat-feature-panel h2')"),
+    true,
+  );
+  await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape' });
   await wait(
     "document.querySelector('.chat-tools button')?.getAttribute('aria-expanded')==='false'",
   );
   await wait("!document.querySelector('.chat-feature-panel')");
+  assert.equal(
+    await js("document.activeElement===document.querySelector('.chat-tools button')"),
+    true,
+  );
   assert.equal(
     await js("document.querySelector('.message-scroll').clientWidth"),
     timelineWidthBeforePins,
@@ -1005,6 +1013,7 @@ try {
     document.querySelector('${timelineMessage} .chat-message-content').getBoundingClientRect().left)<=1`),
     'Detached reactions must align with the message text',
   );
+  await wait(`!!document.querySelector('${reactionSelector} button[aria-pressed="true"]:enabled')`);
   await js(`document.querySelector('${reactionSelector} button').click()`);
   await wait(`!document.querySelector('${reactionSelector} button')`);
   await messageAction(rootMessage, 'React');
@@ -1079,40 +1088,24 @@ try {
     const current=document.querySelector('.message-scroll [data-message-id="${followup}"]').getBoundingClientRect();
     return {height:current.height,gap:current.top-previous.bottom};
   })()`);
-  assert.ok(
-    density.height <= 56,
-    'One-line consecutive messages must not reserve an avatar-sized row',
-  );
-  assert.equal(
-    await js(
-      `getComputedStyle(document.querySelector('.message-scroll [data-message-id="${followup}"] .chat-message-author strong')).display!=='none'`,
-    ),
-    true,
-    'Every message, including consecutive messages, must show its sender',
-  );
-  assert.ok(
-    await js(`Math.abs(document.querySelector('.message-scroll [data-message-id="${followup}"] .chat-message-content').getBoundingClientRect().left-
-    document.querySelector('${timelineMessage} .chat-message-content').getBoundingClientRect().left)<=1`),
-    'Consecutive sender names and message text must retain the same alignment',
-  );
+  assert.ok(density.height <= 34, 'A single consecutive line should fit in one compact row');
   assert.ok(
     await js(`(()=>{
-    const item=document.querySelector('.message-scroll [data-message-id="${followup}"]');
-    const author=item.querySelector('.chat-message-author').getBoundingClientRect();
-    const body=item.querySelector('.chat-message-content').getBoundingClientRect();
-    return Math.abs(author.left-body.left)<=1 && body.top>=author.bottom && body.top-author.bottom<=4;
-  })()`),
-    'Sender and text must share a left edge with a compact header above the message',
-  );
-  assert.ok(
-    await js(`(()=>{
-    const item=document.querySelector('.message-scroll [data-message-id="${followup}"]');
-    const author=item.querySelector('.chat-message-author').getBoundingClientRect();
-    const body=item.querySelector('.chat-message-content').getBoundingClientRect();
-    const time=item.querySelector('.chat-message-information').getBoundingClientRect();
-    return author.right<=time.left && body.left===author.left && item.scrollWidth<=item.clientWidth;
-  })()`),
-    'Sender and timestamp must fit above the text without overlapping',
+      const row=document.querySelector('.message-scroll [data-message-id="${followup}"]');
+      const previous=document.querySelector('${timelineMessage} .chat-message-content');
+      const body=row.querySelector('.message-body').getBoundingClientRect();
+      const time=row.querySelector('time').getBoundingClientRect();
+      const original=document.querySelector('${timelineMessage}');
+      const handle=original.querySelector('.chat-author-handle').getBoundingClientRect();
+      const headerTime=original.querySelector('.chat-message-author time').getBoundingClientRect();
+      return row.getAttribute('aria-label').includes('@'+${JSON.stringify(username)}) &&
+        !row.querySelector('.chat-message-author') && !row.querySelector('.chat-message-avatar') &&
+        Math.abs(body.left-previous.getBoundingClientRect().left)<=1 &&
+        time.left-body.right>=0 && time.left-body.right<=12 &&
+        headerTime.left-handle.right>=0 && headerTime.left-handle.right<=12 &&
+        row.scrollWidth<=row.clientWidth;
+    })()`),
+    'Group headers keep times beside identity, and consecutive rows keep their own time beside the text',
   );
   assert.ok(density.gap <= 4, 'Consecutive message spacing must stay compact');
   await screenshot('chat-compact-density.png');
@@ -1617,6 +1610,12 @@ try {
     mobile: false,
   });
   await wait(`document.querySelector('.message-scroll').clientHeight<${oldViewport}`);
+  await wait(`(() => {
+    const area = document.querySelector('.message-scroll');
+    return area.scrollHeight - area.scrollTop - area.clientHeight <= 2;
+  })()`);
+  await js("document.querySelector('.message-scroll').scrollTop = 0");
+  await wait("!!document.querySelector('.jump-latest')");
   const resizedTop = await js<number>("document.querySelector('.message-scroll').scrollTop");
   const resizedPost = await app.inject({
     method: 'POST',
@@ -1735,16 +1734,21 @@ try {
   assert.equal(automaticJoins, 0, 'Voice references must not join or capture media');
   cdpEvents.delete('Network.requestWillBeSent');
 
-  await showWorkspace('Direct Messages');
+  await showNavigationSection('Direct Messages');
   await js('document.querySelector(\'button[aria-label="Find or start a conversation"]\').click()');
   await wait("!!document.querySelector('select[name=userId]')");
   await js("document.querySelector('select[name=userId]').value=" + JSON.stringify(owner.id));
   await click('Open conversation');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
-  await wait("document.querySelector('.sidebar')?.getAttribute('aria-label')==='Direct Messages'");
-  await showWorkspace('Channels');
-  await wait("document.querySelector('.sidebar')?.getAttribute('aria-label')==='Channels'");
-  await showWorkspace('Direct Messages');
+  assert.equal(
+    await js(
+      "document.querySelector('#navigation-channels').checkVisibility() && document.querySelector('#navigation-direct').checkVisibility()",
+    ),
+    true,
+  );
+  await js("document.querySelector('button[aria-controls=navigation-direct]').click()");
+  await wait("document.querySelector('#navigation-direct').hidden");
+  await showNavigationSection('Direct Messages');
   await wait("document.querySelector('.channel-header strong')?.innerText==='Browser owner'");
   await compose('Private browser DM');
   const dm = (
@@ -1780,9 +1784,9 @@ try {
   const mentionOnServer = unreadEquals(dm.id, 'mentionCount', 1);
   await wait(unreadOnServer);
   await wait(mentionOnServer);
-  // Keep the DM unread while briefly opening its sidebar to inspect the badge.
+  // Inspect the unified list without opening the unread DM.
   await js('document.hasFocus=()=>false');
-  await showWorkspace('Direct Messages');
+  await showNavigationSection('Direct Messages');
   await wait(badge);
   await wait(
     `document.querySelector('[data-conversation-id="${dm.id}"] .mention-badge')?.textContent==='@1'`,
@@ -1792,10 +1796,11 @@ try {
   await wait(unreadOnServer);
   await wait(mentionOnServer);
   await js('document.hasFocus=()=>false');
-  await showWorkspace('Direct Messages');
+  await showNavigationSection('Direct Messages');
   await wait(badge);
   await screenshot('unread-browser-badges.png');
   await js("delete document.hasFocus;window.dispatchEvent(new Event('focus'))");
+  await openConversation(dm.id, 'Direct Messages');
   await wait("document.querySelector('.message-scroll')?.innerText.includes('Unread ping')");
   await wait(`!document.querySelector('[data-conversation-id="${dm.id}"] .unread-badge')`);
   const storedRead = (
@@ -2341,11 +2346,11 @@ try {
     mobile: true,
   });
   await js(
-    "document.querySelector('button[aria-label=Members]').focus();document.querySelector('button[aria-label=Members]').click()",
+    "document.querySelector('button[aria-controls=workspace-activity]').focus();document.querySelector('button[aria-controls=workspace-activity]').click()",
   );
-  await wait("!!document.querySelector('[role=dialog][aria-label=Members]')");
+  await wait("!!document.querySelector('[role=dialog][aria-label=Activity]')");
   assert.equal(
-    await js("!!document.activeElement.closest('[role=dialog][aria-label=Members]')"),
+    await js("!!document.activeElement.closest('[role=dialog][aria-label=Activity]')"),
     true,
   );
   await app.inject({
@@ -2362,8 +2367,8 @@ try {
     code: 'Escape',
     windowsVirtualKeyCode: 27,
   });
-  await wait("!document.querySelector('[role=dialog][aria-label=Members]')");
-  assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Members');
+  await wait("!document.querySelector('[role=dialog][aria-label=Activity]')");
+  assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Activity');
   await wait(`!${drawerBadge}`);
   assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
   await screenshot('messaging-browser-mobile.png');
@@ -2374,7 +2379,7 @@ try {
     mobile: false,
   });
   await reload();
-  await showWorkspace('Direct Messages');
+  await showNavigationSection('Direct Messages');
   await wait(
     "[...document.querySelectorAll('.channels button')].some(b=>b.innerText.includes('Browser invitation group'))",
   );

@@ -34,7 +34,9 @@ export async function waitForDebuggingPage(port: string) {
   }
   throw new Error('Test browser did not publish a debugging page.');
 }
-export async function launch(options: { fakeMicrophone?: boolean; fakeVideoFile?: string } = {}) {
+export async function launch(
+  options: { fakeMicrophone?: boolean; fakeVideoFile?: string; visible?: boolean } = {},
+) {
   if (options.fakeVideoFile && options.fakeMicrophone === false)
     throw new Error('A file-backed camera requires fake media devices.');
   const profile = await mkdtemp(path.join(tmpdir(), 'tricord-voice-browser-'));
@@ -62,7 +64,7 @@ export async function launch(options: { fakeMicrophone?: boolean; fakeVideoFile?
     process.env.TRICORD_BROWSER_PATH ||
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     [
-      '--headless=new',
+      ...(options.visible ? ['--new-window', '--window-size=1440,900'] : ['--headless=new']),
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
@@ -96,8 +98,8 @@ export async function launch(options: { fakeMicrophone?: boolean; fakeVideoFile?
   const cleanup = async () => {
     for (let i = 0; i < 50 && child.exitCode === null && child.signalCode === null; i++)
       await delay(100);
-    if (child.exitCode === null && child.signalCode === null) child.kill();
-    for (let i = 0; i < 50 && child.exitCode === null && child.signalCode === null; i++)
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    for (let i = 0; i < 150 && child.exitCode === null && child.signalCode === null; i++)
       await delay(100);
     if (child.exitCode === null && child.signalCode === null && !launchError)
       throw new Error('Test browser did not exit');

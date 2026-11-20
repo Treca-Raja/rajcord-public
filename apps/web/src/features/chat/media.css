@@ -92,9 +92,6 @@
   background: #cabaff18;
   transform: translateY(-1px);
 }
-.emoji-picker .emoji-picker-close {
-  margin-top: 10px;
-}
 .emoji-picker .emoji-search {
   display: block;
   margin: 0 0 8px;
@@ -113,14 +110,6 @@
 .emoji-picker-panel select {
   margin-bottom: 8px;
   font-size: 12px;
-}
-.emoji-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 8px;
-  font-size: 11px;
 }
 .emoji-glyph {
   position: relative;
@@ -178,7 +167,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 10px 0 7px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 .emoji-section-label strong {
@@ -189,7 +178,7 @@
   max-width: 138px;
   padding: 4px 6px;
   margin: 0;
-  font-size: 10px;
+  font-size: 12px;
   border: 0;
   background: #ffffff04;
 }
@@ -224,16 +213,16 @@
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid #ffffff08;
-  color: #8193aa;
-  font-size: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 .emoji-picker .emoji-picker-footer button {
   min-height: 28px;
   padding: 3px 8px;
   border: 0;
-  color: #bbcadd;
+  color: var(--text-secondary);
   background: transparent;
-  font-size: 11px;
+  font-size: 12px;
 }
 .animated-surface {
   opacity: 0;
@@ -253,13 +242,6 @@
     opacity: 0;
     transform: translateY(6px) scale(0.99);
   }
-}
-.emoji-pagination button,
-.emoji-picker .emoji-browse-all,
-.emoji-picker .emoji-picker-close {
-  min-height: 34px;
-  padding: 6px 9px;
-  font-size: 12px;
 }
 .sr-only {
   position: absolute;
@@ -303,7 +285,7 @@
   flex-shrink: 0;
   height: 44px;
   padding: 0 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.4px;
   color: var(--text-muted);
@@ -313,16 +295,15 @@
     color var(--motion-fast) var(--motion-ease);
 }
 .composer.live-composer .composer-gif:hover {
-  background: #ffc2aa12;
-  color: var(--accent-peach);
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
-.gif-link-input,
 .gif-command-suggestion {
   position: absolute;
   bottom: calc(100% + 8px);
   right: 0;
   z-index: 20;
-  width: min(400px, 100%);
+  width: 100%;
   padding: 16px;
   border: 1px solid #465364;
   border-radius: 12px;
@@ -330,45 +311,9 @@
   color: #e7eef8;
   box-shadow: 0 10px 35px #0007;
   animation: chat-pop-in var(--motion-fast) var(--motion-ease);
-}
-.gif-link-input header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-.gif-link-input p,
-.gif-link-input small {
-  color: #a9b8cb;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.gif-link-input form {
-  margin-top: 12px;
-}
-.gif-link-input label {
-  display: grid;
-  gap: 7px;
-  font-size: 12px;
-}
-.gif-link-input input {
-  width: 100%;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid #526178;
-  border-radius: 8px;
-  color: #e7eef8;
-  background: #151c26;
-  margin-bottom: 8px;
-}
-.gif-link-input .primary {
-  margin-top: 12px;
-}
-.gif-command-suggestion {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
   text-align: left;
   font-size: 13px;
 }

@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
 const require = createRequire(new URL('../apps/desktop/package.json', import.meta.url));
@@ -58,4 +60,11 @@ it.each([
 ])('includes required picker assets in the package: %s', (file) => {
   expect(files.some((pattern) => !pattern.startsWith('!') && minimatch(file, pattern))).toBe(true);
   expect(excluded(file)).toBe(false);
+});
+
+it('keeps the app, window, tray and browser icons in sync with the waveform', () => {
+  execFileSync(process.execPath, [
+    fileURLToPath(new URL('./desktop-icons.mjs', import.meta.url)),
+    '--check',
+  ]);
 });

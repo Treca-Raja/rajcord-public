@@ -1,39 +1,25 @@
 import { runInBackground } from '../shared/background';
 import type { ChannelCategory, Conversation, Invitation } from '@tricord/shared';
 import { Avatar } from '@tricord/ui';
-import {
-  ChevronDown,
-  ChevronRight,
-  FolderPlus,
-  Hash,
-  Headphones,
-  Mic,
-  MicOff,
-  PhoneOff,
-  Plus,
-  Radio,
-  Search,
-  Settings,
-  Sparkles,
-  Users,
-  VideoOff,
-  Volume2,
-} from 'lucide-react';
+import { X, FolderPlus, Hash, Plus, MessageCirclePlus, Users } from 'lucide-react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { AppearanceBrand } from '../features/appearance';
 import { useAuth } from './Auth';
 import { SoundControls } from '../features/sounds';
 import { VoiceFeature } from './VoiceFeature';
-import { ScreenLauncher } from '../features/screen-sharing';
+import { VoiceDock } from './VoiceDock';
 import type { VoiceChannel, VoiceSessionDock } from '../features/voice';
 import { EmojiText } from '../shared/emoji/EmojiText';
 
-type WorkspaceView = 'channels' | 'direct';
+import { NavigationSectionHeader } from '../shared/NavigationSection';
 
 export function CommunitySidebar({
   membersOpen,
+  mobileOpen,
+  onCloseNavigation,
   categories,
   conversations,
   selected,
-  view,
   choose,
   openDialog,
   invites,
@@ -48,10 +34,11 @@ export function CommunitySidebar({
   voiceNavigation,
 }: {
   membersOpen: boolean;
+  mobileOpen: boolean;
+  onCloseNavigation: () => void;
   categories: ChannelCategory[];
   conversations: Conversation[];
   selected: string | null;
-  view: WorkspaceView;
   choose: (id: string) => void;
   openDialog: (mode: 'channel' | 'dm' | 'group' | 'categories', trigger?: HTMLElement) => void;
   invites: Invitation[];
@@ -66,65 +53,78 @@ export function CommunitySidebar({
   voiceNavigation: { id: string; version: number } | null;
 }) {
   const { state, request, openSettings } = useAuth();
+  const [channelsOpen, setChannelsOpen] = useState(true);
+  const [messagesOpen, setMessagesOpen] = useState(true);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (!mobileOpen) return;
+    const frame = requestAnimationFrame(() => closeButton.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [mobileOpen]);
   return (
     <aside
+      role={mobileOpen ? 'dialog' : undefined}
+      aria-modal={mobileOpen || undefined}
+      onKeyDown={(event) => {
+        if (!mobileOpen) return;
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          onCloseNavigation();
+        }
+        if (event.key !== 'Tab') return;
+        const controls = [
+          ...event.currentTarget.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), summary, input:not(:disabled)',
+          ),
+        ].filter((element) => element.checkVisibility());
+        if (event.shiftKey && document.activeElement === controls[0]) {
+          event.preventDefault();
+          controls.at(-1)?.focus();
+        } else if (!event.shiftKey && document.activeElement === controls.at(-1)) {
+          event.preventDefault();
+          controls[0]?.focus();
+        }
+      }}
       className="sidebar"
       id="community-sidebar"
-      aria-label={view === 'channels' ? 'Channels' : 'Direct Messages'}
+      aria-label="Workspace navigation"
       inert={membersOpen}
     >
       <div className="community">
-        <div>
-          <strong>
-            {view === 'channels' ? (
-              <>
-                Rajcord<span>.</span>
-              </>
-            ) : (
-              'Direct Messages'
-            )}
-          </strong>
-          {view === 'direct' && <small>PRIVATE CONVERSATIONS</small>}
+        <div className="workspace-brand">
+          <AppearanceBrand />
+          <strong>Rajcord</strong>
         </div>
-        {view === 'channels' ? (
-          <ChevronDown size={16} aria-hidden="true" />
-        ) : (
-          <button
-            aria-label="Start a direct message"
-            onClick={(event) => openDialog('dm', event.currentTarget)}
-          >
-            <Plus size={17} />
+        {mobileOpen && (
+          <button ref={closeButton} aria-label="Close navigation" onClick={onCloseNavigation}>
+            <X size={18} />
           </button>
         )}
       </div>
-
-      {view === 'channels' ? (
-        <>
-          <div className="section-label">
-            TEXT CHANNELS
-            <div className="channel-management-actions">
-              <button
-                aria-label="Create channel"
-                onClick={(event) => openDialog('channel', event.currentTarget)}
-              >
-                <Plus size={15} />
-              </button>
-            </div>
-          </div>
-          <button
-            className="manage-categories-link"
-            aria-label="Manage categories"
-            title="Create or manage categories"
-            onClick={(event) => openDialog('categories', event.currentTarget)}
+      <nav className="workspace-sections" aria-label="Conversations and voice">
+        <section>
+          <NavigationSectionHeader
+            label="Channels"
+            controls="navigation-channels"
+            expanded={channelsOpen}
+            onToggle={() => setChannelsOpen(!channelsOpen)}
           >
-            <FolderPlus size={17} aria-hidden="true" />
-            <span>
-              <strong>Categories</strong>
-              <small>Create & manage</small>
-            </span>
-            <ChevronRight className="category-arrow" size={15} aria-hidden="true" />
-          </button>
-          <div className="channels">
+            <button
+              aria-label="Manage categories"
+              title="Manage categories"
+              onClick={(event) => openDialog('categories', event.currentTarget)}
+            >
+              <FolderPlus size={15} aria-hidden="true" />
+            </button>
+            <button
+              aria-label="Create channel"
+              title="Create channel"
+              onClick={(event) => openDialog('channel', event.currentTarget)}
+            >
+              <Plus size={15} />
+            </button>
+          </NavigationSectionHeader>
+          <div id="navigation-channels" hidden={!channelsOpen} className="channels">
             {[...categories, null].map((category) => (
               <section
                 key={category?.id ?? 'uncategorized'}
@@ -132,7 +132,9 @@ export function CommunitySidebar({
                 data-category-id={category?.id ?? 'uncategorized'}
                 aria-label={category?.name ?? 'Uncategorized'}
               >
-                <h2 className="category-heading">{category?.name ?? 'Uncategorized'}</h2>
+                {(category || categories.length > 0) && (
+                  <h2 className="category-heading">{category?.name ?? 'Uncategorized'}</h2>
+                )}
                 {conversations
                   .filter(
                     (conversation) =>
@@ -146,6 +148,7 @@ export function CommunitySidebar({
                         (selected === conversation.id ? 'selected ' : '') +
                         (conversation.unreadCount ? 'has-unread' : '')
                       }
+                      aria-current={selected === conversation.id ? 'page' : undefined}
                       data-conversation-id={conversation.id}
                       onClick={() => choose(conversation.id)}
                     >
@@ -175,28 +178,40 @@ export function CommunitySidebar({
               </section>
             ))}
           </div>
-          <SoundControls />
-        </>
-      ) : (
-        <>
-          <button
-            className="dm-search"
-            aria-label="Find or start a conversation"
-            onClick={(event) => openDialog('dm', event.currentTarget)}
+        </section>
+        <VoiceFeature
+          directoryTools={<SoundControls />}
+          onChannels={setVoiceChannels}
+          onSession={setVoiceSession}
+          requestedChannel={voiceNavigation}
+        />
+        <section>
+          <NavigationSectionHeader
+            label="Direct messages"
+            controls="navigation-direct"
+            expanded={messagesOpen}
+            onToggle={() => setMessagesOpen(!messagesOpen)}
           >
-            <Search size={16} />
-            <span>Find or start a conversation</span>
-          </button>
-          <div className="section-label">
-            DIRECT MESSAGES
+            <button
+              aria-label="Find or start a conversation"
+              title="Start a direct message"
+              onClick={(event) => openDialog('dm', event.currentTarget)}
+            >
+              <MessageCirclePlus size={15} />
+            </button>
             <button
               aria-label="Create group"
+              title="Create group"
               onClick={(event) => openDialog('group', event.currentTarget)}
             >
               <Plus size={15} />
             </button>
-          </div>
-          <div className="channels direct-message-list">
+          </NavigationSectionHeader>
+          <div
+            id="navigation-direct"
+            hidden={!messagesOpen}
+            className="channels direct-message-list"
+          >
             {conversations
               .filter((conversation) => conversation.kind !== 'channel')
               .map((conversation) => {
@@ -212,6 +227,7 @@ export function CommunitySidebar({
                       (conversation.unreadCount ? 'has-unread' : '')
                     }
                     data-conversation-id={conversation.id}
+                    aria-current={selected === conversation.id ? 'page' : undefined}
                     onClick={() => choose(conversation.id)}
                   >
                     {conversation.kind === 'group' ? (
@@ -245,7 +261,7 @@ export function CommunitySidebar({
                 );
               })}
             {!conversations.some((conversation) => conversation.kind !== 'channel') && (
-              <p className="direct-message-empty">Your direct conversations will appear here.</p>
+              <p className="direct-message-empty">No conversations yet.</p>
             )}
           </div>
           {invites.length > 0 && (
@@ -285,107 +301,15 @@ export function CommunitySidebar({
               ))}
             </div>
           )}
-        </>
-      )}
-
-      <VoiceFeature
-        showDirectory={view === 'channels'}
-        onChannels={setVoiceChannels}
-        onSession={setVoiceSession}
-        requestedChannel={voiceNavigation}
-      />
-
+        </section>
+      </nav>
       <div className="grow" />
-      <div className="sidebar-dock">
-        {voiceSession && (
-          <section
-            className="voice-dock"
-            aria-label="Voice connection"
-            data-voice-status={voiceSession.status}
-          >
-            <div className="voice-dock-header">
-              <span className="voice-dock-icon" aria-hidden="true">
-                <Radio size={20} />
-              </span>
-              <div className="voice-dock-label">
-                <strong>
-                  {voiceSession.status === 'connected'
-                    ? 'Voice Connected'
-                    : voiceSession.status === 'joining'
-                      ? 'Joining voice…'
-                      : 'Reconnecting…'}
-                </strong>
-                <small>{voiceSession.channelName} / Rajcord</small>
-              </div>
-              <button
-                className="voice-dock-leave"
-                aria-label="Leave voice"
-                title="Leave voice"
-                onClick={voiceSession.leave}
-              >
-                <PhoneOff size={17} />
-              </button>
-            </div>
-            <div className="voice-dock-actions" role="group" aria-label="More voice features">
-              <button disabled title="Camera controls are coming soon" aria-label="Camera off">
-                <VideoOff size={18} />
-              </button>
-              <ScreenLauncher />
-              <button disabled title="Activities are coming soon" aria-label="Activities">
-                <Sparkles size={18} />
-              </button>
-              <button disabled title="Soundboard is coming soon" aria-label="Soundboard">
-                <Volume2 size={18} />
-              </button>
-            </div>
-          </section>
-        )}
-        <div className="profile">
-          <span className="profile-avatar">
-            <Avatar>{state.user.displayName.slice(0, 1)}</Avatar>
-            <i className={connected ? 'online' : 'offline'} aria-hidden="true" />
-          </span>
-          <div className="profile-identity">
-            <strong>{state.user.displayName}</strong>
-            <small className={voiceSession ? 'in-voice' : ''}>
-              {voiceSession && <Volume2 size={12} aria-hidden="true" />}
-              {voiceSession ? 'In voice' : connected ? 'Online' : 'Offline'}
-            </small>
-          </div>
-          <div className="profile-audio-controls" role="group" aria-label="Voice controls">
-            <button
-              className="profile-control"
-              aria-label={voiceSession?.muted ? 'Unmute microphone' : 'Mute microphone'}
-              aria-pressed={voiceSession?.muted ?? false}
-              title={voiceSession ? 'Toggle microphone' : 'Join voice to use microphone'}
-              disabled={!voiceSession}
-              onClick={() => voiceSession?.toggleMute()}
-            >
-              {voiceSession?.muted ? <MicOff size={17} /> : <Mic size={17} />}
-              <ChevronDown size={13} aria-hidden="true" />
-            </button>
-            <button
-              className="profile-control"
-              aria-label={voiceSession?.deafened ? 'Enable audio' : 'Deafen'}
-              aria-pressed={voiceSession?.deafened ?? false}
-              title={voiceSession ? 'Toggle audio' : 'Join voice to control audio'}
-              disabled={!voiceSession}
-              onClick={() => voiceSession?.toggleDeafen()}
-            >
-              <Headphones size={17} />
-              <ChevronDown size={13} aria-hidden="true" />
-            </button>
-          </div>
-          <button
-            className="profile-settings"
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => openSettings()}
-          >
-            <Settings size={19} />
-          </button>
-        </div>
-      </div>
+      <VoiceDock
+        voiceSession={voiceSession}
+        connected={connected}
+        displayName={state.user.displayName}
+        onSettings={() => openSettings()}
+      />
     </aside>
   );
 }

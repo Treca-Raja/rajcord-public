@@ -50,6 +50,7 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         staticRoot: fileURLToPath(new URL('../../../dist', import.meta.url)),
       });
       const browsers: Browser[] = [];
+      const errors: unknown[] = [];
       const renewals = new Map<string, number>();
       const commandDiagnostics: { event: string; ms: number; code?: string }[] = [];
       server.io.on('connection', (socket) => {
@@ -230,7 +231,7 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           await b.wait(thumbnail + '?.videoWidth>0');
           await b.js('delete window.__thumbnailTest');
         }
-        await a.wait("document.querySelector('.screen-status').textContent.includes('1 viewers')");
+        await a.wait("document.querySelector('.screen-status').textContent.includes('1 viewer ·')");
         const parameters = await a.js(
           `window.__screenTest.peers.flatMap(peer=>peer.getSenders()).filter(sender=>sender.track?.kind==='video').map(sender=>sender.getParameters().encodings[0])`,
         );
@@ -368,11 +369,13 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           );
           expect(await b.js("document.querySelector('#screen-panel').dataset.layout")).toBe('grid');
           await browsers[2]!.js(
-            'document.querySelector(\'[aria-label="Stop screen sharing"]\').click()',
+            'document.querySelector(\'#screen-panel [aria-label="Stop screen sharing"]\').click()',
           );
           await b.wait("document.querySelectorAll('[data-screen-playback]').length===1");
         }
-        await a.js('document.querySelector(\'[aria-label="Stop screen sharing"]\').click()');
+        await a.js(
+          'document.querySelector(\'#screen-panel [aria-label="Stop screen sharing"]\').click()',
+        );
         expect(
           await a.js("window.__screenTest.tracks.every(track=>track.readyState==='ended')"),
         ).toBe(true);
@@ -396,15 +399,30 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           'Screen command failures/slow replies:',
           JSON.stringify(commandDiagnostics.filter((item) => item.code || item.ms > 1000)),
         );
-        throw cause;
+        errors.push(cause);
       } finally {
         releaseCleanup?.();
-        for (const browser of browsers) await browser.close();
-        await server.app.close();
-        for (const room of await server.voice!.media.listRooms())
-          if (room.name.startsWith(prefix)) await server.voice!.media.deleteRoom(room.name);
-        await database.cleanup();
+        const cleanup = async (release: () => Promise<unknown>) => {
+          try {
+            await release();
+          } catch (error) {
+            errors.push(error);
+          }
+        };
+        await Promise.all(browsers.map((browser) => cleanup(browser.close)));
+        await cleanup(() => server.app.close());
+        await cleanup(async () => {
+          const rooms = await server.voice!.media.listRooms();
+          await Promise.all(
+            rooms
+              .filter((room) => room.name.startsWith(prefix))
+              .map((room) => cleanup(() => server.voice!.media.deleteRoom(room.name))),
+          );
+        });
+        await cleanup(() => database.cleanup());
       }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, 'Screen call fixture failed');
     },
     sound === 'nine' ? 240000 : 120000,
   );

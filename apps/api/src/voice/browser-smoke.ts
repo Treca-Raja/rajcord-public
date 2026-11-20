@@ -82,11 +82,13 @@ try {
   await b.js(
     "(()=>{const slider=document.querySelector('.voice-participant-popup input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
   );
-  await b.js(
-    "document.querySelector('[aria-label=\"Close user volume\"]')?.click();document.querySelector('.profile-settings').click()",
-  );
-  await b.click('Voice & audio');
-  await b.wait('!!document.querySelector(\'[aria-label="Voice output volume"]\')');
+  const openOutputSettings = async () => {
+    await b.js("document.querySelector('.profile-settings').click()");
+    await b.click('Voice & audio');
+    await b.wait('!!document.querySelector(\'[aria-label="Voice output volume"]\')');
+  };
+  await b.js('document.querySelector(\'[aria-label="Close user volume"]\').click()');
+  await openOutputSettings();
   const capturesBeforeBoost = await b.js('window.__captureCount');
   const selectedSpeaker = await b.js(
     'document.querySelector(\'select[aria-label="Voice speakers"]\').value',
@@ -160,10 +162,12 @@ try {
     capturesBeforeBoost,
     'Output volume must not open a microphone',
   );
-  await b.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
+  await b.js('document.querySelector(\'[aria-label="Close settings"]\').click()');
+  await b.js('document.querySelector(\'.profile-audio-controls [aria-label="Deafen"]\').click()');
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].every(e=>e.paused&&e.muted)",
   );
+  await openOutputSettings();
   await master(1.5);
   assert.equal(
     await b.js(
@@ -171,7 +175,10 @@ try {
     ),
     true,
   );
-  await b.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
+  await b.js('document.querySelector(\'[aria-label="Close settings"]\').click()');
+  await b.js(
+    'document.querySelector(\'.profile-audio-controls [aria-label="Enable audio"]\').click()',
+  );
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].some(e=>!e.paused&&!e.muted)",
   );
@@ -180,9 +187,11 @@ try {
   await b.wait(
     "[...document.querySelectorAll('.voice-member')].some(button=>button.textContent.includes('Voice owner') && button.querySelector('[aria-label=Muted]'))",
   );
-  await a.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
+  await a.js('document.querySelector(\'.profile-audio-controls [aria-label="Deafen"]\').click()');
   await a.wait("[...document.querySelectorAll('audio[data-voice-audio]')].every(e=>e.paused)");
-  await a.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
+  await a.js(
+    'document.querySelector(\'.profile-audio-controls [aria-label="Enable audio"]\').click()',
+  );
   const opened = await a.js('window.__voiceOpens');
   const cuesBeforeReconnect = await a.js('window.soundEvents.length');
   const lease = server.voice!.leases.get(owner.id)!;
@@ -224,7 +233,8 @@ try {
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].some(e=>e.volume===0.25)",
   );
-
+  await b.js('document.querySelector(\'[aria-label="Close user volume"]\').click()');
+  await openOutputSettings();
   assert.equal(
     await b.js('document.querySelector(\'input[aria-label="Voice output volume"]\').value'),
     '1.5',
@@ -322,7 +332,7 @@ try {
   );
   assert.equal(
     await a.js(
-      "document.querySelector('button[title=\"Toggle audio\"]').getAttribute('aria-pressed')",
+      "document.querySelector('.profile-audio-controls [aria-label=\"Deafen\"]').getAttribute('aria-pressed')",
     ),
     'false',
   );

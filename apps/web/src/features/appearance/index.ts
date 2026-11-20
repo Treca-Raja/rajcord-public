@@ -1,1 +1,1 @@
-export { AppearanceBrand, AppearanceToggle, AppearancePreferences } from './Appearance';
+export { AppearanceBrand, AppearancePreferences } from './Appearance';

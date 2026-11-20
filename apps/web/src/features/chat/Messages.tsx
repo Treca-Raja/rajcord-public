@@ -16,12 +16,13 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type FormEvent,
 } from 'react';
-import { Hash, MessageCircle } from 'lucide-react';
+import { ArrowDownToLine, Hash, MessageCircle, Pin } from 'lucide-react';
 import type {
   Conversation,
   ChatMessage,
@@ -83,6 +84,7 @@ export function Messages({
       : null,
   );
   const [retainedPanel, setRetainedPanel] = useState(panel);
+  const pinsButton = useRef<HTMLButtonElement>(null);
   const renderedPanel = panel ?? retainedPanel;
   useEffect(() => {
     if (panel) {
@@ -121,6 +123,18 @@ export function Messages({
   useLayoutEffect(() => {
     settlePendingJump(loading, pendingJump, scroll, pinned, checkPosition);
   }, [items, loading, checkPosition]);
+  useLayoutEffect(() => {
+    const area = scroll.current;
+    if (!area || loading || olderBusy || historyMode) return;
+    const observer = new ResizeObserver(() => {
+      // Wrapping or a shorter viewport moves the end of the timeline without a message update.
+      if (pinned.current && !pendingJump.current && area.clientHeight > 0) {
+        area.scrollTop = area.scrollHeight;
+      }
+    });
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, [loading, olderBusy, historyMode]);
   const lastReadRequest = useRef(0);
   const latestSeq = items.reduce(
     (max, item) => (BigInt(item.seq) > BigInt(max) ? item.seq : max),
@@ -587,27 +601,85 @@ export function Messages({
     },
     [jump],
   );
-  const closePanel = useCallback(() => setPanel(null), []);
+  const closePanel = useCallback(() => {
+    setPanel(null);
+    if (panel?.kind === 'pins') pinsButton.current?.focus({ preventScroll: true });
+  }, [panel?.kind]);
+  const visibleItems = useMemo(() => items.filter((item) => !item.deleted), [items]);
+  const legacyHistory = useMemo(() => items.some((item) => item.featureVersion === 1), [items]);
+  const replyTargetId = reply?.id;
+  const messageRows = useMemo(
+    () =>
+      visibleItems.map((item, index, visible) => (
+        <Fragment key={item.id}>
+          {(!visible[index - 1] ||
+            new Date(visible[index - 1]!.createdAt).toDateString() !==
+              new Date(item.createdAt).toDateString()) && (
+            <div
+              className="date-separator"
+              role="separator"
+              aria-label={new Date(item.createdAt).toLocaleDateString()}
+            >
+              {new Date(item.createdAt).toLocaleDateString()}
+            </div>
+          )}
+          <MessageCard
+            item={item}
+            userId={state.user.id}
+            archived={conversation.archived}
+            canPin={conversation.kind !== 'group' || conversation.managerId === state.user.id}
+            grouped={sameMessageGroup(visible[index - 1], item)}
+            highlighted={jumpedId === item.id}
+            replyTarget={replyTargetId === item.id}
+            onReply={chooseReply}
+            onThread={openThread}
+            onJump={jumpToMessage}
+            onUpdate={update}
+            channels={channels}
+            onChannel={onChannel}
+          />
+        </Fragment>
+      )),
+    [
+      visibleItems,
+      state.user.id,
+      conversation.archived,
+      conversation.kind,
+      conversation.managerId,
+      jumpedId,
+      replyTargetId,
+      chooseReply,
+      openThread,
+      jumpToMessage,
+      update,
+      channels,
+      onChannel,
+    ],
+  );
   return (
     <div className="chat-workspace">
       <div className="chat-tools">
         <button
-          disabled={items.some((item) => item.featureVersion === 1)}
+          ref={pinsButton}
+          className="chat-tool-button"
+          disabled={legacyHistory}
           aria-expanded={panel?.kind === 'pins'}
+          aria-controls={panel?.kind === 'pins' ? 'chat-panel-' + conversation.id : undefined}
           onClick={() =>
             setPanel((previous) => (previous?.kind === 'pins' ? null : { kind: 'pins' }))
           }
         >
-          Pinned messages
+          <Pin size={14} aria-hidden="true" /> Pinned messages
         </button>
         <button
-          disabled={!conversation.unreadCount || items.some((item) => item.featureVersion === 1)}
+          className="chat-tool-button"
+          disabled={!conversation.unreadCount || legacyHistory}
           onClick={() => runInBackground(jump(null))}
         >
-          Jump to unread
+          <ArrowDownToLine size={14} aria-hidden="true" /> Jump to unread
         </button>
         {historyMode && <span role="status">History view · unread progress is unchanged</span>}
-        {items.some((item) => item.featureVersion === 1) && (
+        {legacyHistory && (
           <span role="status">
             Enhanced chat is unavailable on this server. Basic text remains available.
           </span>
@@ -618,6 +690,7 @@ export function Messages({
           <div className="chat-history-layout">
             <div
               className="message-scroll"
+              data-populated={visibleItems.length > 0 && !loading}
               aria-live="polite"
               ref={scroll}
               onScroll={checkPosition}
@@ -637,68 +710,29 @@ export function Messages({
                       {olderBusy ? 'Loading…' : 'Load older messages'}
                     </button>
                   )}
-                  <div
-                    className={
-                      'conversation-intro' +
-                      (items.some((item) => !item.deleted) ? ' conversation-intro-compact' : '')
-                    }
-                  >
-                    <div className="welcome-hash">
-                      {conversation.kind === 'channel' ? (
-                        <Hash size={30} />
-                      ) : (
-                        <MessageCircle size={30} />
-                      )}
-                    </div>
-                    <h1>
-                      <EmojiText text={conversation.name} />
-                    </h1>
-                    <p>
-                      {conversation.kind === 'group'
-                        ? 'Your history includes only messages from your membership periods.'
-                        : conversation.kind === 'dm'
-                          ? 'A private conversation, just for the two of you.'
-                          : 'A little space to keep the conversation going.'}
-                    </p>
-                  </div>
-                  {!items.some((m) => !m.deleted) && (
-                    <p className="chat-status">No messages yet. Say hello.</p>
-                  )}
-                  {items
-                    .filter((item) => !item.deleted)
-                    .map((item, index, visible) => (
-                      <Fragment key={item.id}>
-                        {(!visible[index - 1] ||
-                          new Date(visible[index - 1]!.createdAt).toDateString() !==
-                            new Date(item.createdAt).toDateString()) && (
-                          <div
-                            className="date-separator"
-                            role="separator"
-                            aria-label={new Date(item.createdAt).toLocaleDateString()}
-                          >
-                            {new Date(item.createdAt).toLocaleDateString()}
-                          </div>
+                  {!visibleItems.length && (
+                    <div className="conversation-intro">
+                      <div className="welcome-hash">
+                        {conversation.kind === 'channel' ? (
+                          <Hash size={30} />
+                        ) : (
+                          <MessageCircle size={30} />
                         )}
-                        <MessageCard
-                          item={item}
-                          userId={state.user.id}
-                          archived={conversation.archived}
-                          canPin={
-                            conversation.kind !== 'group' ||
-                            conversation.managerId === state.user.id
-                          }
-                          grouped={sameMessageGroup(visible[index - 1], item)}
-                          highlighted={jumpedId === item.id}
-                          replyTarget={reply?.id === item.id}
-                          onReply={chooseReply}
-                          onThread={openThread}
-                          onJump={jumpToMessage}
-                          onUpdate={update}
-                          channels={channels}
-                          onChannel={onChannel}
-                        />
-                      </Fragment>
-                    ))}
+                      </div>
+                      <h1>
+                        <EmojiText text={conversation.name} />
+                      </h1>
+                      <p>
+                        {conversation.kind === 'group'
+                          ? 'Your history includes only messages from your membership periods.'
+                          : conversation.kind === 'dm'
+                            ? 'Direct message'
+                            : conversation.topic}
+                      </p>
+                    </div>
+                  )}
+                  {!visibleItems.length && <p className="chat-status">No messages yet.</p>}
+                  {messageRows}
                   <div ref={bottom} />
                 </>
               )}

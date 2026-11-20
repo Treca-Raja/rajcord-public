@@ -8,6 +8,9 @@ import { GifPreviews } from './GifPreviews';
 import { MessageMenu, type MessageMenuAction } from './MessageMenu';
 import { EmojiGlyph, EmojiText } from '../../shared/emoji/EmojiText';
 
+const shortTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const fullTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' });
+
 export function ReplyReference({
   reference,
   onJump,
@@ -128,6 +131,26 @@ export const MessageCard = memo(function MessageCard({
         },
       },
     );
+  const created = new Date(item.createdAt);
+  const metadata = (
+    <span className="chat-message-information">
+      <time dateTime={item.createdAt} title={fullTime.format(created)}>
+        {shortTime.format(created)}
+      </time>
+      {item.pinned && (
+        <span className="chat-message-flag" title="Pinned">
+          <Pin size={11} aria-hidden="true" />
+          <span className="sr-only">Pinned</span>
+        </span>
+      )}
+      {item.editedAt && (
+        <span className="chat-message-flag" title="Edited">
+          <Pencil size={11} aria-hidden="true" />
+          <span className="sr-only">edited</span>
+        </span>
+      )}
+    </span>
+  );
   return (
     <div className="chat-message-entry" data-message-entry-id={item.id}>
       <article
@@ -158,18 +181,25 @@ export const MessageCard = memo(function MessageCard({
           setMenu({ x: bounds.right - 220, y: bounds.top + 28 });
         }}
       >
-        <span className="chat-message-avatar" aria-hidden="true">
-          <Avatar>{[...item.author.displayName][0] ?? '?'}</Avatar>
-        </span>
-        <div className="chat-message-author">
-          <div className="chat-author-name">
-            <strong title={item.author.displayName}>
-              <EmojiText text={item.author.displayName} />
-            </strong>
-            {item.author.id === userId && <small>You</small>}
+        {!grouped && (
+          <span className="chat-message-avatar" aria-hidden="true">
+            <Avatar>{[...item.author.displayName][0] ?? '?'}</Avatar>
+          </span>
+        )}
+        {!grouped && (
+          <div className="chat-message-author">
+            <div className="chat-author-name">
+              <strong title={item.author.displayName}>
+                <EmojiText text={item.author.displayName} />
+              </strong>
+              {item.author.id === userId && <small>You</small>}
+            </div>
+            <span className="chat-author-handle" title={'@' + item.author.username}>
+              @{item.author.username}
+            </span>
+            {metadata}
           </div>
-          <span title={'@' + item.author.username}>@{item.author.username}</span>
-        </div>
+        )}
         <div className="chat-message-content">
           {item.replyTo && <ReplyReference reference={item.replyTo} onJump={onJump} />}
           {editing ? (
@@ -204,16 +234,19 @@ export const MessageCard = memo(function MessageCard({
             </form>
           ) : (
             <>
-              <MessageBody
-                body={item.body ?? ''}
-                channels={channels}
-                onChannel={onChannel}
-                mentions={
-                  item.author.id === userId
-                    ? [...item.mentions, { username: item.author.username }]
-                    : item.mentions
-                }
-              />
+              <div className="message-text-line">
+                <MessageBody
+                  body={item.body ?? ''}
+                  channels={channels}
+                  onChannel={onChannel}
+                  mentions={
+                    item.author.id === userId
+                      ? [...item.mentions, { username: item.author.username }]
+                      : item.mentions
+                  }
+                />
+                {grouped && metadata}
+              </div>
               <GifPreviews body={item.body ?? ''} />
             </>
           )}
@@ -259,26 +292,6 @@ export const MessageCard = memo(function MessageCard({
             <p className="form-error" role="alert">
               {error}
             </p>
-          )}
-        </div>
-        <div className="chat-message-information">
-          <time dateTime={item.createdAt} title={new Date(item.createdAt).toLocaleString()}>
-            {new Date(item.createdAt).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </time>
-          {item.pinned && (
-            <span className="chat-message-flag" title="Pinned">
-              <Pin size={11} aria-hidden="true" />
-              <span className="sr-only">Pinned</span>
-            </span>
-          )}
-          {item.editedAt && (
-            <span className="chat-message-flag" title="Edited">
-              <Pencil size={11} aria-hidden="true" />
-              <span className="sr-only">edited</span>
-            </span>
           )}
         </div>
       </article>

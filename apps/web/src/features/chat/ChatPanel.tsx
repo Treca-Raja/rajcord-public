@@ -7,11 +7,15 @@ import type {
   ThreadPage,
   ChannelReference,
 } from '@tricord/shared';
-import { Pin, MessageSquare, RefreshCw, X, ArrowUpRight } from 'lucide-react';
+import { CircleAlert, Pin, MessageSquare, RefreshCw, X, ArrowUpRight } from 'lucide-react';
 import { useAuth } from '../account';
 import { MessageCard } from './MessageCard';
 
 export type OpenChatPanel = { kind: 'pins' } | { kind: 'thread'; anchorId: string };
+type PanelView =
+  | { phase: 'loading' }
+  | { phase: 'error'; message: string }
+  | { phase: 'loaded'; page: PinnedPage | ThreadPage; older: boolean };
 export const ChatPanel = memo(function ChatPanel({
   panel,
   open,
@@ -38,49 +42,37 @@ export const ChatPanel = memo(function ChatPanel({
   replyTargetId?: string | null;
 }) {
   const { request, state, socket } = useAuth();
-  const [items, setItems] = useState<ChatMessage[]>([]);
-  const [root, setRoot] = useState<ChatMessage | null>(null);
-  const [before, setBefore] = useState<string | null>(null);
-  const [total, setTotal] = useState(0);
+  const [view, setView] = useState<PanelView>({ phase: 'loading' });
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const heading = useRef<HTMLHeadingElement>(null);
   const version = useRef(0);
   const pageCursor = useRef<string | null>(null);
   const requestRef = useRef(request);
   requestRef.current = request;
   const anchor = panel.kind === 'thread' ? panel.anchorId : null;
   const path = '/conversations/' + conversation.id + (anchor ? '/threads/' + anchor : '/pins');
+  useEffect(() => {
+    if (open && panel.kind === 'pins') heading.current?.focus({ preventScroll: true });
+  }, [open, panel.kind]);
   const load = useCallback(
     async (cursor: string | null = null, refresh = false) => {
       const current = ++version.current;
       pageCursor.current = cursor;
       setBusy(true);
-      setError('');
-      if (!refresh) {
-        setLoading(true);
-        setItems([]);
-        setRoot(null);
-      }
+      if (!refresh) setView({ phase: 'loading' });
       try {
         const page = await requestRef.current<PinnedPage | ThreadPage>(
           path + (cursor ? '?before=' + cursor : ''),
         );
         if (current !== version.current) return;
-        setItems(page.messages);
-        setBefore(page.nextBefore);
-        if ('root' in page) setRoot(page.root);
-        if ('total' in page) setTotal(page.total);
+        setView({ phase: 'loaded', page, older: cursor !== null });
       } catch (error) {
         if (current === version.current) {
-          setItems([]);
-          setRoot(null);
-          setError((error as Error).message);
+          setView({ phase: 'error', message: (error as Error).message });
         }
       } finally {
         if (current === version.current) {
           setBusy(false);
-          setLoading(false);
         }
       }
     },
@@ -130,28 +122,49 @@ export const ChatPanel = memo(function ChatPanel({
     channels,
     onChannel,
   };
+  const page = view.phase === 'loaded' ? view.page : null;
+  const total = page && 'total' in page ? page.total : 0;
+  const root = page && 'root' in page ? page.root : null;
+  function loadFromPanel(cursor: string | null = null) {
+    heading.current?.focus({ preventScroll: true });
+    runInBackground(load(cursor));
+  }
   return (
     <aside
+      id={'chat-panel-' + conversation.id}
       className="chat-feature-panel"
+      data-kind={panel.kind}
       aria-label={anchor ? 'Thread' : 'Pinned messages'}
-      aria-busy={busy || loading}
+      aria-busy={busy || view.phase === 'loading'}
       data-open={open}
       aria-hidden={!open}
       inert={!open}
+      onKeyDown={(event) => {
+        if (
+          panel.kind === 'pins' &&
+          event.key === 'Escape' &&
+          !event.defaultPrevented &&
+          !event.nativeEvent.isComposing
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
     >
       <header>
         <span className="panel-title-icon">
           {anchor ? <MessageSquare size={18} /> : <Pin size={18} />}
         </span>
-        <h2>
-          {anchor ? 'Thread' : loading ? 'Pinned messages' : 'Pinned messages (' + total + ')'}
+        <h2 ref={heading} tabIndex={-1}>
+          {anchor ? 'Thread' : total ? 'Pinned messages (' + total + ')' : 'Pinned messages'}
         </h2>
         <button
           className="panel-icon-button"
           disabled={busy}
           title={anchor ? 'Refresh replies' : 'Refresh pins'}
           aria-label={anchor ? 'Refresh replies' : 'Refresh pins'}
-          onClick={() => runInBackground(load())}
+          onClick={() => loadFromPanel()}
         >
           <RefreshCw size={16} aria-hidden="true" />
         </button>
@@ -159,26 +172,22 @@ export const ChatPanel = memo(function ChatPanel({
           <X size={18} aria-hidden="true" />
         </button>
       </header>
-      <p>
-        {anchor
-          ? 'Replies, together in one place. Reading here leaves the main timeline unread.'
-          : 'The moments worth keeping close.'}
-      </p>
-      {error && (
-        <div role="alert">
-          {error} <button onClick={() => runInBackground(load(pageCursor.current))}>Retry</button>
-        </div>
-      )}
-      {loading ? (
+      {view.phase === 'loading' ? (
         <div
           className="panel-loading"
           role="status"
           aria-label={anchor ? 'Loading thread' : 'Loading pinned messages'}
         >
-          <span>Loading…</span>
-          <div className="panel-skeleton" aria-hidden="true" />
-          <div className="panel-skeleton" aria-hidden="true" />
-          <div className="panel-skeleton" aria-hidden="true" />
+          {anchor ? 'Loading replies…' : 'Loading pinned messages…'}
+        </div>
+      ) : view.phase === 'error' ? (
+        <div className="panel-error">
+          <div role="alert">
+            <CircleAlert size={18} aria-hidden="true" /> {view.message}
+          </div>
+          <button className="panel-retry" onClick={() => loadFromPanel(pageCursor.current)}>
+            Retry
+          </button>
         </div>
       ) : (
         <div className="chat-panel-history">
@@ -188,23 +197,23 @@ export const ChatPanel = memo(function ChatPanel({
             ) : (
               <p>Original unavailable</p>
             ))}
-          {before && (
-            <button disabled={busy} onClick={() => runInBackground(load(before))}>
+          {view.page.nextBefore && (
+            <button disabled={busy} onClick={() => loadFromPanel(view.page.nextBefore)}>
               Load older {anchor ? 'replies' : 'pins'}
             </button>
           )}
-          {!items.length && (
+          {!view.page.messages.length && !view.older && (
             <div className="panel-empty">
-              {anchor ? <MessageSquare size={30} /> : <Pin size={30} />}
-              <strong>{anchor ? 'A little room for a reply' : 'Nothing pinned yet'}</strong>
-              <p>
-                {anchor
-                  ? 'Reply to a message to keep the conversation going.'
-                  : 'Save a message from its menu and find it here.'}
-              </p>
+              <strong>{anchor ? 'No replies yet' : 'No pinned messages'}</strong>
+              {!anchor && common.canPin && !conversation.archived && (
+                <p>Choose “Pin message” from a message’s menu to save it here.</p>
+              )}
             </div>
           )}
-          {items.map((item) => (
+          {!view.page.messages.length && view.older && (
+            <p className="panel-empty">{anchor ? 'No older replies.' : 'No older pins.'}</p>
+          )}
+          {view.page.messages.map((item) => (
             <div key={item.id}>
               <MessageCard item={item} {...common} replyTarget={item.id === replyTargetId} />
               {!anchor && (
