@@ -47,6 +47,7 @@ pnpm desktop:audit
 Copy-Item -LiteralPath artifacts/desktop/rajcord-windows-update.json,artifacts/desktop/Rajcord-Setup-0.1.2-x64.exe -Destination $location
 
 function Invoke-FixtureApp([string]$Role) {
+  Write-Host "Running the installed app in $Role mode."
   $env:RAJCORD_FIXTURE_ROLE = $Role
   $child = Start-Process -FilePath (Join-Path $install 'Rajcord.exe') -WindowStyle Hidden -PassThru
   if (-not $child.WaitForExit(60000)) { $child.Kill(); throw "Rajcord fixture timed out in $Role mode." }
@@ -55,6 +56,20 @@ function Invoke-FixtureApp([string]$Role) {
     if (Test-Path -LiteralPath $errorFile) { throw (Get-Content -LiteralPath $errorFile -Raw) }
     throw "Rajcord fixture failed in $Role mode."
   }
+}
+
+function Invoke-FixtureInstaller([string]$Path, [string]$Version) {
+  Write-Host "Installing fixture version $Version."
+  $env:RAJCORD_FIXTURE_ROLE = 'idle'
+  $setup = Start-Process -FilePath $Path -ArgumentList @('/S', "/D=$install") -WindowStyle Hidden -PassThru
+  if (-not $setup.WaitForExit(90000)) { $setup.Kill(); throw "NSIS $Version did not exit." }
+  if ($setup.ExitCode -ne 0) { throw "NSIS $Version failed with exit code $($setup.ExitCode)." }
+  $exe = Join-Path $install 'Rajcord.exe'
+  for ($attempt = 0; $attempt -lt 60; $attempt++) {
+    if ((Test-Path -LiteralPath $exe) -and (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion -eq "$Version.0") { return }
+    Start-Sleep -Milliseconds 250
+  }
+  throw "The installed application did not reach $Version."
 }
 
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
@@ -69,23 +84,22 @@ try {
     Start-Sleep -Milliseconds 250
   }
   if (-not $ready) { throw 'The disposable update feed did not start.' }
-  $env:RAJCORD_FIXTURE_ROLE = 'idle'
-  $setup = Start-Process -FilePath $old -ArgumentList @('/S', "/D=$install") -WindowStyle Hidden -Wait -PassThru
-  if ($setup.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $install 'Rajcord.exe'))) { throw 'Initial fixture installation failed.' }
+  Invoke-FixtureInstaller $old '0.1.1'
   Invoke-FixtureApp 'decline'
   $requests = @(Get-Content -LiteralPath (Join-Path $location 'requests.txt'))
   if ($requests.Count -ne 1 -or $requests[0] -ne 'rajcord-windows-update.json') { throw 'Declining the offer triggered an installer download.' }
   Invoke-FixtureApp 'install'
   $handoff = Get-Content -LiteralPath (Join-Path $location 'installer.json') -Raw | ConvertFrom-Json
-  $expectedHash = (Get-FileHash -LiteralPath (Join-Path $location 'Rajcord-Setup-0.1.2-x64.exe') -Algorithm SHA512).Hash
+  $fixtureInstaller = Join-Path $location 'Rajcord-Setup-0.1.2-x64.exe'
+  $expectedHash = (Get-FileHash -LiteralPath $fixtureInstaller -Algorithm SHA512).Hash
   if (-not $handoff.internetZone -or (Get-FileHash -LiteralPath $handoff.file -Algorithm SHA512).Hash -ne $expectedHash) { throw 'Update handoff returned the wrong installer.' }
-  $env:RAJCORD_FIXTURE_ROLE = 'idle'
-  $upgrade = Start-Process -FilePath $handoff.file -ArgumentList @('/S', "/D=$install") -WindowStyle Hidden -Wait -PassThru
-  if ($upgrade.ExitCode -ne 0) { throw 'The verified NSIS upgrade failed.' }
+  # Use the identical local build for the unattended installation. Leave the
+  # downloaded copy and its Windows security marker as they were at handoff.
+  Invoke-FixtureInstaller $fixtureInstaller '0.1.2'
   Invoke-FixtureApp 'probe'
   $result = Get-Content -LiteralPath (Join-Path $location 'upgraded.json') -Raw | ConvertFrom-Json
   if ($result.version -ne '0.1.2' -or -not $result.profilePreserved) { throw 'The updated app reported the wrong version or profile.' }
-  Write-Output 'PASS Installed v0.1.1, declined once, downloaded and verified v0.1.2, checked the Windows Internet zone marker, ran the downloaded NSIS upgrade, and preserved the installed profile.'
+  Write-Output 'PASS Installed v0.1.1, declined once, downloaded and verified v0.1.2 and its Internet zone marker, ran the byte-identical NSIS upgrade, and preserved the installed profile.'
 } finally {
   if (-not $server.HasExited) { Stop-Process -Id $server.Id }
 }
