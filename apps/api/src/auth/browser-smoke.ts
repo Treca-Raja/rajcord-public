@@ -378,9 +378,13 @@ try {
     await wait('!document.querySelector(\'[aria-label="Account settings"]\')');
   }
 
+  await wait('!document.querySelector(\'[aria-label="Account settings"]\')');
+  // Let Chromium deliver the breakpoint change and React commit the desktop Activity trigger.
+  await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   // An HTTP login alone is offline. Two independent application connections still
   // produce one account row, and closing either cannot erase the other connection.
   await js("document.querySelector('button[aria-controls=workspace-activity]').click()");
+  await wait("document.querySelector('#workspace-activity')?.dataset.presenceState==='ready'");
   const ownerRow = `[data-member-id="${owner.id}"]`;
   await wait(`document.querySelector('${ownerRow}')?.dataset.presence==='offline'`);
   async function connectPresencePeer() {
