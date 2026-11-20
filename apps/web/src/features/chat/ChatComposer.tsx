@@ -5,15 +5,17 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type ClipboardEvent,
 } from 'react';
 import type { ChatMessage, Conversation, ChannelReference } from '@tricord/shared';
-import { SendHorizontal, X, Hash, Volume2, AtSign } from 'lucide-react';
+import { SendHorizontal, X, Hash, Volume2, AtSign, ImagePlus } from 'lucide-react';
 import { preload } from 'react-dom';
 import composerEmojiFont from '../../assets/composer-emoji.woff2';
 import { EmojiPicker } from './EmojiPicker';
 import { composerSuggestions, referenceLabel, type ComposerSuggestion } from './channel-references';
 import { GifSearch } from './GifSearch';
 import { useAnimatedPresence } from '../../shared/useAnimatedPresence';
+import { clipboardFiles, type ChatImageDraft } from './chat-images';
 
 function resizeComposerInput(input: HTMLTextAreaElement | null) {
   if (!input) return;
@@ -38,6 +40,9 @@ export function ChatComposer({
   channels = [],
   onReference,
   onSendGif,
+  attachment,
+  onAttachImage,
+  onRemoveImage,
 }: {
   body: string;
   onChange: (body: string) => void;
@@ -55,10 +60,14 @@ export function ChatComposer({
   channels?: ChannelReference[];
   onReference?: (channel: ChannelReference) => boolean;
   onSendGif?: (url: string) => Promise<void>;
+  attachment?: ChatImageDraft;
+  onAttachImage?: (file: File) => void;
+  onRemoveImage?: () => void;
 }) {
   preload(composerEmojiFont, { as: 'font', type: 'font/woff2', crossOrigin: 'anonymous' });
   const replyBlocked = replyLoading || replyFailed;
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
   const controls = useRef<HTMLDivElement>(null);
   const [caret, setCaret] = useState(body.length);
   const [active, setActive] = useState(0);
@@ -85,17 +94,23 @@ export function ChatComposer({
     const input = textarea.current;
     if (!input) return;
     let width = input.getBoundingClientRect().width;
+    let frame: number | undefined;
     const resize = () => resizeComposerInput(input);
     const observer = new ResizeObserver(() => {
       const next = input.getBoundingClientRect().width;
       if (next === width) return;
       width = next;
-      resize();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        resize();
+      });
     });
     observer.observe(input);
     document.fonts.addEventListener('loadingdone', resize);
     return () => {
       observer.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
       document.fonts.removeEventListener('loadingdone', resize);
     };
   }, []);
@@ -124,7 +139,36 @@ export function ChatComposer({
     });
     return true;
   }
-  const gifCommand = /^\/gif\s*$/i.test(body);
+  function attach(file: File) {
+    if (disabled || replyBlocked || sending) {
+      setError(
+        'Wait for the current send or choose an active conversation before adding an image.',
+      );
+      return;
+    }
+    try {
+      if (attachment) throw new Error('Remove the current image before adding another.');
+      onAttachImage?.(file);
+      setError('');
+    } catch (cause) {
+      setError((cause as Error).message);
+    }
+    textarea.current?.focus({ preventScroll: true });
+  }
+  function paste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (!onAttachImage) return;
+    const files = clipboardFiles(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    const text = event.clipboardData.getData('text/plain');
+    if (text && !insert(text)) return;
+    if (files.length !== 1) {
+      setError('Attach one image at a time.');
+      return;
+    }
+    attach(files[0]!);
+  }
+  const gifCommand = !attachment && /^\/gif\s*$/i.test(body);
   function openGif() {
     if (disabled || replyBlocked || sending) return;
     if (gifCommand) onChange('');
@@ -201,7 +245,9 @@ export function ChatComposer({
           <span>
             Replying to {reply.author.displayName} (@{reply.author.username})
           </span>
-          <span className="truncate">{reply.body}</span>
+          <span className="truncate">
+            {reply.body?.trim() ? reply.body : reply.attachment ? 'Image' : ''}
+          </span>
           <button
             type="button"
             title="Cancel reply"
@@ -222,11 +268,30 @@ export function ChatComposer({
           Delivery is not yet confirmed. Retrying uses the same message identifier.
         </p>
       )}
+      {attachment && (
+        <div className="composer-attachment-preview" role="group" aria-label="Image ready to send">
+          <img src={attachment.previewUrl} alt="Image ready to send" />
+          <span>Image attached · Send when ready</span>
+          <button
+            type="button"
+            aria-label="Remove image"
+            title="Remove image"
+            disabled={sending}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => {
+              onRemoveImage?.();
+              textarea.current?.focus({ preventScroll: true });
+            }}
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+      )}
       <form
         className="composer live-composer"
         onSubmit={(event) => {
           event.preventDefault();
-          if (sending || disabled || replyBlocked || !body.trim()) return;
+          if (sending || disabled || replyBlocked || (!body.trim() && !attachment)) return;
           if (gifCommand) {
             openGif();
             return;
@@ -267,10 +332,37 @@ export function ChatComposer({
           onBlur={() => setFocused(false)}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
           onKeyDown={keydown}
+          onPaste={paste}
           maxLength={4000}
           disabled={disabled}
           rows={1}
         />
+        {onAttachImage && (
+          <>
+            <input
+              ref={imageInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              aria-label="Choose image"
+              hidden
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (file) attach(file);
+              }}
+            />
+            <button
+              type="button"
+              className="composer-attach"
+              aria-label="Attach image"
+              title="Attach an image · or paste a screenshot"
+              disabled={disabled || replyBlocked || sending || !!attachment}
+              onClick={() => imageInput.current?.click()}
+            >
+              <ImagePlus size={19} aria-hidden="true" />
+            </button>
+          </>
+        )}
         <EmojiPicker
           compact
           disabled={disabled || replyBlocked}
@@ -292,7 +384,7 @@ export function ChatComposer({
           className="composer-send"
           aria-label="Send message"
           title={sending ? 'Saving…' : retrying ? 'Retry send' : 'Send message'}
-          disabled={disabled || sending || replyBlocked || !body.trim()}
+          disabled={disabled || sending || replyBlocked || (!body.trim() && !attachment)}
         >
           <SendHorizontal size={19} aria-hidden="true" />
         </button>

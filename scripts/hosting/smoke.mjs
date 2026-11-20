@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -121,7 +121,7 @@ volumes: !reset {}
   const port = compose(['port', 'proxy', '443']).toString().trim().split(':').at(-1);
   assert.match(port, /^[0-9]+$/);
   const headersFile = path.join(directory, 'headers');
-  const request = (route, extra = []) =>
+  const requestBytes = (route, extra = []) =>
     run('curl', [
       '--fail',
       '--silent',
@@ -138,7 +138,8 @@ volumes: !reset {}
       headersFile,
       ...extra,
       `https://${publicHost}:${port}${route}`,
-    ]).toString();
+    ]);
+  const request = (route, extra = []) => requestBytes(route, extra).toString();
   phase = 'trusted HTTPS readiness';
   assert.equal(JSON.parse(request('/ready')).database, 'connected');
   assert.match(request('/'), /<title>Rajcord/);
@@ -162,11 +163,75 @@ volumes: !reset {}
     displayName: 'Disposable fixture',
     password,
   });
-  post('/api/auth/login', { username: 'hosting_fixture', password, remember: false });
+  const login = JSON.parse(
+    post('/api/auth/login', { username: 'hosting_fixture', password, remember: false }),
+  );
   const headers = readFileSync(headersFile, 'utf8');
   assert.match(headers, /set-cookie:.*; Secure/i);
   assert.match(headers, /set-cookie:.*; HttpOnly/i);
   assert.match(headers, /set-cookie:.*SameSite=Strict/i);
+  phase = 'chat screenshot through the hosted proxy';
+  const png = compose(['exec', '-T', 'app', 'node', '--input-type=module'], {
+    input: `
+      import {randomBytes} from 'node:crypto';
+      import sharp from 'sharp';
+      import {createDatabase} from './dist/db/client.js';
+      const db=createDatabase(process.env.DATABASE_URL);
+      try {
+        const approved=await db.pool.query("UPDATE users SET status='approved' WHERE username=$1",['hosting_fixture']);
+        if(approved.rowCount!==1) throw new Error('Hosting fixture account missing');
+      } finally { await db.pool.end(); }
+      process.stdout.write(await sharp(randomBytes(256*256*3),{
+        raw:{width:256,height:256,channels:3},
+      }).png().toBuffer());
+    `,
+  });
+  const cookie = headers.match(/^set-cookie:\s*([^;\r\n]+)/im)?.[1];
+  assert.ok(cookie, 'Missing fixture login cookie');
+  const authorization = ['--header', 'Cookie: ' + cookie];
+  const mutation = [
+    ...authorization,
+    '--header',
+    'X-CSRF-Token: ' + login.csrfToken,
+    '--header',
+    `Origin: https://${publicHost}`,
+    '--header',
+    'Content-Type: application/json',
+  ];
+  const { conversation } = JSON.parse(
+    request('/api/conversations', [
+      ...mutation,
+      '--data-binary',
+      JSON.stringify({ kind: 'channel', name: 'Hosted screenshot fixture' }),
+    ]),
+  );
+  const upload = path.join(directory, 'screenshot-request.json');
+  const payload = JSON.stringify({
+    clientId: randomUUID(),
+    body: '',
+    attachment: { mimeType: 'image/png', base64: png.toString('base64') },
+  });
+  assert.ok(Buffer.byteLength(payload) > 16384);
+  writeFileSync(upload, payload);
+  const messages = '/api/conversations/' + conversation.id + '/messages';
+  const { message } = JSON.parse(
+    request(messages + '/with-attachment', [...mutation, '--data-binary', '@' + upload]),
+  );
+  assert.deepEqual(message.attachment, { mimeType: 'image/png', size: png.length });
+  const mediaPath = '/media/chat-attachments/' + conversation.id + '/' + message.id;
+  assert.deepEqual(requestBytes(mediaPath, authorization), png);
+  const statusOnly = [
+    '--no-fail',
+    '--output',
+    path.join(directory, 'response'),
+    '--write-out',
+    '%{http_code}',
+  ];
+  assert.equal(request(mediaPath, statusOnly), '401');
+  assert.equal(
+    request(messages, [...statusOnly, ...mutation, '--data-binary', '@' + upload]),
+    '413',
+  );
   phase = 'TURN TLS and private voice control';
   compose(['exec', '-T', 'app', 'node', '--input-type=module'], {
     input: `

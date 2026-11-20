@@ -101,6 +101,9 @@ export const chatContracts = [
     }),
   }),
   contract('POST', '/conversations/:id/messages', s.messageResult, { body: s.request.messageSend }),
+  contract('POST', '/conversations/:id/messages/with-attachment', s.messageResult, {
+    body: s.request.messageWithAttachment,
+  }),
   contract('GET', '/conversations/:id/messages/:messageId', s.messageResult),
   contract('PATCH', '/conversations/:id/messages/:messageId', s.messageResult, {
     body: s.request.messageEdit,

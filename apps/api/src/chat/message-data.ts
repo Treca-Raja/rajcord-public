@@ -1,5 +1,10 @@
 import type { PoolClient } from 'pg';
-import type { ChatMessage, Conversation, MessageReference } from '@tricord/shared';
+import type {
+  ChatMessage,
+  Conversation,
+  MessageReference,
+  ChatImageMimeType,
+} from '@tricord/shared';
 
 export const messageVisibility =
   'EXISTS(SELECT 1 FROM memberships h WHERE h.conversation_id=m.conversation_id AND h.user_id=$2 AND m.seq>=h.start_seq AND (h.end_seq IS NULL OR m.seq<=h.end_seq))';
@@ -58,8 +63,16 @@ export async function hydrateMessages(
        AND m.deleted_at IS NULL AND m.thread_root_id=ANY($4::uuid[]) GROUP BY m.thread_root_id`,
     [conversation.id, userId, conversation.kind, roots],
   );
-  const pins = await db.query(
-    'SELECT message_id FROM message_pins WHERE message_id=ANY($1::uuid[])',
+  const decorations = await db.query<{
+    message_id: string;
+    pinned: boolean;
+    mime_type: ChatImageMimeType | null;
+    size: number | null;
+  }>(
+    `SELECT m.id message_id,p.message_id IS NOT NULL pinned,a.mime_type,a.size
+     FROM messages m LEFT JOIN message_pins p ON p.message_id=m.id
+     LEFT JOIN message_attachments a ON a.message_id=m.id AND m.deleted_at IS NULL
+     WHERE m.id=ANY($1::uuid[])`,
     [ids],
   );
   const reactions = await db.query(
@@ -69,6 +82,13 @@ export async function hydrateMessages(
   const mentions = await db.query(
     "SELECT mm.message_id,u.id,u.username FROM message_mentions mm JOIN users u ON u.id=mm.user_id WHERE mm.message_id=ANY($1::uuid[]) AND u.status='approved' ORDER BY u.username",
     [ids],
+  );
+  const attachmentMap = new Map(
+    decorations.rows.flatMap((row) =>
+      row.mime_type && row.size !== null
+        ? [[row.message_id, { mimeType: row.mime_type, size: row.size }] as const]
+        : [],
+    ),
   );
   const referenceMap = new Map(
     quoted.rows.map((row) => {
@@ -88,13 +108,16 @@ export async function hydrateMessages(
   const countMap = new Map(
     counts.rows.map((row) => [String(row.thread_root_id), Number(row.count)]),
   );
-  const pinned = new Set(pins.rows.map((row) => String(row.message_id)));
+  const pinned = new Set(decorations.rows.filter((row) => row.pinned).map((row) => row.message_id));
   return rows.map((row) => {
     const item = messageBase(row);
     const reference = (id: unknown): MessageReference | null =>
       typeof id === 'string' ? (referenceMap.get(id) ?? { available: false }) : null;
     return {
       ...item,
+      ...(!item.deleted && attachmentMap.has(item.id)
+        ? { attachment: attachmentMap.get(item.id)! }
+        : {}),
       contextChange:
         BigInt(String(conversation.last_change ?? 0)) > BigInt(item.change)
           ? String(conversation.last_change)

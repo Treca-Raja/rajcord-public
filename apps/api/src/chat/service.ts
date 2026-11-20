@@ -15,6 +15,7 @@ import { HttpError, input, text, uuid } from '../auth/validation.js';
 import { withTransaction } from '../auth/transaction.js';
 import { chatName, channelTopic, metadataPosition, checkMetadataRevision } from './metadata.js';
 import { hydrateMessages, messageVisibility } from './message-data.js';
+import { validateChatImage, type ValidatedChatImage } from './image-attachment.js';
 const missing = () => new HttpError(404, 'Conversation or message not found.');
 const visible = messageVisibility;
 type CategoryRow = QueryResultRow & {
@@ -36,8 +37,8 @@ type UnreadRow = QueryResultRow & {
 };
 type ConversationIdRow = QueryResultRow & { id: string };
 type ReadCursorRow = QueryResultRow & { last_seq: string | number };
-function content(value: unknown) {
-  if (typeof value !== 'string' || !value.trim() || value.length > 4000)
+function content(value: unknown, image = false) {
+  if (typeof value !== 'string' || (!image && !value.trim()) || value.length > 4000)
     throw new HttpError(400, 'Messages must contain 1–4000 characters.');
   return value;
 }
@@ -663,13 +664,49 @@ export class ChatService {
     id: string,
     value: unknown,
   ): Promise<{ message: ChatMessage; created: boolean }> {
+    return this.persistSend(token, id, value);
+  }
+  async sendWithAttachmentResult(token: string, id: string, value: unknown) {
+    const body = input(value, ['body', 'clientId', 'replyToId', 'attachment']);
+    content(body.body, true);
+    uuid(body.clientId);
+    if (body.replyToId !== undefined && body.replyToId !== null) uuid(body.replyToId);
+    const conversation = await this.get(token, uuid(id));
+    if (conversation.archived) throw new HttpError(409, 'This channel is archived.');
+    const attachment = await validateChatImage(body.attachment);
+    return this.persistSend(
+      token,
+      id,
+      { body: body.body, clientId: body.clientId, replyToId: body.replyToId },
+      attachment,
+    );
+  }
+  private async persistSend(
+    token: string,
+    id: string,
+    value: unknown,
+    attachment?: ValidatedChatImage,
+  ): Promise<{ message: ChatMessage; created: boolean }> {
     const body = input(value, ['body', 'clientId', 'replyToId']);
-    const raw = content(body.body),
+    const raw = content(body.body, !!attachment),
       clientId = uuid(body.clientId);
     const replyToId =
       body.replyToId === undefined || body.replyToId === null ? null : uuid(body.replyToId);
-    const requestHash = digest(replyToId ? JSON.stringify([raw, replyToId]) : raw);
+    const requestHash = digest(
+      attachment
+        ? '\u0000' + JSON.stringify(['image', raw, replyToId, attachment.mimeType, attachment.hash])
+        : replyToId
+          ? JSON.stringify([raw, replyToId])
+          : raw,
+    );
     return this.run(token, async (db, user) => {
+      if (attachment) {
+        await db.query(
+          'SELECT s.id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 FOR UPDATE OF s,u',
+          [digest(token)],
+        );
+        approved(await identity(db, token));
+      }
       const c = await this.access(db, user.id, uuid(id));
       if (c.archived) throw new HttpError(409, 'This channel is archived.');
       if (c.kind === 'dm')
@@ -727,6 +764,11 @@ export class ChatService {
           ],
         )
       ).rows[0];
+      if (attachment)
+        await db.query(
+          'INSERT INTO message_attachments(message_id,mime_type,size,image) VALUES($1,$2,$3,$4)',
+          [row.id, attachment.mimeType, attachment.size, attachment.image],
+        );
       return {
         message: (
           await hydrateMessages(db, user.id, c, [
@@ -744,7 +786,7 @@ export class ChatService {
     value: unknown,
     remove = false,
   ): Promise<ChatMessage> {
-    const raw = remove ? null : content(input(value, ['body']).body);
+    const raw = remove ? null : content(input(value, ['body']).body, true);
     return this.run(token, async (db, user) => {
       const c = await this.access(db, user.id, uuid(id));
       const row = (
@@ -758,6 +800,15 @@ export class ChatService {
       if (!row || row.deleted_at) throw missing();
       if (row.author_id !== user.id)
         throw new HttpError(403, 'Only the author can change this message.');
+      if (
+        !remove &&
+        !raw!.trim() &&
+        !(await db.query('SELECT 1 FROM message_attachments WHERE message_id=$1', [messageId]))
+          .rowCount
+      )
+        throw new HttpError(400, 'Messages must contain 1–4000 characters.');
+      if (remove)
+        await db.query('DELETE FROM message_attachments WHERE message_id=$1', [messageId]);
       const counters = (
         await db.query(
           'UPDATE conversations SET last_change=last_change+1 WHERE id=$1 RETURNING last_change',
@@ -775,6 +826,24 @@ export class ChatService {
           { ...result, username: user.username, display_name: user.displayName },
         ])
       )[0]!;
+    });
+  }
+  async attachment(token: string, id: string, messageId: string) {
+    return this.run(token, async (db, user) => {
+      const conversation = await this.access(db, user.id, uuid(id));
+      const result = await db.query<{
+        image: Buffer;
+        mime_type: 'image/png' | 'image/jpeg' | 'image/webp';
+      }>(
+        `SELECT a.image,a.mime_type FROM messages m JOIN message_attachments a ON a.message_id=m.id
+         WHERE m.conversation_id=$1 AND m.id=$4 AND m.deleted_at IS NULL
+           AND ($3='channel' OR ${visible})
+           AND EXISTS(SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$5
+             AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now() AND u.status='approved')`,
+        [id, user.id, conversation.kind, uuid(messageId), digest(token)],
+      );
+      if (!result.rows[0]) throw missing();
+      return { image: result.rows[0].image, mimeType: result.rows[0].mime_type };
     });
   }
 }

@@ -76,6 +76,11 @@ function Community() {
     null,
   );
   const drafts = useRef(new DraftStore());
+  const imageSession = useRef(state.csrfToken);
+  useLayoutEffect(() => {
+    if (imageSession.current !== state.csrfToken) drafts.current.clearImages();
+    imageSession.current = state.csrfToken;
+  }, [state.csrfToken]);
   useEffect(() => {
     const store = drafts.current;
     return () => store.clear();

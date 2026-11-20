@@ -5,6 +5,7 @@ import type { ChatMessage, MessageReference, ChannelReference } from '@tricord/s
 import { Avatar } from '@tricord/ui';
 import { MessageBody } from './MessageBody';
 import { GifPreviews } from './GifPreviews';
+import { ChatImage } from './ChatImage';
 import { MessageMenu, type MessageMenuAction } from './MessageMenu';
 import { EmojiGlyph, EmojiText } from '../../shared/emoji/EmojiText';
 
@@ -26,7 +27,9 @@ export function ReplyReference({
     >
       <Reply size={12} aria-hidden="true" />
       <strong>@{reference.author.username}</strong>
-      <span className="reply-preview-text">{reference.body}</span>
+      <span className="reply-preview-text">
+        {reference.body?.trim() ? reference.body : 'Image'}
+      </span>
     </button>
   );
 }
@@ -77,7 +80,7 @@ export const MessageCard = memo(function MessageCard({
     article.current?.focus({ preventScroll: true });
   }
   async function update(action: Parameters<typeof onUpdate>[1], value?: string) {
-    if (updating.current || (action === 'edit' && !value?.trim())) return;
+    if (updating.current || (action === 'edit' && !value?.trim() && !item.attachment)) return;
     updating.current = true;
     setBusy(true);
     setError('');
@@ -143,7 +146,8 @@ export const MessageCard = memo(function MessageCard({
         tabIndex={0}
         aria-label={'Message from ' + item.author.displayName + ' @' + item.author.username}
         onContextMenu={(event) => {
-          if (event.target instanceof Element && event.target.closest('a,textarea,input')) return;
+          if (event.target instanceof Element && event.target.closest('a,textarea,input,dialog'))
+            return;
           event.preventDefault();
           setMenu({ x: event.clientX, y: event.clientY });
         }}
@@ -191,11 +195,11 @@ export const MessageCard = memo(function MessageCard({
                   cancelEdit();
                 }}
                 maxLength={4000}
-                required
+                required={!item.attachment}
                 disabled={busy}
                 autoFocus
               />
-              <button className="primary" disabled={busy || !text.trim()}>
+              <button className="primary" disabled={busy || (!text.trim() && !item.attachment)}>
                 Save
               </button>
               <button type="button" className="secondary" disabled={busy} onClick={cancelEdit}>
@@ -216,6 +220,13 @@ export const MessageCard = memo(function MessageCard({
               />
               <GifPreviews body={item.body ?? ''} />
             </>
+          )}
+          {item.attachment && (
+            <ChatImage
+              conversationId={item.conversationId}
+              messageId={item.id}
+              attachment={item.attachment}
+            />
           )}
           {!editing && actions.length > 0 && (
             <div className="message-hover-actions">

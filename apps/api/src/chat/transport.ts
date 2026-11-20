@@ -7,6 +7,7 @@ import { ChatService } from './service.js';
 import { ChatFeatures } from './features.js';
 import { noticePreferences, registerNotificationPreferences } from './notification-preferences.js';
 import { registerGifSearch, type GifSearchOptions } from './gif-search.js';
+import { CHAT_ATTACHMENT_BODY_LIMIT } from './image-attachment.js';
 export function registerChat(
   app: FastifyInstance,
   service: ChatService,
@@ -260,6 +261,54 @@ export function registerChat(
     await publish(message.conversationId, message.id, created);
     return { message };
   });
+  app.post<{ Params: { id: string } }>(
+    '/api/conversations/:id/messages/with-attachment',
+    {
+      onRequest: guard,
+      bodyLimit: CHAT_ATTACHMENT_BODY_LIMIT,
+      config: { rateLimit: limits ? { max: 10, timeWindow: 60000 } : false },
+    },
+    async (req) => {
+      const { message, created } = await service.sendWithAttachmentResult(
+        token(req),
+        uuid(req.params.id),
+        req.body,
+      );
+      await publish(message.conversationId, message.id, created);
+      return { message };
+    },
+  );
+  app.get<{
+    Params: { conversationId: string; messageId: string };
+    Querystring: Record<string, unknown>;
+  }>(
+    '/media/chat-attachments/:conversationId/:messageId',
+    {
+      onRequest: async (req, reply) => {
+        reply.header('Cache-Control', 'no-store');
+        await guard(req);
+      },
+    },
+    async (req, reply) => {
+      const query = input(req.query, ['download']);
+      if (query.download !== undefined && query.download !== '1')
+        throw new HttpError(400, 'Invalid download option.');
+      const id = uuid(req.params.messageId);
+      const attachment = await service.attachment(token(req), uuid(req.params.conversationId), id);
+      const extension = attachment.mimeType === 'image/jpeg' ? 'jpg' : attachment.mimeType.slice(6);
+      reply
+        .type(attachment.mimeType)
+        .header('X-Content-Type-Options', 'nosniff')
+        .header('Cross-Origin-Resource-Policy', 'same-origin')
+        .header(
+          'Content-Disposition',
+          query.download === '1'
+            ? `attachment; filename="rajcord-image-${id}.${extension}"`
+            : 'inline',
+        );
+      return reply.send(attachment.image);
+    },
+  );
   app.patch<{ Params: { id: string; messageId: string } }>(
     '/api/conversations/:id/messages/:messageId',
     mutation,

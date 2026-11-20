@@ -1,5 +1,6 @@
 import type { ChatMessage, Conversation } from '@tricord/shared';
 import { encodeChannelReferences, type DraftChannelReference } from './channel-references';
+import { releaseChatImage, type ChatImageDraft } from './chat-images';
 
 export function mentionSuggestions(members: Conversation['members'], query: string) {
   const prefix = query.toLowerCase();
@@ -15,12 +16,14 @@ export interface SendAttempt {
   body: string;
   replyToId: string | null;
   wireBody?: string;
+  attachment?: ChatImageDraft;
 }
 export interface ChatDraft {
   body: string;
   replyToId: string | null;
   attempt: SendAttempt | null;
   references?: DraftChannelReference[];
+  attachment?: ChatImageDraft;
 }
 export const emptyDraft: ChatDraft = { body: '', replyToId: null, attempt: null };
 export function nearLatest(area: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' | 'clientHeight'>) {
@@ -51,11 +54,15 @@ export class DraftStore extends Map<string, ChatDraft> {
     };
   }
   override set(id: string, draft: ChatDraft) {
+    const previous = this.get(id);
+    if (previous?.attachment && previous.attachment !== draft.attachment)
+      releaseChatImage(previous.attachment);
     super.set(id, draft);
     for (const listener of this.listeners.get(id) ?? []) listener();
     return this;
   }
   override delete(id: string) {
+    releaseChatImage(this.get(id)?.attachment);
     const changed = super.delete(id);
     if (changed) for (const listener of this.listeners.get(id) ?? []) listener();
     return changed;
@@ -64,7 +71,13 @@ export class DraftStore extends Map<string, ChatDraft> {
     this.mediaAttempts.delete(id);
     this.delete(id);
   }
+  clearImages() {
+    for (const [id, draft] of this)
+      if (draft.attachment || draft.attempt?.attachment)
+        this.set(id, { ...draft, attachment: undefined, attempt: null });
+  }
   override clear() {
+    for (const draft of this.values()) releaseChatImage(draft.attachment);
     this.mediaAttempts.clear();
     super.clear();
   }
@@ -77,6 +90,7 @@ export function attemptFor(
   if (
     draft.attempt?.body === draft.body &&
     draft.attempt.replyToId === draft.replyToId &&
+    draft.attempt.attachment === draft.attachment &&
     (draft.attempt.wireBody ?? draft.attempt.body) === wireBody
   )
     return draft.attempt;
@@ -84,6 +98,7 @@ export function attemptFor(
     clientId: newId(),
     body: draft.body,
     replyToId: draft.replyToId,
+    ...(draft.attachment ? { attachment: draft.attachment } : {}),
     ...(wireBody === draft.body ? {} : { wireBody }),
   };
 }

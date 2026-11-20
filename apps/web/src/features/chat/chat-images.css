@@ -1,0 +1,155 @@
+.composer-attachment-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+}
+.composer-attachment-preview img {
+  width: 100px;
+  height: 72px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.composer-attachment-preview > span {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.composer-attachment-preview > button,
+.chat-image-viewer button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+}
+.composer.live-composer .composer-attach {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 44px;
+  padding: 0;
+  border-radius: var(--radius-control);
+  color: var(--text-muted);
+}
+.composer.live-composer .composer-attach,
+.composer-attachment-preview > button,
+.chat-image-viewer button {
+  transition: background-color var(--motion-fast) var(--motion-ease);
+}
+.composer.live-composer .composer-attach:hover,
+.composer-attachment-preview > button:hover,
+.chat-image-viewer button:hover {
+  background: #ffffff12;
+}
+.chat-image {
+  width: fit-content;
+  max-width: min(100%, 520px);
+  margin: 8px 0;
+}
+.chat-image-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-inset);
+}
+.chat-image-open img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+}
+.chat-image figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.chat-image a,
+.chat-image-viewer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-mint);
+}
+.chat-image-unavailable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-block: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.chat-image-unavailable button {
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+.chat-image-viewer {
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+.chat-image-viewer::backdrop {
+  background: #000b;
+}
+.chat-image-viewer-content {
+  min-width: min(280px, calc(100vw - 36px));
+  padding: 8px;
+}
+.chat-image-viewer header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.chat-image-viewer img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(1200px, calc(100vw - 50px));
+  max-height: calc(100dvh - 120px);
+  margin-inline: auto;
+  object-fit: contain;
+}
+.chat-image-open:focus-visible,
+.chat-image a:focus-visible,
+.chat-image-viewer :is(a, button):focus-visible {
+  outline: 2px solid var(--accent-mint);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer.live-composer .composer-attach,
+  .composer-attachment-preview > button,
+  .chat-image-viewer button {
+    transition: none;
+  }
+}

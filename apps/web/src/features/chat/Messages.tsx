@@ -9,6 +9,7 @@ import {
   emptyDraft,
   isConversationAccessError,
   isReplyTargetGone,
+  sendPayload,
 } from './chat-state';
 import { compatibleMessage, mergeMessages } from './message-state';
 import {
@@ -33,6 +34,7 @@ import type {
 import { useAuth } from '../account';
 import { encodeChannelReferences, referenceLabel } from './channel-references';
 import { deliverMessage } from './message-send';
+import { prepareChatImage, chatImageBase64 } from './chat-images';
 import { EmojiText } from '../../shared/emoji/EmojiText';
 import { trackMessageReading } from './message-reading';
 import {
@@ -59,7 +61,11 @@ export function Messages({
   channels: ChannelReference[];
   onChannel: (channel: ChannelReference) => void;
 }) {
-  const { state, request, socket, connected } = useAuth();
+  const { state, request, requestContract, socket, connected } = useAuth();
+  const sessionKey = state.user.id + ':' + state.csrfToken;
+  const currentSession = useRef(sessionKey);
+  currentSession.current = sessionKey;
+  const sendingRef = useRef(false);
   const storedDraft = useSyncExternalStore(
     useCallback(
       (listener) => drafts.subscribe(conversation.id, listener),
@@ -169,6 +175,16 @@ export function Messages({
   }
   function changeDraft(body: string) {
     remember(body);
+  }
+  function attachImage(file: File) {
+    const current = drafts.get(conversation.id) ?? emptyDraft;
+    if (current.attachment) throw new Error('Remove the current image before adding another.');
+    const attachment = prepareChatImage(file);
+    drafts.set(conversation.id, { ...current, attachment, attempt: null });
+  }
+  function removeImage() {
+    const current = drafts.get(conversation.id);
+    if (current) drafts.set(conversation.id, { ...current, attachment: undefined, attempt: null });
   }
   const chooseReply = useCallback(
     (item: ChatMessage) => {
@@ -457,8 +473,8 @@ export function Messages({
   async function send(event: FormEvent) {
     event.preventDefault();
     if (
-      !draft.trim() ||
-      sending ||
+      (!draft.trim() && !storedDraft.attachment) ||
+      sendingRef.current ||
       conversation.archived ||
       replyLoading ||
       replyFailed ||
@@ -476,18 +492,46 @@ export function Messages({
       return;
     }
     setSending(true);
+    sendingRef.current = true;
     setError('');
     drafts.set(conversation.id, { ...stored, attempt: pending });
     try {
-      const message = await deliverMessage(requestRef.current, socket, conversation.id, pending);
+      const attachmentRequest = requestContract;
+      const attachment = pending.attachment && {
+        mimeType: pending.attachment.mimeType,
+        base64: await chatImageBase64(pending.attachment),
+      };
+      if (attachment && (!alive.current || currentSession.current !== sessionKey)) return;
+      const message = attachment
+        ? compatibleMessage(
+            (
+              await attachmentRequest(
+                `/conversations/${conversation.id}/messages/with-attachment`,
+                'POST',
+                {
+                  ...sendPayload(pending),
+                  attachment,
+                },
+              )
+            ).message,
+          )
+        : await deliverMessage(requestRef.current, socket, conversation.id, pending);
+      if (currentSession.current !== sessionKey) return;
       const current = drafts.get(conversation.id);
       const unchanged =
         current?.body === pending.body &&
         current.replyToId === pending.replyToId &&
+        current.attachment === pending.attachment &&
         encodeChannelReferences(current.body, current.references) ===
           (pending.wireBody ?? pending.body) &&
         current.attempt?.clientId === pending.clientId;
       if (unchanged) drafts.delete(conversation.id);
+      else if (
+        pending.attachment &&
+        current?.attachment === pending.attachment &&
+        current.attempt?.clientId === pending.clientId
+      )
+        drafts.set(conversation.id, { ...current, attachment: undefined, attempt: null });
       if (alive.current) {
         setItems((previous) => mergeMessages(previous, [message], !historyRef.current).slice(-500));
         if (unchanged) {
@@ -497,13 +541,14 @@ export function Messages({
         runInBackground(synchronize());
       }
     } catch (e) {
-      setError((e as Error).message);
+      if (alive.current && currentSession.current === sessionKey) setError((e as Error).message);
     } finally {
+      sendingRef.current = false;
       if (alive.current) setSending(false);
     }
   }
   async function sendGif(url: string) {
-    if (sending || conversation.archived || replyLoading || replyFailed)
+    if (sendingRef.current || conversation.archived || replyLoading || replyFailed)
       throw new Error('Wait for the current send, or choose an active conversation.');
     const stored = drafts.get(conversation.id) ?? emptyDraft;
     const pending = attemptFor({
@@ -513,6 +558,7 @@ export function Messages({
     });
     drafts.mediaAttempts.set(conversation.id, pending);
     setSending(true);
+    sendingRef.current = true;
     try {
       const message = await deliverMessage(requestRef.current, socket, conversation.id, pending);
       if (drafts.mediaAttempts.get(conversation.id)?.clientId === pending.clientId)
@@ -522,6 +568,7 @@ export function Messages({
         runInBackground(synchronize());
       }
     } finally {
+      sendingRef.current = false;
       if (alive.current) setSending(false);
     }
   }
@@ -731,6 +778,9 @@ export function Messages({
               onChange={changeDraft}
               onSend={(event) => runInBackground(send(event))}
               onSendGif={sendGif}
+              attachment={storedDraft.attachment}
+              onAttachImage={attachImage}
+              onRemoveImage={removeImage}
               reply={reply}
               replyLoading={replyLoading}
               replyFailed={replyFailed}
@@ -740,7 +790,8 @@ export function Messages({
               sending={sending}
               retrying={
                 storedDraft.attempt?.body === draft &&
-                storedDraft.attempt?.replyToId === storedDraft.replyToId
+                storedDraft.attempt?.replyToId === storedDraft.replyToId &&
+                storedDraft.attempt?.attachment === storedDraft.attachment
               }
               members={conversation.members}
               userId={state.user.id}
@@ -782,7 +833,7 @@ export function Messages({
                   ? 'Saving…'
                   : draft.length
                     ? draft.length + '/4000 · Enter to send · Shift+Enter for a new line'
-                    : '@ to mention · /gif for GIFs · Enter to send'}
+                    : 'Paste a screenshot · @ to mention · /gif for GIFs · Enter to send'}
               </span>
               <span
                 data-connection={connected ? 'connected' : 'disconnected'}

@@ -64,6 +64,13 @@
       "when": 1794884873296,
       "tag": "0008_conscious_grey_gargoyle",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795211419773,
+      "tag": "0009_kind_shinobi_shaw",
+      "breakpoints": true
     }
   ]
 }

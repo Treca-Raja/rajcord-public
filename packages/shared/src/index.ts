@@ -1,4 +1,6 @@
 export * from './screen.js';
+export * from './chat-image.js';
+import type { ChatImageAttachment } from './chat-image.js';
 export * from './screen-signaling.js';
 export * from './desktop-capture.js';
 export * from './capture-authorization.js';
@@ -137,6 +139,7 @@ export interface ChatMessage {
   pinned: boolean;
   reactions: MessageReaction[];
   mentions: { id: string; username: string }[];
+  attachment?: ChatImageAttachment;
 }
 export type MessageReference =
   | { available: false }

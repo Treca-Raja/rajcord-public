@@ -5,6 +5,7 @@ import {
   type TProperties,
   type TSchema,
 } from '@sinclair/typebox';
+import { CHAT_IMAGE_LIMITS } from '../chat-image.js';
 
 if (!FormatRegistry.Has('date-time'))
   FormatRegistry.Set(
@@ -100,6 +101,12 @@ export const messageFields = {
   createdAt: date,
   editedAt: nullable(date),
   deleted: Type.Boolean(),
+  attachment: optional(
+    object({
+      mimeType: oneOf('image/png', 'image/jpeg', 'image/webp'),
+      size: Type.Integer({ minimum: 1, maximum: CHAT_IMAGE_LIMITS.maxBytes }),
+    }),
+  ),
 };
 export const message = Type.Union([
   object({ ...messageFields, featureVersion: optional(Type.Never()) }),
@@ -186,6 +193,18 @@ export const request = {
     body: text,
     clientId: uuid,
     replyToId: optional(nullable(uuid)),
+  }),
+  messageWithAttachment: requestObject({
+    body: Type.String({ maxLength: 4000 }),
+    clientId: uuid,
+    replyToId: optional(nullable(uuid)),
+    attachment: requestObject({
+      mimeType: oneOf('image/png', 'image/jpeg', 'image/webp'),
+      base64: Type.String({
+        minLength: 4,
+        maxLength: Math.ceil(CHAT_IMAGE_LIMITS.maxBytes / 3) * 4,
+      }),
+    }),
   }),
   messageEdit: requestObject({ body: text }),
   reaction: requestObject({ emoji: text }),

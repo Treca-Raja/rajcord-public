@@ -1,3 +1,13 @@
+# Paste screenshots in chat — 2026-11-20
+
+The composer accepts one pasted or selected still PNG, JPEG or WebP, up to 8 MiB and 16 megapixels. It keeps a removable preview with the originating conversation draft and sends only on confirmation, with an optional caption. The existing message sequence and retry identifier cover the image and caption together. Inline previews preserve aspect ratio, and the larger viewer offers the original file. The new PostgreSQL attachment table stores the original image bytes atomically with the message. Reads use the same current membership and history checks as chat, and message deletion removes the stored bytes.
+
+On Windows with Node 26.13.0 and pnpm 11.25.0, frozen installation, formatting, lint, workspace type checks and builds passed. The full unit run passed 1,658 of 1,659 tests and hit a development-server reload connection refusal. All four startup tests passed on the isolated rerun. The focused image validation checks passed after adding a check for truncated JPEGs.
+
+**86 chat and database tests across six files passed** on disposable UTF-8 PostgreSQL 17.11, including migration idempotence, exact image bytes, lost-response retry, atomic rollback, group membership periods, revocation and deletion. **19 browser tests across two files passed**, including nine screenshot cases. The browser checks used synthetic clipboard events and inspected the preview and viewer at 380 pixels. A separate Electron 45.1.0 probe in a sandboxed test window verified synthetic PNG paste, the preview and explicit captioned send. These checks did not use the system clipboard.
+
+The Docker image restore smoke now verifies that a dump and restore reproduce the image bytes. The hosted smoke exercises a screenshot request above the ordinary proxy limit and confirms that unauthorized reads are denied. Docker was unavailable locally, so those two smoke suites remain for CI. The migration ran only in the disposable database fixture.
+
 # Fixed-format gameplay sharing — 2026-11-19
 
 Six local Edge clients joined a voice room. One publisher sent the same high-motion CS:GO recording to two direct viewers at 1920×1080, 60 fps and 20 Mb/s per viewer. The capture used Chromium’s file-backed fake device. The application set the native fixed degradation preference before the offer and verified the selected encoding settings. Each row represents a separate run of thirteen five-second intervals on the same Ryzen 5 5600 / RTX 3060 Ti workstation.

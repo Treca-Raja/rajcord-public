@@ -91,6 +91,10 @@ The container helper takes both hostnames explicitly and reads its Node image pi
 
 ## HTTPS and media
 
+Chat images use the existing HTTPS application and PostgreSQL database. The reviewed [Nginx template](../infrastructure/hosting/nginx.conf.template) allows an 11 MiB request only at the chat attachment send route, which accommodates JSON/base64 encoding of the 8 MiB image limit. Other routes keep the ordinary 16 KiB proxy limit. The API independently enforces the file size, supported format and pixel bounds.
+
+For an initialized runtime, review and update its `nginx.conf` from the matching release template before enabling chat images. Substitute the existing public host for `__PUBLIC_IP__`, preserve any verified host-specific settings, and validate the updated proxy configuration with `nginx -t` before bringing it into service. Recreate the proxy container if the mounted file was replaced. Apply the additive message attachment migration using the normal backup and migration steps below. Chat images are included in the existing PostgreSQL backups.
+
 For scoped Cloudflare API access instead of manual DNS editing, create a user API token from the **Edit zone DNS** template. Use Zone/DNS/Edit plus Zone/Zone/Read for zone lookup, restrict resources to the single zone rajcord.com, and set a short setup expiration. No account permissions or Global API Key are required. The DNS permission covers all DNS records in that zone; the authorized setup changes are only the app and TURN A records. See [Cloudflare's token instructions](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
 
 Keep the token out of chat, shell command arguments, source files and the VPS. On the operator's **Windows PC**, a hidden prompt can save it in user-encrypted local storage:

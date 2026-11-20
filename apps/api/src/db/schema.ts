@@ -13,6 +13,7 @@ import {
   uniqueIndex,
   check,
   foreignKey,
+  customType,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 export const approvalStatus = pgEnum('approval_status', [
@@ -252,7 +253,28 @@ export const messages = pgTable(
     ),
     check(
       'message_content',
-      sql`(${t.deletedAt} IS NULL AND ${t.body} IS NOT NULL AND length(${t.body}) BETWEEN 1 AND 4000) OR (${t.deletedAt} IS NOT NULL AND ${t.body} IS NULL)`,
+      sql`(${t.deletedAt} IS NULL AND ${t.body} IS NOT NULL AND length(${t.body}) BETWEEN 0 AND 4000) OR (${t.deletedAt} IS NOT NULL AND ${t.body} IS NULL)`,
+    ),
+  ],
+);
+const attachmentBytes = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => 'bytea',
+});
+export const messageAttachments = pgTable(
+  'message_attachments',
+  {
+    messageId: uuid('message_id')
+      .primaryKey()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    mimeType: varchar('mime_type', { length: 32 }).notNull(),
+    size: integer('size').notNull(),
+    image: attachmentBytes('image').notNull(),
+  },
+  (t) => [
+    check('message_attachment_mime', sql`${t.mimeType} IN ('image/png','image/jpeg','image/webp')`),
+    check(
+      'message_attachment_size',
+      sql`${t.size} BETWEEN 1 AND 8388608 AND octet_length(${t.image})=${t.size}`,
     ),
   ],
 );

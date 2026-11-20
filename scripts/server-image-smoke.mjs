@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -273,6 +273,25 @@ try {
   });
   assert.equal(replied.status, 200);
   assert.equal((await replied.json()).message.threadRoot.id, textMessage.id);
+  const fixturePng =
+    'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEElEQVQImWPQ6UmFIwacHAACDA1dBvSi1gAAAABJRU5ErkJggg==';
+  const screenshot = await fetch(
+    origin + '/api/conversations/' + textId + '/messages/with-attachment',
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        body: '',
+        clientId: crypto.randomUUID(),
+        attachment: { mimeType: 'image/png', base64: fixturePng },
+      }),
+    },
+  );
+  assert.equal(screenshot.status, 200);
+  assert.deepEqual((await screenshot.json()).message.attachment, {
+    mimeType: 'image/png',
+    size: Buffer.from(fixturePng, 'base64').length,
+  });
   for (let retry = 0; retry < 2; retry++) {
     assert.equal(
       (
@@ -373,6 +392,13 @@ try {
       '1',
     );
   }
+  assert.equal(
+    sql(
+      'tricord_restorecheck',
+      "SELECT encode(sha256(a.image),'hex') FROM message_attachments a JOIN messages m ON m.id=a.message_id JOIN conversations c ON c.id=m.conversation_id WHERE c.name='image-read-progress' AND a.mime_type='image/png' AND m.deleted_at IS NULL",
+    ),
+    createHash('sha256').update(Buffer.from(fixturePng, 'base64')).digest('hex'),
+  );
   assert.equal(
     sql(
       'tricord_restorecheck',
