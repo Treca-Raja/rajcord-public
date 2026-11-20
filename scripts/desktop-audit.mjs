@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -8,6 +9,12 @@ const libRequire = createRequire(builderRequire.resolve('app-builder-lib'));
 const { listPackage, extractFile } = libRequire('@electron/asar');
 const { load } = require('js-yaml');
 const { trustedUpdateConfig } = require('./dist/update-policy.js');
+const {
+  installerName,
+  updateManifestName,
+  updatePublicKey,
+  verifyUpdateManifest,
+} = require('./dist/update-manifest.js');
 const dir = path.resolve('artifacts/desktop');
 const archive = path.join(dir, 'win-unpacked/resources/app.asar');
 const files = listPackage(archive).map((file) => file.replaceAll('\\', '/'));
@@ -38,7 +45,8 @@ assert.equal(pkg.version, JSON.parse(fs.readFileSync('apps/desktop/package.json'
 assert.ok(fs.existsSync(path.join(dir, `Rajcord-Setup-${pkg.version}-x64.exe`)));
 assert.ok(fs.existsSync(path.join(dir, 'win-unpacked/Rajcord.exe')));
 const configFile = path.join(dir, 'win-unpacked/resources/app-update.yml');
-if (process.env.RAJCORD_SIGNED_RELEASE === '1') {
+const signed = process.env.RAJCORD_SIGNED_RELEASE === '1';
+if (signed) {
   assert.ok(
     trustedUpdateConfig(load(fs.readFileSync(configFile, 'utf8'))),
     'Missing update trust configuration.',
@@ -46,7 +54,6 @@ if (process.env.RAJCORD_SIGNED_RELEASE === '1') {
   const manifest = load(fs.readFileSync(path.join(dir, 'latest.yml'), 'utf8'));
   assert.equal(manifest.version, pkg.version);
   for (const file of manifest.files) {
-    const { createHash } = await import('node:crypto');
     assert.equal(
       file.sha512,
       createHash('sha512')
@@ -55,10 +62,33 @@ if (process.env.RAJCORD_SIGNED_RELEASE === '1') {
     );
   }
 } else {
-  assert.ok(!fs.existsSync(configFile), 'Unsigned builds must not enable updates.');
+  assert.ok(
+    !fs.existsSync(configFile),
+    'Windows-unsigned builds must not include Authenticode update configuration.',
+  );
   assert.ok(
     !fs.existsSync(path.join(dir, 'latest.yml')),
-    'Unsigned builds must not emit update metadata.',
+    'Windows-unsigned builds must not emit latest.yml.',
+  );
+}
+const manifestPath = path.join(dir, updateManifestName);
+const expectedKey = process.env.RAJCORD_UPDATE_PUBLIC_KEY || undefined;
+assert.equal(pkg.rajcordUpdatePublicKey, signed ? undefined : expectedKey);
+if (expectedKey) {
+  const key = updatePublicKey(expectedKey);
+  assert.ok(key, 'Invalid Rajcord update public key.');
+  const manifest = verifyUpdateManifest(fs.readFileSync(manifestPath, 'utf8'), key);
+  assert.equal(manifest.version, pkg.version);
+  assert.equal(
+    manifest.sha512,
+    createHash('sha512')
+      .update(fs.readFileSync(path.join(dir, installerName(pkg.version))))
+      .digest('base64'),
+  );
+} else {
+  assert.ok(
+    !fs.existsSync(manifestPath),
+    'Builds without manifest updates must not emit a manifest.',
   );
 }
 console.log(

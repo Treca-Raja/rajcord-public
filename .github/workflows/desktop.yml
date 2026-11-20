@@ -10,7 +10,11 @@ on:
         type: boolean
         default: false
       signed:
-        description: Sign the draft and enable verified automatic updates
+        description: Sign the Windows executable and installer with Authenticode
+        type: boolean
+        default: false
+      manifest_updates:
+        description: Sign Rajcord update metadata for clients that trust the Rajcord update key
         type: boolean
         default: false
       release_tag:
@@ -98,15 +102,25 @@ jobs:
         env:
           RAJCORD_SIGNED_RELEASE: '1'
           RAJCORD_PUBLISHER_DN: ${{ vars.RAJCORD_PUBLISHER_DN }}
+          RAJCORD_UPDATE_PUBLIC_KEY: ${{ inputs.manifest_updates && vars.RAJCORD_UPDATE_PUBLIC_KEY || '' }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-      - name: Build unsigned manual-install release
+      - name: Build Windows-unsigned release
         if: inputs.signed != true
         run: pnpm desktop:package
+        env:
+          RAJCORD_UPDATE_PUBLIC_KEY: ${{ inputs.manifest_updates && vars.RAJCORD_UPDATE_PUBLIC_KEY || '' }}
+      - name: Sign Rajcord update metadata
+        if: inputs.manifest_updates == true
+        run: node scripts/desktop-update-manifest.mjs
+        env:
+          RAJCORD_UPDATE_PUBLIC_KEY: ${{ vars.RAJCORD_UPDATE_PUBLIC_KEY }}
+          RAJCORD_UPDATE_PRIVATE_KEY: ${{ secrets.RAJCORD_UPDATE_PRIVATE_KEY }}
       - name: Audit output
         run: node scripts/desktop-audit.mjs
         env:
           RAJCORD_SIGNED_RELEASE: ${{ inputs.signed && '1' || '0' }}
+          RAJCORD_UPDATE_PUBLIC_KEY: ${{ inputs.manifest_updates && vars.RAJCORD_UPDATE_PUBLIC_KEY || '' }}
       - name: Upload assets to a new draft only
         shell: pwsh
         env:
@@ -114,6 +128,6 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $assets = @(Get-ChildItem -LiteralPath artifacts/desktop -File | Where-Object { $_.Name -match '^Rajcord-Setup-.*\.(exe|exe\.blockmap)$|^latest\.yml$' } | ForEach-Object FullName)
+          $assets = @(Get-ChildItem -LiteralPath artifacts/desktop -File | Where-Object { $_.Name -match '^Rajcord-Setup-.*\.(exe|exe\.blockmap)$|^(latest\.yml|rajcord-windows-update\.json)$' } | ForEach-Object FullName)
           gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --title "Rajcord $env:RELEASE_TAG" --notes "Windows x64 desktop release. Maintainer must complete docs/desktop-distribution.md acceptance before explicitly publishing."
           if ($LASTEXITCODE -ne 0) { throw 'Draft creation failed; existing releases are never overwritten.' }

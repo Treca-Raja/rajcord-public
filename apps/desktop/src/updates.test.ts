@@ -1,17 +1,28 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 const state = vi.hoisted(() => ({
   read: vi.fn(),
+  write: vi.fn(),
   prompt: vi.fn(),
+  openPath: vi.fn(),
+  quit: vi.fn(),
   verify: vi.fn(),
   create: vi.fn(),
   quitGuards: [] as (() => boolean)[],
   listeners: {} as Record<string, () => void>,
 }));
 vi.mock('electron', () => ({
-  app: { isPackaged: true, once: vi.fn() },
+  app: {
+    isPackaged: true,
+    once: vi.fn(),
+    getAppPath: () => 'C:/Rajcord/app.asar',
+    quit: state.quit,
+  },
   dialog: { showMessageBox: state.prompt },
+  shell: { openPath: state.openPath },
 }));
-vi.mock('node:fs', () => ({ default: { readFileSync: state.read } }));
+vi.mock('node:fs', () => ({ default: { readFileSync: state.read, writeFileSync: state.write } }));
+vi.mock('./manifest-update-feed.js', () => ({ configureManifestUpdateFeed: vi.fn() }));
 vi.mock('./update-signature.js', () => ({ verifyUpdateSignature: state.verify }));
 vi.mock('./update-installer.js', () => ({
   RecoverableNsisUpdater: function (mayQuit: () => boolean) {
@@ -45,6 +56,7 @@ beforeEach(() => {
     'provider: github\nowner: Treca-Raja\nrepo: rajcord-public\npublisherName: CN=Trusted\n',
   );
   state.prompt.mockResolvedValue({ response: 1 });
+  state.openPath.mockResolvedValue('');
   state.verify.mockResolvedValue(null);
   updater = {
     on: vi.fn((name, callback) => {
@@ -89,6 +101,84 @@ it('checks for updates after startup and prompts for consent on a later schedule
   );
   expect(updater.downloadUpdate).not.toHaveBeenCalled();
   expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+
+const manifestInstaller = 'C:/cache/Rajcord-Setup-0.1.2-x64.exe';
+
+function setupManifestDownload() {
+  const { publicKey } = generateKeyPairSync('ed25519');
+  const key = publicKey.export({ format: 'der', type: 'spki' }).toString('base64');
+  const bytes = 'verified installer';
+  const sha512 = createHash('sha512').update(bytes).digest('base64');
+  state.read
+    .mockImplementationOnce(() => {
+      throw Object.assign(new Error('Missing app-update.yml'), { code: 'ENOENT' });
+    })
+    .mockReturnValueOnce(JSON.stringify({ rajcordUpdatePublicKey: key }))
+    .mockReturnValue(bytes);
+  updater.checkForUpdates.mockImplementation(async () => {
+    state.listeners['update-available']?.();
+    return { updateInfo: { version: '0.1.2', files: [{ sha512 }] } };
+  });
+  updater.downloadUpdate.mockResolvedValue([manifestInstaller]);
+}
+
+it('downloads and opens a verified manifest update after one explicit confirmation', async () => {
+  setupManifestDownload();
+  const prepare = vi.fn();
+  const progress = vi.fn();
+  await configureUpdates(prepare, vi.fn(), progress).check();
+
+  expect(state.prompt).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ buttons: ['Later', 'Download and install'] }),
+  );
+  expect(prepare).toHaveBeenCalledOnce();
+  expect(state.write).toHaveBeenCalledExactlyOnceWith(
+    manifestInstaller + ':Zone.Identifier',
+    '[ZoneTransfer]\r\nZoneId=3\r\n',
+  );
+  expect(state.openPath).toHaveBeenCalledExactlyOnceWith(manifestInstaller);
+  expect(state.quit).toHaveBeenCalledOnce();
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+  expect(progress.mock.calls).toEqual([[2], [-1]]);
+});
+
+it('rejects incorrect downloaded bytes or a renamed cached installer', async () => {
+  setupManifestDownload();
+  updater.downloadUpdate
+    .mockImplementationOnce(async () => {
+      state.read.mockReturnValue('altered download');
+      return [manifestInstaller];
+    })
+    .mockResolvedValueOnce(['C:/cache/replacement.cmd']);
+  const prepare = vi.fn();
+  const updates = configureUpdates(prepare);
+  await updates.check();
+  state.read.mockReturnValue('verified installer');
+  await updates.check();
+  expect(prepare).not.toHaveBeenCalled();
+  expect(state.openPath).not.toHaveBeenCalled();
+});
+
+it('rejects an installer changed during shutdown preparation', async () => {
+  setupManifestDownload();
+  const failed = vi.fn();
+  await configureUpdates(async () => {
+    state.read.mockReturnValue('changed installer');
+  }, failed).check();
+  expect(state.openPath).not.toHaveBeenCalled();
+  expect(state.quit).not.toHaveBeenCalled();
+  expect(failed).toHaveBeenCalledOnce();
+});
+
+it('keeps Rajcord open when Windows declines to launch the installer', async () => {
+  setupManifestDownload();
+  state.openPath.mockResolvedValue('Operation blocked');
+  const failed = vi.fn();
+  await configureUpdates(vi.fn(), failed).check();
+  expect(state.openPath).toHaveBeenCalledOnce();
+  expect(state.quit).not.toHaveBeenCalled();
+  expect(failed).toHaveBeenCalledOnce();
 });
 it('requires download and restart consent and verifies cached files again before installation', async () => {
   const prepare = vi.fn();

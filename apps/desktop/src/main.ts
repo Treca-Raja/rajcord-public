@@ -251,6 +251,9 @@ app
       () => {
         quitting = false;
       },
+      (progress) => {
+        if (!win.isDestroyed()) win.setProgressBar(progress);
+      },
     );
     const checkForUpdates = () => {
       void updates.check().catch(() => console.error('Update check failed unexpectedly.'));
