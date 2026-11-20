@@ -1083,12 +1083,16 @@ try {
   await wait(
     `!!document.querySelector('.message-scroll [data-message-id="${followup}"].consecutive-message')`,
   );
-  const density = await js<{ height: number; gap: number }>(`(()=>{
+  const density = await js<{ height: number; gap: number; noHover: boolean }>(`(()=>{
     const previous=document.querySelector('.message-scroll [data-message-id="${selfMention.id}"]').getBoundingClientRect();
     const current=document.querySelector('.message-scroll [data-message-id="${followup}"]').getBoundingClientRect();
-    return {height:current.height,gap:current.top-previous.bottom};
+    return {height:current.height,gap:current.top-previous.bottom,noHover:matchMedia('(hover: none)').matches};
   })()`);
-  assert.ok(density.height <= 34, 'A single consecutive line should fit in one compact row');
+  if (density.noHover) {
+    assert.equal(density.height, 44, 'A single consecutive line should fit in one touch target');
+  } else {
+    assert.ok(density.height <= 34, 'A single consecutive line should fit in one compact row');
+  }
   assert.ok(
     await js(`(()=>{
       const row=document.querySelector('.message-scroll [data-message-id="${followup}"]');
