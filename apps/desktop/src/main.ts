@@ -11,6 +11,7 @@ import { app, BrowserWindow, session, dialog, ipcMain, shell, desktopCapturer } 
 import path from 'node:path';
 import fs from 'node:fs';
 import { configureUpdates } from './updates.js';
+import { installWindowsChrome, windowsChromeOptions } from './window-chrome.js';
 import { Menu, Tray, nativeImage } from 'electron';
 const smoke = !app.isPackaged && process.argv.includes('--smoke');
 const authSmoke = !app.isPackaged && process.argv.includes('--auth-smoke');
@@ -110,6 +111,7 @@ app
       minHeight: 600,
       show: !smoke && !authSmoke,
       backgroundColor: '#16191f',
+      ...(process.platform === 'win32' ? windowsChromeOptions() : {}),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
@@ -249,6 +251,9 @@ app
       () => {
         quitting = false;
       },
+      (progress) => {
+        if (!win.isDestroyed()) win.setProgressBar(progress);
+      },
     );
     const checkForUpdates = () => {
       void updates.check().catch(() => console.error('Update check failed unexpectedly.'));
@@ -293,6 +298,7 @@ app
         },
       ]),
     );
+    if (process.platform === 'win32') installWindowsChrome(win, trustedSender);
     if (app.isPackaged) {
       win.on('query-session-end', () => {
         quitting = true;
