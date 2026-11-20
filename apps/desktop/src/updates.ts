@@ -1,19 +1,45 @@
-import { app, dialog } from 'electron';
+import { app, dialog, shell } from 'electron';
 import type { NsisUpdater } from 'electron-updater';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, type KeyObject } from 'node:crypto';
 import { load } from 'js-yaml';
 import { verifyUpdateSignature } from './update-signature.js';
 import { trustedUpdateConfig } from './update-policy.js';
 import { RecoverableNsisUpdater } from './update-installer.js';
+import { configureManifestUpdateFeed } from './manifest-update-feed.js';
+import { installerName, updatePublicKey } from './update-manifest.js';
+
+function packagedUpdateTrust() {
+  let config: unknown;
+  try {
+    config = load(fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return;
+    const configPath = path.join(app.getAppPath(), 'package.json');
+    const { rajcordUpdatePublicKey } = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+      rajcordUpdatePublicKey?: unknown;
+    };
+    const key = updatePublicKey(rajcordUpdatePublicKey);
+    if (key) return { key, configPath };
+    return;
+  }
+  if (trustedUpdateConfig(config))
+    return {
+      publishers: Array.isArray(config.publisherName)
+        ? config.publisherName
+        : [config.publisherName],
+    };
+}
 
 export function configureUpdates(
   prepareInstall: () => Promise<void>,
   installFailed: () => void = () => {},
+  updateProgress: (progress: number) => void = () => {},
 ) {
   let updater: NsisUpdater | undefined;
   let publishers: string[] = [];
+  let manifestTrust: { key: KeyObject; configPath: string } | undefined;
   let busy = false;
   let ready = false;
   let downloadedFile: string | undefined;
@@ -47,6 +73,8 @@ export function configureUpdates(
     instance.allowDowngrade = false;
     instance.disableWebInstaller = true;
     instance.logger = null; // Do not log URLs, downloaded metadata or profiles.
+    if (manifestTrust)
+      configureManifestUpdateFeed(instance, manifestTrust.key, manifestTrust.configPath);
     instance.on('error', () => {
       if (instance !== updater) return;
       ready = false;
@@ -59,50 +87,66 @@ export function configureUpdates(
   };
   if (app.isPackaged && process.platform === 'win32') {
     try {
-      const config = load(
-        fs.readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'),
-      );
-      if (trustedUpdateConfig(config)) {
-        publishers = Array.isArray(config.publisherName)
-          ? config.publisherName
-          : [config.publisherName];
+      const trust = packagedUpdateTrust();
+      if (trust) {
+        if (trust.publishers) publishers = trust.publishers;
+        else manifestTrust = trust;
         updater = createUpdater();
       }
     } catch {
-      /* Unsigned builds deliberately have no update feed. */
+      /* Missing or invalid packaged trust configuration disables updates. */
     }
   }
-  const install = async () => {
+  const install = async (restartApproved = false) => {
     if (!updater || !ready || busy || installingUpdater) return;
     busy = true;
     let installerCalled = false;
     try {
-      const answer = await dialog.showMessageBox({
-        type: 'question',
-        title: 'Restart Rajcord?',
-        message: 'Restart Rajcord to install the verified update?',
-        detail: 'This disconnects any active voice call.',
-        buttons: ['Later', 'Restart and install'],
-        defaultId: 0,
-        cancelId: 0,
-      });
-      if (answer.response !== 1) return;
+      if (
+        !restartApproved &&
+        (
+          await dialog.showMessageBox({
+            type: 'question',
+            title: 'Restart Rajcord?',
+            message: 'Restart Rajcord to install the verified update?',
+            detail: 'This disconnects any active voice call.',
+            buttons: ['Later', 'Restart and install'],
+            defaultId: 0,
+            cancelId: 0,
+          })
+        ).response !== 1
+      )
+        return;
       const file = downloadedFile;
       let verified = false;
       try {
         verified =
           !!file &&
           hashFile(file) === downloadedHash &&
-          (await verifyUpdateSignature(publishers, file)) === null;
+          (manifestTrust !== undefined || (await verifyUpdateSignature(publishers, file)) === null);
       } catch {
         /* Removed/unreadable cached files cannot be installed. */
       }
-      if (!verified) {
+      if (!verified || !file) {
         ready = false;
         await show('The update signature could not be verified. Installation was blocked.');
         return;
       }
       await prepareInstall();
+      if (manifestTrust) {
+        // Session cleanup can await the server. Check the cached file again just before launch.
+        if (hashFile(file) !== downloadedHash) {
+          ready = false;
+          throw new Error('The cached installer changed.');
+        }
+        installingUpdater = updater;
+        installerCalled = true;
+        // Preserve Windows' normal handling for a downloaded executable.
+        fs.writeFileSync(file + ':Zone.Identifier', '[ZoneTransfer]\r\nZoneId=3\r\n');
+        if (await shell.openPath(file)) throw new Error('Windows did not open the installer.');
+        app.quit();
+        return;
+      }
       installingUpdater = updater;
       installerCalled = true;
       updater.quitAndInstall(false, true);
@@ -121,7 +165,7 @@ export function configureUpdates(
     if (!updater) {
       if (interactive)
         await show(
-          'Automatic updates require a signed Rajcord installation. Install a reviewed release manually.',
+          'Automatic updates are unavailable in this installation. Download a reviewed release manually.',
         );
       return;
     }
@@ -130,6 +174,7 @@ export function configureUpdates(
       return;
     }
     busy = true;
+    let offeredUpdate = false;
     try {
       if (recreateUpdater) {
         updater = createUpdater();
@@ -141,33 +186,51 @@ export function configureUpdates(
         if (interactive) await show('Rajcord is up to date.');
         return;
       }
+      offeredUpdate = true;
       const answer = await dialog.showMessageBox({
         type: 'question',
         title: 'Rajcord update',
-        message: 'A new Rajcord version is available. Download it now?',
-        buttons: ['Later', 'Download'],
+        message: manifestTrust
+          ? 'A new Rajcord version is available.'
+          : 'A new Rajcord version is available. Download it now?',
+        ...(manifestTrust
+          ? {
+              detail:
+                'Rajcord closes after opening the installer, disconnecting any active voice call.',
+            }
+          : {}),
+        buttons: ['Later', manifestTrust ? 'Download and install' : 'Download'],
         defaultId: 0,
         cancelId: 0,
       });
       if (answer.response !== 1) return;
+      if (manifestTrust) updateProgress(2);
       const files = await updater.downloadUpdate();
+      const file = files.length === 1 ? files[0] : undefined;
+      const hash = file ? hashFile(file) : undefined;
+      const expectedHash = result.updateInfo?.files?.[0]?.sha512;
       if (
-        files.length !== 1 ||
-        !files[0] ||
-        (await verifyUpdateSignature(publishers, files[0])) !== null
+        !file ||
+        !hash ||
+        (manifestTrust
+          ? hash !== expectedHash ||
+            path.basename(file) !== installerName(result.updateInfo.version)
+          : (await verifyUpdateSignature(publishers, file)) !== null)
       )
         throw new Error('Signature verification failed.');
-      downloadedFile = files[0];
-      downloadedHash = hashFile(downloadedFile);
+      downloadedFile = file;
+      downloadedHash = manifestTrust ? expectedHash : hash;
       ready = true;
     } catch {
-      await show(
-        'The update check or signature verification failed. No update was installed. Try again later.',
-      );
+      if (!manifestTrust || interactive || offeredUpdate)
+        await show(
+          'The update check or signature verification failed. No update was installed. Try again later.',
+        );
     } finally {
+      if (manifestTrust && offeredUpdate) updateProgress(-1);
       busy = false;
     }
-    if (ready) await install();
+    if (ready) await install(manifestTrust !== undefined);
   };
   if (updater) {
     timer = setTimeout(() => {
