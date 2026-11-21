@@ -42,6 +42,8 @@ The Chromium call fixture also delivered the watch-link closure and share remova
 
 At 768 and 320 px, the Chromium workspace fixture confirmed that the call header and toolbar controls fit inside the panel and accept pointer input while watching and while sharing and watching together. At 390 and 1440 px, opening account settings from Activity kept keyboard focus in the dialog and Escape returned focus to Activity.
 
+At 390 px, the keyboard fixture joined voice from the navigation drawer and waited for the drawer to close. **Back to channel** then returned focus to **Open call view** and kept voice connected. Reopening through **Activity → Browse call** returned focus to Activity.
+
 # Fixed-format gameplay sharing — 2026-11-19
 
 Six local Edge clients joined a voice room. One publisher sent the same high-motion CS:GO recording to two direct viewers at 1920×1080, 60 fps and 20 Mb/s per viewer. The capture used Chromium’s file-backed fake device. The application set the native fixed degradation preference before the offer and verified the selected encoding settings. Each row represents a separate run of thirteen five-second intervals on the same Ryzen 5 5600 / RTX 3060 Ti workstation.

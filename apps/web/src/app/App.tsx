@@ -91,8 +91,9 @@ function Community() {
   const [wide, setWide] = useState(() => window.matchMedia('(min-width: 1201px)').matches);
   const activityVisible = !screenOpen && (wide ? activityPinned : membersOpen);
   const activityTrigger = useRef<HTMLButtonElement>(null);
-  const returnToActivity = useRef(false);
+  const callReturnFocus = useRef<'activity' | 'navigation' | null>(null);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
+  const mobileCallTrigger = useRef<HTMLButtonElement>(null);
   function dismissActivity() {
     if (wide) setActivityPinned(false);
     else setMembersOpen(false);
@@ -275,15 +276,27 @@ function Community() {
       navQuery.removeEventListener('change', updateNav);
     };
   }, []);
+  const voiceStatus = call?.voice.status;
   useEffect(() => {
     if (screenOpen) {
+      if (mobile) callReturnFocus.current = 'navigation';
       setMobile(false);
       setMembersOpen(false);
-    } else if (returnToActivity.current) {
-      returnToActivity.current = false;
-      activityTrigger.current?.focus({ preventScroll: true });
+      return;
     }
-  }, [screenOpen]);
+    const origin = callReturnFocus.current;
+    callReturnFocus.current = null;
+    if (origin === 'activity') {
+      activityTrigger.current?.focus({ preventScroll: true });
+    } else if (origin === 'navigation') {
+      const room = mobileCallTrigger.current;
+      const target =
+        voiceStatus !== 'idle' && room?.checkVisibility() && !room.disabled
+          ? room
+          : navigationTrigger.current;
+      target?.focus({ preventScroll: true });
+    }
+  }, [mobile, screenOpen, voiceStatus]);
   const unreadTotal = conversations.reduce((total, c) => total + c.unreadCount, 0);
   useEffect(() => {
     document.title = (unreadTotal ? '(' + unreadTotal + ') ' : '') + 'Rajcord';
@@ -543,7 +556,11 @@ function Community() {
             </button>
           )}
         </header>
-        <MobileVoiceControls voiceSession={voiceSession} callOpen={screenOpen} />
+        <MobileVoiceControls
+          voiceSession={voiceSession}
+          callOpen={screenOpen}
+          roomButton={mobileCallTrigger}
+        />
         <ScreenFeature
           voiceChannels={voiceChannels}
           chatName={current?.name}
@@ -620,7 +637,7 @@ function Community() {
           streamActivity={
             <StreamActivity
               onOpen={() => {
-                returnToActivity.current = true;
+                callReturnFocus.current = 'activity';
               }}
             />
           }

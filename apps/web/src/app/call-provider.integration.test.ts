@@ -1492,13 +1492,15 @@ it('keeps sidebar geometry and every dock control stable when opening and closin
 
 it('offers separate touch targets for muting, deafening, sharing and leaving from phone chat', async () => {
   const phoneFixture = sidebarFixture
+    .replace('StrictMode, useState }', 'StrictMode, useState, useRef }')
+    .replace('f.moreChannels=', 'const roomButton=useRef(null);f.moreChannels=')
     .replace(
       'import { CommunitySidebar }',
       "import { MobileVoiceControls } from '/src/app/VoiceDock.tsx';\nimport { CommunitySidebar }",
     )
     .replace(
       "h('main',{className:'chat'},h(ActivityButton",
-      "h('main',{className:'chat'},h(MobileVoiceControls,{voiceSession:dock,callOpen}),h(ActivityButton",
+      "h('main',{className:'chat'},h(MobileVoiceControls,{voiceSession:dock,callOpen,roomButton}),h(ActivityButton",
     )
     .replace('open:async()=>setScreenOpen(true)', 'open:async setup=>{f.openedSetup=setup}')
     .replace(
@@ -1779,7 +1781,7 @@ f.mount();`,
 
 it('returns focus to the mobile dock action that opened the call view', async () => {
   const mobileFixture = screenUiFixture
-    .replace('StrictMode, useState }', 'StrictMode, useState, useSyncExternalStore }')
+    .replace('StrictMode, useState }', 'StrictMode, useState, useRef, useSyncExternalStore }')
     .replace(
       'import { ScreenPanel }',
       "import { MobileVoiceControls } from '/src/app/VoiceDock.tsx';\nimport { ScreenPanel }",
@@ -1787,11 +1789,11 @@ it('returns focus to the mobile dock action that opened the call view', async ()
     .replace('open:true,prepared:false', 'open:false,prepared:false')
     .replace(
       "return panel?h('div'",
-      "const callOpen=useSyncExternalStore(f.screens.subscribe,()=>f.screens.inspect().open);return panel?h('div'",
+      "const roomButton=useRef(null);const callOpen=useSyncExternalStore(f.screens.subscribe,()=>f.screens.inspect().open);return panel?h('div'",
     )
     .replace(
       "h('main',{className:'chat'},h(ScreenPanel",
-      "h('main',{className:'chat'},h(MobileVoiceControls,{voiceSession:{status:'connected',channelName:'The lounge'},callOpen}),h(ScreenPanel",
+      "h('main',{className:'chat'},h(MobileVoiceControls,{voiceSession:{status:'connected',channelName:'The lounge'},callOpen,roomButton}),h(ScreenPanel",
     );
   await mountedFixture(
     async (browser) => {
@@ -1862,7 +1864,7 @@ const workspaceScreenFixture = screenUiFixture
     "localStorage.setItem('tricord-notification-prompt:account','seen');\nconst style=document.createElement",
   );
 
-it('returns focus to Activity after closing a call opened from its mobile drawer', async () => {
+it('returns focus to the call dock after joining from mobile navigation and to Activity after browsing the call', async () => {
   await mountedFixture(
     async (browser) => {
       await browser.call('Emulation.setDeviceMetricsOverride', {
@@ -1871,30 +1873,37 @@ it('returns focus to Activity after closing a call opened from its mobile drawer
         deviceScaleFactor: 1,
         mobile: true,
       });
+      const enter = async () => {
+        const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', text: '\r', ...key });
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+      };
       await browser.wait("document.querySelector('.mobile-menu')?.checkVisibility()");
-      await browser.js("document.querySelector('.mobile-menu').click()");
-      await browser.wait("!!document.querySelector('.mobile-open [data-voice-channel-id=lounge]')");
+      await browser.js("document.querySelector('.mobile-menu').focus()");
+      await enter();
+      await browser.wait("document.activeElement.getAttribute('aria-label')==='Close navigation'");
       await browser.js(`fixture.deviceList=[
         {kind:'audioinput',deviceId:'mic',label:'Microphone',groupId:'m'},
         {kind:'audioinput',deviceId:'default',label:'Synthetic device',groupId:'m'},
         {kind:'audiooutput',deviceId:'speaker',label:'Speakers',groupId:'s'},
         {kind:'audiooutput',deviceId:'default',label:'Synthetic device',groupId:'s'}
       ];
-        document.querySelector('[data-voice-channel-id=lounge]').click()`);
+        document.querySelector('[data-voice-channel-id=lounge]').focus()`);
+      await enter();
       await browser.wait('fixture.captureCalls===1');
       await browser.js('fixture.finishCapture()');
       await browser.wait("!!document.querySelector('.voice-dock[data-voice-status=connected]')");
-      await browser.wait("document.activeElement.matches('.screen-close')");
-      await browser.js("document.querySelector('.screen-close').click()");
       await browser.wait(
-        "!document.querySelector('#screen-panel') && !document.querySelector('.mobile-open')",
+        "document.activeElement.matches('.screen-close') && getComputedStyle(document.querySelector('.sidebar')).visibility==='hidden'",
       );
-
-      const enter = async () => {
-        const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
-        await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', text: '\r', ...key });
-        await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
-      };
+      await enter();
+      await browser.wait("!document.querySelector('#screen-panel')");
+      await browser.js(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      expect(await browser.js("document.activeElement.getAttribute('aria-label')")).toBe(
+        'Open call view',
+      );
       await browser.js("document.querySelector('.members-action').focus()");
       await enter();
       await browser.wait(

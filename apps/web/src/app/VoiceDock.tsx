@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import { Avatar } from '@tricord/ui';
 import {
   Headphones,
@@ -60,9 +60,11 @@ function DeafenToggle({ session }: { session: VoiceSessionDock | null }) {
 export function MobileVoiceControls({
   voiceSession,
   callOpen,
+  roomButton,
 }: {
   voiceSession: VoiceSessionDock | null;
   callOpen: boolean;
+  roomButton: RefObject<HTMLButtonElement | null>;
 }) {
   const screens = useCall()?.screens;
   const phase = useSyncExternalStore(
@@ -71,14 +73,13 @@ export function MobileVoiceControls({
   );
   const sharing = phase === 'sharing';
   const [error, setError] = useState('');
-  const roomButton = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     if (callOpen) return;
     const trigger = returnFocus.current;
     returnFocus.current = null;
     if (trigger) (trigger.disabled ? roomButton.current : trigger)?.focus({ preventScroll: true });
-  }, [callOpen]);
+  }, [callOpen, roomButton]);
   if (!voiceSession) return null;
   async function openCall(setup: boolean, trigger: HTMLButtonElement) {
     setError('');
