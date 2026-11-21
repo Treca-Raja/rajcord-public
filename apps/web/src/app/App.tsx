@@ -91,6 +91,7 @@ function Community() {
   const [wide, setWide] = useState(() => window.matchMedia('(min-width: 1201px)').matches);
   const activityVisible = !screenOpen && (wide ? activityPinned : membersOpen);
   const activityTrigger = useRef<HTMLButtonElement>(null);
+  const returnToActivity = useRef(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
   function closeActivity() {
     if (wide) setActivityPinned(false);
@@ -275,6 +276,9 @@ function Community() {
     if (screenOpen) {
       setMobile(false);
       setMembersOpen(false);
+    } else if (returnToActivity.current) {
+      returnToActivity.current = false;
+      activityTrigger.current?.focus({ preventScroll: true });
     }
   }, [screenOpen]);
   const unreadTotal = conversations.reduce((total, c) => total + c.unreadCount, 0);
@@ -610,7 +614,13 @@ function Community() {
           connected={connected}
           userId={state.user.id}
           drawer={membersOpen && !screenOpen}
-          streamActivity={<StreamActivity onOpen={() => setMembersOpen(false)} />}
+          streamActivity={
+            <StreamActivity
+              onOpen={() => {
+                returnToActivity.current = true;
+              }}
+            />
+          }
           close={closeActivity}
           settings={() => openSettings('people')}
           retry={() => {

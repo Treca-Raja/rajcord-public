@@ -1834,6 +1834,92 @@ it('returns focus to the mobile dock action that opened the call view', async ()
   );
 });
 
+it('returns focus to Activity after closing a call opened from its mobile drawer', async () => {
+  const appFixture = screenUiFixture
+    .replace(
+      'import { ScreenPanel }',
+      "import { App } from '/src/app/App.tsx';\nimport { ScreenPanel }",
+    )
+    .replace('open:true,prepared:false', 'open:false,prepared:false')
+    .replace(
+      "shares,watching:'first',watchingShareIds:['first']",
+      'shares:[],watching:null,watchingShareIds:[]',
+    )
+    .replace(
+      'h(AuthRoot,{screenApplication:application},h(View))',
+      'h(App,{screenApplication:application})',
+    )
+    .replace(
+      "if(path==='/api/account/sessions')",
+      `if(path==='/api/conversations') return response({conversations:[]});
+ if(path==='/api/invitations') return response({invitations:[]});
+ if(path==='/api/members') return response({users:[]});
+ if(path==='/api/channel-categories') return response({categories:[],nextAfter:null});
+ if(path==='/api/account/sessions')`,
+    )
+    .replace(
+      'const style=document.createElement',
+      "localStorage.setItem('tricord-notification-prompt:account','seen');\nconst style=document.createElement",
+    );
+  await mountedFixture(
+    async (browser) => {
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await browser.wait("document.querySelector('.mobile-menu')?.checkVisibility()");
+      await browser.js("document.querySelector('.mobile-menu').click()");
+      await browser.wait("!!document.querySelector('.mobile-open [data-voice-channel-id=lounge]')");
+      await browser.js(`fixture.deviceList=[
+        {kind:'audioinput',deviceId:'mic',label:'Microphone',groupId:'m'},
+        {kind:'audioinput',deviceId:'default',label:'Synthetic device',groupId:'m'},
+        {kind:'audiooutput',deviceId:'speaker',label:'Speakers',groupId:'s'},
+        {kind:'audiooutput',deviceId:'default',label:'Synthetic device',groupId:'s'}
+      ];
+        document.querySelector('[data-voice-channel-id=lounge]').click()`);
+      await browser.wait('fixture.captureCalls===1');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait("!!document.querySelector('.voice-dock[data-voice-status=connected]')");
+      await browser.wait("document.activeElement.matches('.screen-close')");
+      await browser.js("document.querySelector('.screen-close').click()");
+      await browser.wait(
+        "!document.querySelector('#screen-panel') && !document.querySelector('.mobile-open')",
+      );
+
+      const enter = async () => {
+        const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', text: '\r', ...key });
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+      };
+      await browser.js("document.querySelector('.members-action').focus()");
+      await enter();
+      await browser.wait(
+        "document.querySelector('.stream-activity button')?.textContent.trim()==='Browse call'",
+      );
+      await browser.js("document.querySelector('.stream-activity button').focus()");
+      await enter();
+      await browser.wait("document.activeElement.matches('.screen-close')");
+      expect(await browser.js("!!document.querySelector('#workspace-activity')")).toBe(false);
+      await enter();
+      await browser.wait("!document.querySelector('#screen-panel')");
+      await browser.js(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      expect(await browser.js('document.activeElement.className')).toContain('members-action');
+      expect(
+        await browser.js("!!document.querySelector('.voice-dock[data-voice-status=connected]')"),
+      ).toBe(true);
+      expect(
+        await browser.js("document.querySelector('.members-action').getAttribute('aria-expanded')"),
+      ).toBe('false');
+    },
+    'approved',
+    appFixture,
+  );
+});
+
 it('shows the whole call in a balanced grid, switches streams, adds multi-view, and opens participant volume from call tiles', async () => {
   await mountedFixture(
     async (browser) => {

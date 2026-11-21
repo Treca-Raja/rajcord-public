@@ -63,7 +63,9 @@ export function StreamActivity({ onOpen }: { onOpen: () => void }) {
       <button
         onClick={() => {
           setError('');
-          void screens.open().then(onOpen, (cause: unknown) => {
+          const opening = screens.open();
+          if (screens.inspect().open) onOpen();
+          void opening.catch((cause: unknown) => {
             setError(cause instanceof Error ? cause.message : 'Could not open the call.');
           });
         }}
