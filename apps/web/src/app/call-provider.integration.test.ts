@@ -2026,6 +2026,14 @@ it('opens mobile voice navigation from a channel link while a stream is playing'
           watching:fixture.screens.inspect().watching
         })`),
       ).toEqual({ drawer: true, focus: gameId, visible: true, watching: 'first' });
+      const escape = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 };
+      await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', ...escape });
+      await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', ...escape });
+      await browser.wait(
+        "getComputedStyle(document.querySelector('.sidebar')).visibility==='hidden'",
+      );
+      expect(await browser.js("document.activeElement.matches('.channel-reference')")).toBe(true);
+      expect(await browser.js('fixture.screens.inspect().watching')).toBe('first');
     },
     'approved',
     app,

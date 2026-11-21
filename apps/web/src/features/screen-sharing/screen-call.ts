@@ -22,6 +22,7 @@ import type { VoiceScreenSession, VoiceState } from '../voice/contracts';
 import { setScreenCaptureFormat, type WebScreenCapture } from './screen-capture';
 import { ScreenPeer } from './screen-peer';
 import type { ScreenReceiveHandle } from './screen-receiver';
+import { ScreenPlaybackError } from './screen-playback';
 import { publicScreenIceServers, screenIceServers } from './screen-ice';
 import { requireFixedScreenFormat, screenVideoRequest } from './screen-quality';
 import { screenRenewalPermit } from './screen-renewal';
@@ -219,13 +220,19 @@ export class ScreenCall {
           element.remove();
           return;
         }
+        element.setAttribute('aria-label', 'Shared screen video');
+        const existingTile = this.elements.get(linkId);
+        if (existingTile) {
+          existingTile.querySelector('video')?.remove();
+          existingTile.prepend(element);
+          return;
+        }
         const tile = document.createElement('div');
         tile.className = 'screen-incoming-tile';
         tile.dataset.screenShareId = incoming.shareId;
         tile.setAttribute('role', 'button');
         tile.tabIndex = 0;
         tile.setAttribute('aria-label', 'Shared screen. Activate to change the viewing layout.');
-        element.setAttribute('aria-label', 'Shared screen video');
         const label = document.createElement('span');
         label.className = 'screen-incoming-label';
         label.textContent = 'Shared screen';
@@ -1153,6 +1160,7 @@ export class ScreenCall {
       } else if (!this.state.watching || this.preferredWatch === shareId) {
         this.updateWatching({ watching: shareId, playback: 'Connecting…' });
       } else this.updateWatching({});
+      let retryPlaybackOnTimeout = false;
       handle.subscribe((state) => {
         if (this.receiving.get(shareId) !== incoming) return;
         if (state.phase === 'closed' || state.phase === 'paused-hidden') {
@@ -1175,9 +1183,26 @@ export class ScreenCall {
           this.update({
             playback: state.playback?.error?.message ?? state.playback?.phase ?? state.phase,
           });
-        if (state.phase === 'ready' && state.playback?.phase === 'idle') {
+        const playback = state.playback;
+        if (
+          playback?.phase === 'playing' ||
+          playback?.phase === 'paused' ||
+          (playback?.error && playback.error.code !== 'timeout')
+        )
+          retryPlaybackOnTimeout = false;
+        const startup = playback?.phase === 'idle';
+        const retry =
+          retryPlaybackOnTimeout &&
+          playback?.error?.code === 'timeout' &&
+          !playback.pendingNative &&
+          !this.state.hidden &&
+          this.current(binding);
+        if (state.phase === 'ready' && (startup || retry)) {
+          retryPlaybackOnTimeout = false;
           this.configurePlayback();
+          retryPlaybackOnTimeout = startup;
           void handle.play().catch((cause) => {
+            if (startup && cause instanceof ScreenPlaybackError && cause.code === 'timeout') return;
             if (this.receiving.get(shareId) === incoming) this.error(cause);
           });
         }

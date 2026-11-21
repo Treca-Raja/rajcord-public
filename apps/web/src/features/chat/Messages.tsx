@@ -32,7 +32,11 @@ import type {
   ChannelReference,
 } from '@tricord/shared';
 import { useAuth } from '../account';
-import { encodeChannelReferences, referenceLabel } from './channel-references';
+import {
+  encodeChannelReferences,
+  referenceLabel,
+  type NavigateToChannel,
+} from './channel-references';
 import { deliverMessage } from './message-send';
 import { EmojiText } from '../../shared/emoji/EmojiText';
 import { trackMessageReading } from './message-reading';
@@ -58,7 +62,7 @@ export function Messages({
   navigation: (NotificationTarget & { version: number }) | null;
   onAccessLost: (id: string) => void;
   channels: ChannelReference[];
-  onChannel: (channel: ChannelReference) => void;
+  onChannel: NavigateToChannel;
 }) {
   const { state, request, socket, connected } = useAuth();
   const storedDraft = useSyncExternalStore(

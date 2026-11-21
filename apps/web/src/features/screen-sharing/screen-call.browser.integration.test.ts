@@ -26,6 +26,27 @@ navigator.mediaDevices.getDisplayMedia=async(options)=>{
  return stream;
 };`;
 
+const delayedFirstPlayback = `
+(() => {
+ const {play, pause} = HTMLMediaElement.prototype;
+ const pending = new WeakMap();
+ HTMLMediaElement.prototype.play = function () {
+  if (!this.hasAttribute('data-screen-playback')) return play.call(this);
+  window.__screenTest.playbackStarts = (window.__screenTest.playbackStarts ?? 0) + 1;
+  if (window.__screenTest.playbackStarts !== 1) return play.call(this);
+  return new Promise((resolve, reject) => pending.set(this, reject));
+ };
+ HTMLMediaElement.prototype.pause = function () {
+  const reject = pending.get(this);
+  if (reject) {
+   pending.delete(this);
+   reject(new DOMException('Test playback was interrupted', 'AbortError'));
+  }
+  return pause.call(this);
+ };
+})();
+`;
+
 for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
   it(
     'shares ' +
@@ -102,7 +123,10 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         for (const account of [publisher, viewer]) {
           const browser = await launch();
           browsers.push(browser);
-          await browser.call('Page.addScriptToEvaluateOnNewDocument', { source: captureScript });
+          await browser.call('Page.addScriptToEvaluateOnNewDocument', {
+            source:
+              captureScript + (sound === 'none' && account === viewer ? delayedFirstPlayback : ''),
+          });
           await setup(browser, account.token, origin);
           await browser.js("document.querySelector('.screen-launcher > button').click()");
           await browser.wait("document.querySelector('#screen-panel')?.dataset.phase==='ready'");
@@ -205,8 +229,20 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         await b.js(
           "[...document.querySelectorAll('.screen-share-item')].find(item=>item.textContent.includes('Screen owner')).querySelector('.screen-share-action').click()",
         );
-        await b.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
+        const playingVideo =
+          "document.querySelector('[data-screen-playback]')?.videoWidth>0 && !document.querySelector('[data-screen-playback]').paused";
+        await b.wait(
+          sound === 'none'
+            ? 'window.__screenTest.playbackStarts===2 && ' + playingVideo
+            : playingVideo,
+        );
         if (sound === 'none') {
+          expect(
+            await b.js(`({
+              starts:window.__screenTest.playbackStarts,
+              tiles:document.querySelectorAll('.screen-incoming-tile').length
+            })`),
+          ).toEqual({ starts: 2, tiles: 1 });
           const thumbnail =
             "document.querySelector('#screen-participants .screen-stream-thumbnail')";
           const player = "document.querySelector('[data-screen-playback]')";

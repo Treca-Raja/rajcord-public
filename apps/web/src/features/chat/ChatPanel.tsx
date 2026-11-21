@@ -10,6 +10,7 @@ import type {
 import { CircleAlert, Pin, MessageSquare, RefreshCw, X, ArrowUpRight } from 'lucide-react';
 import { useAuth } from '../account';
 import { MessageCard } from './MessageCard';
+import type { NavigateToChannel } from './channel-references';
 
 export type OpenChatPanel = { kind: 'pins' } | { kind: 'thread'; anchorId: string };
 type PanelView =
@@ -38,7 +39,7 @@ export const ChatPanel = memo(function ChatPanel({
   onThread: (item: ChatMessage) => void;
   onUpdate: Parameters<typeof MessageCard>[0]['onUpdate'];
   channels: ChannelReference[];
-  onChannel: (channel: ChannelReference) => void;
+  onChannel: NavigateToChannel;
   replyTargetId?: string | null;
 }) {
   const { request, state, socket } = useAuth();

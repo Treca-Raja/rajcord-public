@@ -94,6 +94,7 @@ function Community() {
   const callReturnFocus = useRef<'activity' | 'navigation' | null>(null);
   const previousScreenOpen = useRef(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
+  const navigationOpener = useRef<HTMLButtonElement | null>(null);
   const mobileCallTrigger = useRef<HTMLButtonElement>(null);
   function dismissActivity() {
     if (wide) setActivityPinned(false);
@@ -157,7 +158,17 @@ function Community() {
   }
   function closeNavigation() {
     setMobile(false);
-    requestAnimationFrame(() => navigationTrigger.current?.focus({ preventScroll: true }));
+    const opener = navigationOpener.current;
+    navigationOpener.current = null;
+    requestAnimationFrame(() => {
+      const target =
+        opener?.isConnected &&
+        !opener.disabled &&
+        opener.checkVisibility({ visibilityProperty: true })
+          ? opener
+          : navigationTrigger.current;
+      target?.focus({ preventScroll: true });
+    });
   }
   function selectConversation(conversation: Conversation) {
     setSelected(conversation.id);
@@ -283,6 +294,7 @@ function Community() {
     previousScreenOpen.current = screenOpen;
     if (screenOpen) {
       if (mobile) callReturnFocus.current = 'navigation';
+      navigationOpener.current = null;
       setMobile(false);
       setMembersOpen(false);
       return;
@@ -326,7 +338,7 @@ function Community() {
   );
   const referenceList = useRef(channelReferences);
   referenceList.current = channelReferences;
-  const navigateChannel = useCallback((channel: ChannelReference) => {
+  const navigateChannel = useCallback((channel: ChannelReference, trigger: HTMLButtonElement) => {
     if (
       !referenceList.current.some((entry) => entry.id === channel.id && entry.kind === channel.kind)
     ) {
@@ -339,7 +351,10 @@ function Community() {
       setMobile(false);
     } else {
       setVoiceNavigation((previous) => ({ id: channel.id, version: (previous?.version ?? 0) + 1 }));
-      if (window.innerWidth <= 750) setMobile(true);
+      if (window.innerWidth <= 750) {
+        navigationOpener.current = trigger;
+        setMobile(true);
+      }
     }
   }, []);
   const categories = channelCategories(conversations, categoryPage.categories);
@@ -522,7 +537,14 @@ function Community() {
             aria-label="Toggle navigation"
             aria-controls="community-sidebar"
             aria-expanded={mobile}
-            onClick={() => setMobile(!mobile)}
+            onClick={(event) => {
+              if (mobile) {
+                closeNavigation();
+                return;
+              }
+              navigationOpener.current = event.currentTarget;
+              setMobile(true);
+            }}
           >
             <Menu size={20} />
           </button>

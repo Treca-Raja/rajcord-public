@@ -7,6 +7,7 @@ import type {
   ScreenSelectRequest,
 } from '@tricord/shared';
 import { ScreenCall } from './screen-call';
+import { ScreenPlaybackError } from './screen-playback';
 import { ScreenLifetime } from './capture-session';
 import type { ScreenSocket } from './screen-socket';
 import type { OwnedScreenBinding } from './screen-binding';
@@ -1219,6 +1220,46 @@ it('retains stream audio controls across close and reopen and applies them to ev
   expect(first.stop).toHaveBeenCalledTimes(1);
   expect(first.setVolume).toHaveBeenLastCalledWith(0.35);
 });
+
+it.each(['recovered', 'timed out again', 'stopped'] as const)(
+  'bounds automatic playback startup retry when the watch is %s',
+  async (outcome) => {
+    const f = await fixture();
+    f.call.observeVoice(voiceState());
+    const receiver = f.openIncoming.mock.results[0]!.value;
+    const firstPlay = deferred();
+    const timeout = new ScreenPlaybackError('timeout', 'Playback operation timed out.');
+    receiver.play.mockImplementationOnce(() => firstPlay.promise);
+    receiver.ready();
+    const playback = receiver.inspect().playback!;
+    const failed = { ...playback, phase: 'error', error: timeout } as const;
+    receiver.update({ playback: { ...failed, pendingNative: true } });
+    firstPlay.reject(timeout);
+    await flush();
+    expect(receiver.play).toHaveBeenCalledTimes(1);
+    expect(f.call.inspect().playback).toBe(timeout.message);
+
+    if (outcome === 'stopped') {
+      f.call.stopWatching();
+      receiver.update({ playback: { ...failed, pendingNative: false } });
+      expect(receiver.play).toHaveBeenCalledTimes(1);
+      return;
+    }
+    receiver.play.mockImplementationOnce(async () => {
+      if (outcome === 'timed out again') {
+        receiver.update({ playback: { ...failed, pendingNative: false } });
+        throw timeout;
+      }
+      receiver.update({ playback: { ...playback, phase: 'playing' } });
+    });
+    receiver.update({ playback: { ...failed, pendingNative: false } });
+    await flush();
+    expect(receiver.play).toHaveBeenCalledTimes(2);
+    expect(receiver.setOutput).toHaveBeenLastCalledWith('headphones');
+    expect(f.call.inspect().error).toBe(outcome === 'recovered' ? '' : timeout.message);
+    if (outcome === 'recovered') expect(f.call.inspect().playback).toBe('playing');
+  },
+);
 
 it('rejects invalid stream volume without changing the retained controls or receiver', async () => {
   const f = await fixture();

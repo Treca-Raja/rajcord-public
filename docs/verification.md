@@ -42,7 +42,9 @@ The Chromium call fixture also delivered the watch-link closure and share remova
 
 At 768 and 320 px, the Chromium workspace fixture confirmed that the call header and toolbar controls fit inside the panel and accept pointer input while watching and while sharing and watching together. At 390 and 1440 px, opening account settings from Activity kept keyboard focus in the dialog and Escape returned focus to Activity.
 
-At 390 px, the keyboard fixture joined voice from the navigation drawer and waited for the drawer to close. **Back to channel** then returned focus to **Open call view** and kept voice connected. Reopening through **Activity → Browse call** returned focus to Activity. During a watched stream, activating a voice-channel link from the in-call chat kept the drawer open, focused the linked room and preserved the watch.
+At 390 px, the keyboard fixture joined voice from the navigation drawer and waited for the drawer to close. **Back to channel** then returned focus to **Open call view** and kept voice connected. Reopening through **Activity → Browse call** returned focus to Activity. During a watched stream, activating a voice-channel link from the in-call chat focused the linked room. Escape returned focus to the link while the same stream stayed selected.
+
+The loopback playback fixture held the viewer's first native `play()` call until the startup timeout. After the native operation settled, the retry presented actual video in the same tile. Unit coverage confirmed that a second timeout surfaces the error and stopping the watch prevents a retry. The separate nine-viewer loopback case also passed.
 
 # Fixed-format gameplay sharing — 2026-11-19
 

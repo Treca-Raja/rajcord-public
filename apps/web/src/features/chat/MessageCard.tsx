@@ -6,6 +6,7 @@ import { Avatar } from '@tricord/ui';
 import { MessageBody } from './MessageBody';
 import { GifPreviews } from './GifPreviews';
 import { MessageMenu, type MessageMenuAction } from './MessageMenu';
+import type { NavigateToChannel } from './channel-references';
 import { EmojiGlyph, EmojiText } from '../../shared/emoji/EmojiText';
 
 const shortTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -64,7 +65,7 @@ export const MessageCard = memo(function MessageCard({
     body?: string,
   ) => Promise<void>;
   channels?: ChannelReference[];
-  onChannel?: (channel: ChannelReference) => void;
+  onChannel?: NavigateToChannel;
 }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
