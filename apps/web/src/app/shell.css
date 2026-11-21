@@ -753,7 +753,7 @@
   display: none;
 }
 @media (max-width: 750px) {
-  .mobile-call-controls {
+  .mobile-call-controls:not([hidden]) {
     display: flex;
     flex-shrink: 0;
     flex-wrap: wrap;

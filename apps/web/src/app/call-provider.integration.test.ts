@@ -1498,7 +1498,7 @@ it('offers separate touch targets for muting, deafening, sharing and leaving fro
     )
     .replace(
       "h('main',{className:'chat'},h(ActivityButton",
-      "h('main',{className:'chat'},h(MobileVoiceControls,{voiceSession:dock}),h(ActivityButton",
+      "h('main',{className:'chat'},h(MobileVoiceControls,{voiceSession:dock,callOpen}),h(ActivityButton",
     )
     .replace('open:async()=>setScreenOpen(true)', 'open:async setup=>{f.openedSetup=setup}')
     .replace(
@@ -1549,6 +1549,53 @@ it('offers separate touch targets for muting, deafening, sharing and leaving fro
     },
     'approved',
     phoneFixture,
+  );
+});
+
+it('dismisses participant volume before closing mobile navigation with Escape', async () => {
+  const mobileFixture = sidebarFixture
+    .replace(
+      '[callOpen,setCallOpen]=useState(false)',
+      '$&,[mobileOpen,setMobileOpen]=useState(true)',
+    )
+    .replace("mobile-open'+(callOpen", "'+(mobileOpen?'mobile-open':'')+(callOpen")
+    .replace(
+      'mobileOpen:false,onCloseNavigation:()=>{}',
+      'mobileOpen,onCloseNavigation:()=>setMobileOpen(false)',
+    );
+  await mountedFixture(
+    async (browser) => {
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await browser.wait('!!window.fixture?.call?.screens');
+      await browser.js("fixture.call.controls.join('lounge')");
+      await browser.wait("!!document.querySelector('.voice-member:not(:disabled)')");
+      await browser.js(`fixture.volumeTrigger = document.querySelector('.voice-member:not(:disabled)');
+        fixture.volumeTrigger.focus();
+        fixture.volumeTrigger.click();`);
+      await browser.wait("document.activeElement.matches('.voice-participant-popup input')");
+      const escape = {
+        key: 'Escape',
+        code: 'Escape',
+        windowsVirtualKeyCode: 27,
+      };
+      await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', ...escape });
+      await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', ...escape });
+      await browser.wait("!document.querySelector('.voice-participant-popup')");
+      expect(
+        await browser.js(`document.querySelector('.sidebar').getAttribute('aria-modal') === 'true' &&
+          document.activeElement === fixture.volumeTrigger`),
+      ).toBe(true);
+      await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', ...escape });
+      await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', ...escape });
+      await browser.wait("!document.querySelector('.sidebar').hasAttribute('aria-modal')");
+    },
+    'approved',
+    mobileFixture,
   );
 });
 
@@ -1729,6 +1776,63 @@ stopWatchingShare:id=>f.screenSet({watchingShareIds:screenState.watchingShareIds
 const application={runtime:{attachCall:()=>({connectVoice:()=>{},stop:()=>{},release:()=>{}})},createCall:()=>({controls:()=>f.screens,observeVoice:()=>{},stopSource:()=>{},stopWatching:()=>{},dispose:()=>{}})};
 f.mount();`,
   );
+
+it('returns focus to the mobile dock action that opened the call view', async () => {
+  const mobileFixture = screenUiFixture
+    .replace('StrictMode, useState }', 'StrictMode, useState, useSyncExternalStore }')
+    .replace(
+      'import { ScreenPanel }',
+      "import { MobileVoiceControls } from '/src/app/VoiceDock.tsx';\nimport { ScreenPanel }",
+    )
+    .replace('open:true,prepared:false', 'open:false,prepared:false')
+    .replace(
+      "return panel?h('div'",
+      "const callOpen=useSyncExternalStore(f.screens.subscribe,()=>f.screens.inspect().open);return panel?h('div'",
+    )
+    .replace(
+      "h('main',{className:'chat'},h(ScreenPanel",
+      "h('main',{className:'chat'},h(MobileVoiceControls,{voiceSession:{status:'connected',channelName:'The lounge'},callOpen}),h(ScreenPanel",
+    );
+  await mountedFixture(
+    async (browser) => {
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await browser.wait("!!document.querySelector('.mobile-call-room')");
+      const room = '.mobile-call-room';
+      const share = '.mobile-call-share';
+      for (const step of [
+        { action: room, expected: room },
+        { action: share, expected: share },
+        { action: share, expected: room, connecting: true },
+      ]) {
+        await browser.wait(`document.querySelector('${step.action}:enabled')?.checkVisibility()`);
+        await browser.js(`fixture.openAction = document.querySelector('${step.action}');
+          fixture.openAction.focus();
+          fixture.openAction.click();`);
+        expect(
+          await browser.js(`({
+            open: fixture.screens.inspect().open,
+            phase: fixture.screens.inspect().phase,
+            disabled: fixture.openAction.disabled
+          })`),
+          JSON.stringify(step),
+        ).toMatchObject({ open: true });
+        await browser.wait("document.activeElement.matches('.screen-close')");
+        expect(await browser.js('!fixture.openAction.checkVisibility()')).toBe(true);
+        if (step.connecting) await browser.js("fixture.screenSet({phase:'connecting'})");
+        await browser.js("document.querySelector('.screen-close').click()");
+        await browser.wait("!document.querySelector('.screen-panel')");
+        expect(await browser.js(`document.activeElement.matches('${step.expected}')`)).toBe(true);
+      }
+    },
+    'approved',
+    mobileFixture,
+  );
+});
 
 it('shows the whole call in a balanced grid, switches streams, adds multi-view, and opens participant volume from call tiles', async () => {
   await mountedFixture(

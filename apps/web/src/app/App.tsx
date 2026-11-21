@@ -536,7 +536,7 @@ function Community() {
             </button>
           )}
         </header>
-        {!screenOpen && <MobileVoiceControls voiceSession={voiceSession} />}
+        <MobileVoiceControls voiceSession={voiceSession} callOpen={screenOpen} />
         <ScreenFeature
           voiceChannels={voiceChannels}
           chatName={current?.name}

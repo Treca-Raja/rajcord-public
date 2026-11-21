@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Avatar } from '@tricord/ui';
 import {
   Headphones,
@@ -57,7 +57,13 @@ function DeafenToggle({ session }: { session: VoiceSessionDock | null }) {
   );
 }
 
-export function MobileVoiceControls({ voiceSession }: { voiceSession: VoiceSessionDock | null }) {
+export function MobileVoiceControls({
+  voiceSession,
+  callOpen,
+}: {
+  voiceSession: VoiceSessionDock | null;
+  callOpen: boolean;
+}) {
   const screens = useCall()?.screens;
   const phase = useSyncExternalStore(
     screens?.subscribe ?? noSubscription,
@@ -65,11 +71,21 @@ export function MobileVoiceControls({ voiceSession }: { voiceSession: VoiceSessi
   );
   const sharing = phase === 'sharing';
   const [error, setError] = useState('');
+  const roomButton = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (callOpen) return;
+    const trigger = returnFocus.current;
+    returnFocus.current = null;
+    if (trigger) (trigger.disabled ? roomButton.current : trigger)?.focus({ preventScroll: true });
+  }, [callOpen]);
   if (!voiceSession) return null;
-  async function openCall(setup: boolean) {
+  async function openCall(setup: boolean, trigger: HTMLButtonElement) {
     setError('');
     try {
-      await screens?.open(setup);
+      const opening = screens?.open(setup);
+      if (screens?.inspect().open) returnFocus.current = trigger;
+      await opening;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not open the call view.');
     }
@@ -80,14 +96,16 @@ export function MobileVoiceControls({ voiceSession }: { voiceSession: VoiceSessi
       data-voice-status={voiceSession.status}
       role="group"
       aria-label="Current voice call"
+      hidden={callOpen}
     >
       <button
+        ref={roomButton}
         type="button"
         className="mobile-call-room"
         disabled={!screens}
         aria-label="Open call view"
         title={'Open call view · ' + voiceSession.channelName}
-        onClick={() => runInBackground(openCall(false))}
+        onClick={(event) => runInBackground(openCall(false, event.currentTarget))}
       >
         <Radio size={16} aria-hidden="true" />
         <span>
@@ -112,7 +130,9 @@ export function MobileVoiceControls({ voiceSession }: { voiceSession: VoiceSessi
             voiceSession.status === 'joining' ||
             ['connecting', 'preparing', 'choosing', 'publishing'].includes(phase)
           }
-          onClick={() => (sharing ? screens.stopSource() : runInBackground(openCall(true)))}
+          onClick={(event) =>
+            sharing ? screens.stopSource() : runInBackground(openCall(true, event.currentTarget))
+          }
         >
           {sharing ? <Square size={16} /> : <MonitorUp size={17} />}
         </button>

@@ -66,7 +66,8 @@ export function CommunitySidebar({
       role={mobileOpen ? 'dialog' : undefined}
       aria-modal={mobileOpen || undefined}
       onKeyDown={(event) => {
-        if (!mobileOpen) return;
+        // Portaled controls handle their own keys outside the drawer.
+        if (!mobileOpen || !event.currentTarget.contains(event.target as Node)) return;
         if (event.key === 'Escape') {
           event.preventDefault();
           onCloseNavigation();
