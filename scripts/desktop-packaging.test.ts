@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { expect, it } from 'vitest';
 
@@ -11,6 +12,18 @@ const { minimatch }: { minimatch: (file: string, pattern: string) => boolean } =
 function excluded(file: string) {
   return files.some((pattern) => pattern.startsWith('!') && minimatch(file, pattern.slice(1)));
 }
+
+it('keeps minimatch versions affected by GHSA-g3hv-75wg-m249 out of the workspace lockfile', () => {
+  const { load } = require('js-yaml') as { load: (contents: string) => unknown };
+  const lockfile = load(readFileSync(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8')) as {
+    packages: Record<string, unknown>;
+  };
+  const affected = Object.keys(lockfile.packages).filter((name) =>
+    /^minimatch@(?:(?:[7-9]|10)\.|11\.0\.0\b)/.test(name),
+  );
+
+  expect(affected).toEqual([]);
+});
 
 it.each([
   'dist/server-url.test.js',
