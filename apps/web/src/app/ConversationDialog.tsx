@@ -34,7 +34,7 @@ export function ConversationDialog({
   busy: boolean;
   reload: () => Promise<void>;
   create: (event: FormEvent<HTMLFormElement>, kind: Conversation['kind']) => Promise<void>;
-  openDialog: (mode: ConversationDialogMode) => void;
+  openDialog: (mode: ConversationDialogMode, trigger?: HTMLElement) => void;
   setModal: (mode: ConversationDialogMode | null) => void;
   action: (work: () => Promise<unknown>) => Promise<void>;
   nextCategoryPage: string | null;
@@ -85,7 +85,7 @@ export function ConversationDialog({
               categories={categories}
               busy={busy}
               create={create}
-              openCategories={() => openDialog('categories')}
+              openCategories={(trigger) => openDialog('categories', trigger)}
             />
           ) : modal === 'dm' ? (
             <NewDirectMessageDialog
@@ -108,7 +108,10 @@ export function ConversationDialog({
                   />
                 )}
                 {current.kind === 'channel' && (
-                  <button className="text-button" onClick={() => openDialog('categories')}>
+                  <button
+                    className="text-button"
+                    onClick={(event) => openDialog('categories', event.currentTarget)}
+                  >
                     Create or manage categories
                   </button>
                 )}

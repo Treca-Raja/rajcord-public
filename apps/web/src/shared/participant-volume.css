@@ -1,0 +1,82 @@
+.voice-popup-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-participant-popup button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  color: #b5bac1;
+  padding: 7px;
+  border-radius: 5px;
+}
+
+.voice-participant-popup button:hover {
+  background: #404249;
+  color: #fff;
+}
+
+.voice-participant-popup {
+  position: fixed;
+  z-index: 1200;
+  width: min(248px, calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1px solid #45464e;
+  border-radius: 9px;
+  background: #313338;
+  color: #f2f3f5;
+  box-shadow: 0 8px 24px #0006;
+  animation: voice-popup-in 120ms ease-out;
+}
+
+.voice-popup-heading {
+  margin-bottom: 16px;
+}
+
+.voice-popup-heading strong {
+  overflow-wrap: anywhere;
+  flex: 1;
+}
+
+.voice-participant-popup label {
+  display: block;
+  border-top: 1px solid #45464e;
+  padding-top: 14px;
+  font-size: 13px;
+}
+
+.voice-participant-popup output {
+  float: right;
+  color: #b5bac1;
+}
+
+.voice-participant-popup input {
+  display: block;
+  width: 100%;
+  margin: 14px 0 4px;
+  accent-color: #8b80ff;
+}
+
+.voice-participant-popup :is(input, button):focus-visible {
+  outline: 2px solid #8b80ff;
+  outline-offset: 2px;
+}
+
+@keyframes voice-popup-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-participant-popup {
+    animation: none;
+  }
+}

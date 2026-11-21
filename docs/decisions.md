@@ -184,6 +184,14 @@ Output routing is serialized per audio element. Late routing completions cannot 
 
 The shared Edge harness supplies synthetic WAV audio, isolated profiles, CDP instrumentation and bounded startup waits. Capacity testing uses production rate limits, ten sessions, nine incoming streams per session, steady audio counters, deliberate signaling interruption and an actual API restart. Only the test's room prefix, database and temporary profiles are cleaned up.
 
+### Local microphone noise suppression
+
+When the existing noise suppression preference is on, the capture owner requests the exact microphone with Chromium suppression off and keeps echo cancellation and automatic gain independent. A 48 kHz Web Audio context resamples input from other capture rates and downmixes to mono. The AudioWorklet runs Xiph RNNoise 0.2 on 480-sample frames. It reuses one frame of fixed WASM memory between render quanta and publishes only its derived track through LiveKit. Rajcord does not add a speech-probability gate.
+
+The voice controller owns the hardware track and worklet output together. Mute and deafen silence the capture while keeping the publication in place. Input or processing changes release the old capture before reopening the device so Chromium applies the new constraints. Ordinary reconnects keep the graph. If startup or rendering fails, Rajcord retries the same microphone with Chromium suppression and reports the effective engine. It avoids retrying RNNoise within that call. Turning suppression off uses the direct capture with Chromium suppression disabled.
+
+The standalone WASM embeds Xiph's upstream little model. The build checks the source and model hashes, uses a pinned Emscripten image, fixes v0.2's portable header references and reserves a 512 KiB WASM stack. Vite emits same-origin WASM and worklet assets and includes the redistribution notices. The page CSP permits WebAssembly compilation specifically. Chromium and the hosted Electron renderer use the same assets. [Build script](../scripts/build-rnnoise.sh) · [Redistribution notices](../apps/web/public/rnnoise-licenses.txt)
+
 ## Main-window P2P screen sharing (2026-11-13)
 
 Screens use dedicated authenticated signaling and direct WebRTC peers, separate from microphone-only LiveKit voice. Public Cloudflare STUN helps discover direct routes. Optional `SCREEN_TURN_HOST=turn.rajcord.com` reuses the existing LiveKit TURN listeners with binding-authorized, short-lived allocation credentials; direct routes remain preferred. TURN stays off until configured and forced-relay media acceptance passes, including both peers needing the same relay. No new service or public port is required. Resolution, frame rate and video bitrate are independent publisher/viewer ceilings; 4K remains deferred.

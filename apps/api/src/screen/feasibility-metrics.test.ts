@@ -32,16 +32,35 @@ describe('screen feasibility evidence', () => {
       runtime: 'edge',
       codec: 'H264',
       content: 'motion',
+      hint: 'auto',
       phaseMs: 5000,
+      bitrates: [2000000, 8000000],
     });
     for (const arg of [
       '--runtime=chrome',
-      '--codec=AV1',
+      '--codec=HEVC',
       '--content=private-desktop',
+      '--hint=unsupported',
       '--phase-ms=1',
       '--phase-ms=Infinity',
+      '--bitrates-mbps=6,3',
+      '--bitrates-mbps=6,6',
+      '--bitrates-mbps=6,',
       '--url=https://example.com',
     ])
       expect(() => options([arg])).toThrow();
+  });
+  it('accepts a single bitrate or a fixed-format sweep in the requested order', () => {
+    expect(options(['--bitrates-mbps=17']).bitrates).toEqual([17000000]);
+    expect(options(['--hint=fixed', '--bitrates-mbps=12,6,8,17,20'])).toMatchObject({
+      hint: 'fixed',
+      bitrates: [12000000, 6000000, 8000000, 17000000, 20000000],
+    });
+  });
+  it.each(['VP8', 'H264', 'VP9', 'AV1'])('accepts %s for explicit codec qualification', (codec) => {
+    expect(options(['--codec=' + codec, '--content=text'])).toMatchObject({
+      codec,
+      content: 'text',
+    });
   });
 });

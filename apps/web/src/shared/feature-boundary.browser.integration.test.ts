@@ -93,7 +93,7 @@ it('isolates rendering failures, preserves sibling drafts and invokes media owne
     await browser.js(`window.fetch = async () => Response.json({csrfToken: 'private-fixture'});
       window.featureFixture.mode='auth'; window.featureFixture.render();`);
     await browser.wait(
-      'document.querySelector("[role=alert]")?.textContent.includes("invalid response")',
+      'document.querySelector("[role=alert]")?.textContent.includes("Could not check your account")',
     );
     expect(
       await browser.js('document.body.textContent.includes("Protected fixture content")'),

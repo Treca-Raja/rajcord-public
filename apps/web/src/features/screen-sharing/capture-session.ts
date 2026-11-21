@@ -2,6 +2,8 @@ import { runInBackground } from '../../shared/background';
 import type { ScreenPublishGrant, ScreenQuality, ScreenSound } from '@tricord/shared';
 import { WebScreenCapture, type LocalScreenCapture } from './screen-capture';
 import { adoptScreenRenewal, type ScreenRenewalPermit } from './screen-renewal';
+import { ScreenContentMonitor } from './screen-content';
+import { screenCodecSelection, type ScreenCodecSelection } from './screen-codec';
 
 export class ScreenLifetime {
   readonly generation = Object.freeze({});
@@ -58,6 +60,18 @@ export class ScreenLifetime {
 
 export class CaptureSession {
   private capture?: LocalScreenCapture;
+  private contentMonitor?: ScreenContentMonitor;
+  private codecWork?: Promise<ScreenCodecSelection>;
+  private codecInput?: {
+    quality: ScreenQuality;
+    width?: number;
+    height?: number;
+    frameRate?: number;
+  };
+  private codecState: ScreenCodecSelection = Object.freeze({
+    preferred: null,
+    status: 'unavailable',
+  });
   private readonly abort = new AbortController();
   private life: ScreenLifetime;
   private closed = false;
@@ -95,8 +109,32 @@ export class CaptureSession {
         throw new Error('Screen source ended.');
       }
       this.capture = capture;
+      this.contentMonitor = new ScreenContentMonitor(capture.video);
+      this.qualifyCodec(this.options.quality);
       runInBackground(capture.ended.then(() => this.stop()));
     });
+  }
+  private qualifyCodec(quality: ScreenQuality) {
+    const { width, height, frameRate } = this.borrow().video.getSettings();
+    const prior = this.codecInput;
+    if (
+      prior &&
+      prior.quality === quality &&
+      prior.width === width &&
+      prior.height === height &&
+      prior.frameRate === frameRate
+    )
+      return;
+    this.codecInput = { quality, width, height, frameRate };
+    const work = screenCodecSelection(
+      quality,
+      { width, height, frameRate },
+      this.abort.signal,
+    ).then((selection) => {
+      if (!this.closed && this.codecWork === work) this.codecState = selection;
+      return selection;
+    });
+    this.codecWork = work;
   }
   borrow() {
     if (
@@ -109,6 +147,20 @@ export class CaptureSession {
       throw new Error('Screen source ended.');
     return this.capture;
   }
+  content() {
+    return (
+      this.contentMonitor?.inspect() ??
+      Object.freeze({ kind: 'detail' as const, status: 'pending' as const })
+    );
+  }
+  codec() {
+    return this.codecState;
+  }
+  async codecPreference() {
+    if (this.closed) return null;
+    if (this.codecInput) this.qualifyCodec(this.codecInput.quality);
+    return this.codecWork ? (await this.codecWork).preferred : null;
+  }
   lifecycle() {
     this.borrow();
     return this.life;
@@ -118,6 +170,7 @@ export class CaptureSession {
     grant: ScreenPublishGrant,
     deadline: number,
     sourceGeneration: number,
+    quality: ScreenQuality = this.options.quality,
   ) {
     this.borrow();
     if (
@@ -126,12 +179,19 @@ export class CaptureSession {
       grant.share.sourceGeneration !== sourceGeneration ||
       grant.share.sound !== this.options.sound ||
       deadline <= Date.now() ||
-      grant.share.profile !== this.options.quality.profile ||
-      grant.share.videoBitrate !== this.options.quality.videoBitrate ||
-      grant.share.resolution !== this.options.quality.resolution ||
-      grant.share.frameRate !== this.options.quality.frameRate
+      grant.share.profile !== quality.profile ||
+      grant.share.videoBitrate !== quality.videoBitrate ||
+      grant.share.resolution !== quality.resolution ||
+      grant.share.frameRate !== quality.frameRate
     )
       throw new Error('Screen publication changed.');
+    if (
+      quality.profile !== this.options.quality.profile ||
+      quality.resolution !== this.options.quality.resolution ||
+      quality.frameRate !== this.options.quality.frameRate ||
+      quality.videoBitrate !== this.options.quality.videoBitrate
+    )
+      this.qualifyCodec(quality);
     const previous = this.life,
       publication = new ScreenLifetime(deadline);
     this.life = publication;
@@ -147,6 +207,7 @@ export class CaptureSession {
     this.closed = true;
     try {
       this.abort.abort();
+      this.contentMonitor?.dispose();
       this.capture?.dispose();
     } finally {
       try {

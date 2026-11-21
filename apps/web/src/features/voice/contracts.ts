@@ -13,8 +13,9 @@ export type VoiceControls = Pick<
   | 'resumeAudio'
   | 'volume'
   | 'setOutputVolume'
+  | 'setProcessing'
   | 'refreshDevices'
-> & { devices(): Promise<void> };
+> & { devices(): Promise<void>; joinChannel(id: string): Promise<void> };
 export type VoiceDevice = Readonly<Pick<MediaDeviceInfo, 'kind' | 'deviceId' | 'label'>>;
 export type VoiceSnapshot = Readonly<Omit<VoiceState, 'participants' | 'devices'>> & {
   devices: readonly VoiceDevice[];

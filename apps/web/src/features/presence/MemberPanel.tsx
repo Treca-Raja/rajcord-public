@@ -204,10 +204,6 @@ export function MemberPanel({
             <p className="member-note">No members in this view.</p>
           )}
         </div>
-        <p className="member-note">
-          Online means connected to Rajcord, including background apps. It does not mean reading or
-          available to answer.
-        </p>
         <div className="member-note">
           <button
             onClick={() => {
@@ -225,9 +221,6 @@ export function MemberPanel({
               ? 'Messages are saved to your server.'
               : 'Your draft stays here. We’ll catch up when connected.'}
           </p>
-        </div>
-        <div className="version">
-          RAJCORD <span>Good company.</span>
         </div>
       </aside>
     </>

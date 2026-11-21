@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopPickerSnapshot } from '@tricord/shared' with { 'resolution-mode': 'import' };
 import {
   DesktopCapturePolicy,
+  type CaptureSource,
   type CaptureDocument,
   type NativeCaptureRequest,
 } from './screen-capture-policy.js';
 
-type Source = { id: string; name: string; thumbnail: object };
+type Source = CaptureSource & { thumbnail: object };
 const policies: DesktopCapturePolicy<Source>[] = [];
 const flush = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
@@ -20,7 +21,10 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-function fixture(systemAudio: 'unqualified' | 'qualified-windows-loopback' = 'unqualified') {
+function fixture(
+  systemAudio: 'unqualified' | 'qualified-windows-loopback' = 'unqualified',
+  applicationAudio = false,
+) {
   const owner = {},
     frame = {},
     pickerContents = {},
@@ -60,6 +64,7 @@ function fixture(systemAudio: 'unqualified' | 'qualified-windows-loopback' = 'un
     openPicker,
     onError,
     systemAudio,
+    applicationAudio,
     timeoutMs: 1000,
   };
   const policy = new DesktopCapturePolicy(deps);
@@ -117,6 +122,13 @@ afterEach(() => {
 });
 
 describe('desktop capture consent boundary', () => {
+  it('passes local previews to the isolated picker without exposing native source IDs', async () => {
+    const f = fixture();
+    f.sources[0]!.previewDataUrl = 'data:image/jpeg;base64,AA==';
+    const { snapshot } = await f.ready();
+    expect(snapshot.sources[0]!.previewDataUrl).toBe('data:image/jpeg;base64,AA==');
+    expect(JSON.stringify(snapshot)).not.toContain('screen:1:0');
+  });
   it.each([
     { frame: null },
     { frame: {} },
@@ -210,6 +222,79 @@ describe('desktop capture consent boundary', () => {
     });
     expect(f.respond).not.toHaveBeenCalled();
   });
+  it.each(['stable', 'replaced', 'missing', 'unqualified'] as const)(
+    'binds application audio to the chosen native process identity: %s',
+    async (mode) => {
+      const f = fixture('qualified-windows-loopback', mode !== 'unqualified');
+      Object.assign(f.sources[1]!, {
+        applicationAudioId: 'applicationLoopback:123',
+        applicationIdentity: '123:1000',
+      });
+      const { snapshot, choice } = await f.ready({ sound: 'application' });
+      expect(snapshot.sources[0]!.sounds).toEqual(['none']);
+      expect(snapshot.sources[1]!.sounds).toEqual(
+        mode === 'unqualified' ? ['none'] : ['none', 'application'],
+      );
+      expect(JSON.stringify(snapshot)).not.toContain('applicationLoopback:123');
+      f.enumerate.mockResolvedValueOnce(
+        f.sources.map((source) => ({
+          ...source,
+          ...(mode === 'replaced' ? { applicationIdentity: '123:2000' } : {}),
+          ...(mode === 'missing' ? { applicationAudioId: undefined } : {}),
+        })),
+      );
+      const result = await f.policy.select(f.caller, {
+        ...choice,
+        handle: snapshot.sources[1]!.handle,
+        sound: 'application',
+      });
+      expect(result.ok).toBe(mode === 'stable');
+      if (mode === 'stable')
+        expect(f.respond).toHaveBeenCalledExactlyOnceWith({
+          video: f.sources[1],
+          audio: 'applicationLoopback:123',
+        });
+      else expect(f.respond.mock.calls.every(([grant]) => grant === null)).toBe(true);
+    },
+  );
+  it.each(['window', 'screen', 'unavailable'] as const)(
+    'automatically binds audio to the selected source kind: %s',
+    async (kind) => {
+      const f = fixture('qualified-windows-loopback', true);
+      if (kind !== 'unavailable')
+        Object.assign(f.sources[1]!, {
+          applicationAudioId: 'applicationLoopback:123',
+          applicationIdentity: '123:1000',
+        });
+      const { snapshot, choice } = await f.ready({ sound: 'source' });
+      expect(snapshot.sound).toBe('source');
+      expect(snapshot.sources[0]!.sounds).toEqual(['system']);
+      expect(snapshot.sources[1]!.sounds).toEqual(kind === 'unavailable' ? [] : ['application']);
+      const index = kind === 'screen' ? 0 : 1;
+      expect(
+        (
+          await f.policy.select(f.caller, {
+            ...choice,
+            handle: snapshot.sources[index]!.handle,
+            sound: 'none',
+          })
+        ).ok,
+      ).toBe(false);
+      const sound = kind === 'screen' ? 'system' : 'application';
+      const result = await f.policy.select(f.caller, {
+        ...choice,
+        handle: snapshot.sources[index]!.handle,
+        sound,
+      });
+      expect(result.ok).toBe(kind !== 'unavailable');
+      if (kind !== 'unavailable')
+        expect(f.respond).toHaveBeenCalledExactlyOnceWith({
+          video: f.sources[index],
+          audio: kind === 'screen' ? 'loopback' : 'applicationLoopback:123',
+        });
+      else expect(f.respond).not.toHaveBeenCalled();
+    },
+  );
   it('rejects injected raw source IDs, caller identities, missing consent, guessed and foreign handles without consuming a valid choice', async () => {
     const f = fixture(),
       { choice } = await f.ready();
@@ -243,6 +328,14 @@ describe('desktop capture consent boundary', () => {
         { id: 'screen:1:0', name: 'b', thumbnail: {} },
       ],
       [{ id: 'tab:1:0', name: 'Synthetic', thumbnail: {} }],
+      [
+        {
+          id: 'screen:3:0',
+          name: 'Synthetic',
+          thumbnail: {},
+          previewDataUrl: 'https://example.test/source.jpg',
+        },
+      ],
     ]) {
       const f = fixture();
       f.enumerate.mockResolvedValueOnce(sources);

@@ -152,10 +152,10 @@ function fixture(overrides: Partial<Parameters<typeof installNativeCapture>[0]> 
     );
     return callback;
   };
-  const select = () =>
+  const select = (sound: 'none' | 'system' | 'application' | 'source' = 'none') =>
     pickerPolicy.select(
       { webContents: pickerDocument.webContents, frame: pickerDocument.mainFrame },
-      { requestId: snapshot.requestId, handle: snapshot.sources[0]!.handle, sound: 'none' },
+      { requestId: snapshot.requestId, handle: snapshot.sources[0]!.handle, sound },
     );
   return {
     boundary,
@@ -485,6 +485,53 @@ it('requires the exact intent document generation and leaves system audio unqual
   expect(f.allowed()).toBe(false);
   expect(f.native({ audioRequested: true })).toHaveBeenCalledExactlyOnceWith(null);
 });
+it.each([false, true])(
+  'requires qualified main authority and the selected process for application sound: %s',
+  async (applicationAudio) => {
+    const f = fixture({ applicationAudio });
+    Object.assign(f.source, {
+      id: 'window:123:0',
+      video: { id: 'window:123:0', name: f.source.name },
+      applicationAudioId: 'applicationLoopback:456',
+      applicationIdentity: '456:1000',
+    });
+    f.issue({ sound: 'application' });
+    const callback = f.native({ audioRequested: true });
+    await flush();
+    if (applicationAudio) {
+      expect((await f.select('application')).ok).toBe(true);
+      await flush();
+      expect(callback).toHaveBeenCalledExactlyOnceWith({
+        video: f.source.video,
+        audio: 'applicationLoopback:456',
+      });
+    } else {
+      expect(callback).toHaveBeenCalledExactlyOnceWith(null);
+      expect(f.openPicker).not.toHaveBeenCalled();
+    }
+  },
+);
+it.each(['screen', 'window'] as const)(
+  'grants automatic %s audio only for the matching native source',
+  async (kind) => {
+    const f = fixture({ applicationAudio: true, systemAudio: 'qualified-windows-loopback' });
+    Object.assign(f.source, {
+      id: kind + ':123:0',
+      video: { id: kind + ':123:0', name: f.source.name },
+      applicationAudioId: 'applicationLoopback:456',
+      applicationIdentity: '456:1000',
+    });
+    f.issue({ sound: 'source' });
+    const callback = f.native({ audioRequested: true });
+    await flush();
+    expect((await f.select(kind === 'window' ? 'application' : 'system')).ok).toBe(true);
+    await flush();
+    expect(callback).toHaveBeenCalledExactlyOnceWith({
+      video: f.source.video,
+      audio: kind === 'window' ? 'applicationLoopback:456' : 'loopback',
+    });
+  },
+);
 it('rejects session takeover and removes all authority/lifecycle subscriptions on dispose', () => {
   const f = fixture();
   expect(() =>

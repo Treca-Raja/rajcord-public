@@ -6,10 +6,12 @@ import { MicrophonePermission, microphonePermissions } from './microphone-permis
 import { installNativeCapture } from './native-capture.js';
 import { createSessionCaptureAuthority } from './capture-authority-http.js';
 import { installScreenIpc } from './screen-ipc.js';
+import { applicationAudioSupported, applicationAudioSources } from './application-audio.js';
 import { app, BrowserWindow, session, dialog, ipcMain, shell, desktopCapturer } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { configureUpdates } from './updates.js';
+import { installWindowsChrome, windowsChromeOptions } from './window-chrome.js';
 import { Menu, Tray, nativeImage } from 'electron';
 const smoke = !app.isPackaged && process.argv.includes('--smoke');
 const authSmoke = !app.isPackaged && process.argv.includes('--auth-smoke');
@@ -109,6 +111,7 @@ app
       minHeight: 600,
       show: !smoke && !authSmoke,
       backgroundColor: '#16191f',
+      ...(process.platform === 'win32' ? windowsChromeOptions() : {}),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
@@ -137,14 +140,34 @@ app
       enabled: true,
       qualification: 'native-provider',
       systemAudio: process.platform === 'win32' ? 'consented-windows-loopback' : 'unqualified',
+      applicationAudio: applicationAudioSupported(),
       enumerate: async (signal) => {
         const sources = await desktopCapturer.getSources({
           types: ['screen', 'window'],
-          thumbnailSize: { width: 0, height: 0 },
+          thumbnailSize: { width: 320, height: 180 },
           fetchWindowIcons: false,
         });
         if (signal.aborted) throw new Error('Screen enumeration cancelled.');
-        return sources.map((source) => ({ id: source.id, name: source.name, video: source }));
+        const applicationSources = ['application', 'source'].includes(
+          captureAuthority.inspect()?.sound ?? '',
+        )
+          ? await applicationAudioSources(
+              sources.map((source) => source.id),
+              signal,
+            )
+          : new Map();
+        return sources.map((source) => {
+          const previewDataUrl = source.thumbnail.isEmpty()
+            ? undefined
+            : `data:image/jpeg;base64,${source.thumbnail.toJPEG(65).toString('base64')}`;
+          return {
+            id: source.id,
+            name: source.name,
+            ...applicationSources.get(source.id),
+            ...(previewDataUrl ? { previewDataUrl } : {}),
+            video: source,
+          };
+        });
       },
       onError: (code) => console.warn('Display capture boundary unavailable:', code),
     });
@@ -184,6 +207,7 @@ app
       authority: captureAuthority,
       trusted: trustedSender,
       systemSound: process.platform === 'win32',
+      applicationSound: applicationAudioSupported(),
     });
     const resetAvailability = (event: Electron.IpcMainEvent, ready: unknown) => {
       if (trustedSender(event) && typeof ready === 'boolean') setMicrophoneResetReady(ready);
@@ -226,6 +250,9 @@ app
       },
       () => {
         quitting = false;
+      },
+      (progress) => {
+        if (!win.isDestroyed()) win.setProgressBar(progress);
       },
     );
     const checkForUpdates = () => {
@@ -271,6 +298,7 @@ app
         },
       ]),
     );
+    if (process.platform === 'win32') installWindowsChrome(win, trustedSender);
     if (app.isPackaged) {
       win.on('query-session-end', () => {
         quitting = true;

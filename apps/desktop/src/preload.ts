@@ -4,6 +4,22 @@ import type {
   NativeNotificationResult,
   NativeNotificationTarget,
 } from './notification-policy.js';
+
+if (process.platform === 'win32' && process.isMainFrame) {
+  window.addEventListener(
+    'DOMContentLoaded',
+    () => {
+      const root = document.documentElement;
+      const updateAppearance = () => ipcRenderer.send('window:appearance', root.dataset.appearance);
+      new MutationObserver(updateAppearance).observe(root, {
+        attributeFilter: ['data-appearance'],
+      });
+      updateAppearance();
+    },
+    { once: true },
+  );
+}
+
 let microphoneResetListeners = 0;
 contextBridge.exposeInMainWorld(
   'tricordDesktop',

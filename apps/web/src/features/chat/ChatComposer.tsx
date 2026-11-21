@@ -126,6 +126,7 @@ export function ChatComposer({
   }
   const gifCommand = /^\/gif\s*$/i.test(body);
   function openGif() {
+    if (disabled || replyBlocked || sending) return;
     if (gifCommand) onChange('');
     setGifOpen(true);
     setDismissed(true);
@@ -173,7 +174,7 @@ export function ChatComposer({
         );
     } else if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      onSend(event);
+      event.currentTarget.form?.requestSubmit();
     }
   }
   return (
@@ -280,7 +281,7 @@ export function ChatComposer({
           className="composer-gif"
           aria-label="Search GIFs"
           title="Search GIFs · /gif"
-          disabled={disabled || replyBlocked}
+          disabled={disabled || replyBlocked || sending}
           aria-expanded={gifOpen}
           onClick={() => (gifOpen ? closeGif() : openGif())}
         >
@@ -297,7 +298,12 @@ export function ChatComposer({
         </button>
       </form>
       {gifCommand && !gifOpen && (
-        <button type="button" className="gif-command-suggestion" onClick={openGif}>
+        <button
+          type="button"
+          className="gif-command-suggestion"
+          disabled={disabled || replyBlocked || sending}
+          onClick={openGif}
+        >
           <strong>/gif</strong> Search GIFs <small>Enter to open</small>
         </button>
       )}

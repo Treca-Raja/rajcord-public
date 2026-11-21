@@ -11,13 +11,16 @@ class Bucket {
     this.tokens = burst;
     this.time = now;
   }
-  take(amount: number, now: number) {
+  available(amount: number, now: number) {
     this.tokens = Math.min(
       this.burst,
       this.tokens + (Math.max(0, now - this.time) * this.rate) / 1000,
     );
     this.time = now;
-    if (amount > this.tokens)
+    return amount <= this.tokens;
+  }
+  take(amount: number, now: number) {
+    if (!this.available(amount, now))
       throw new ScreenError('throttled', 429, 'Screen budget exceeded. Retry later.');
     this.tokens -= amount;
   }
@@ -52,10 +55,13 @@ export class ScreenBudget {
     this.aggregate = {
       control: new Bucket(10, 100, time),
       signal: new Bucket(1200, 1800, time),
-      renew: new Bucket(2, 30, time),
+      renew: new Bucket(8, 40, time),
       bytes: new Bucket(2621440, 5242880, time),
       snapshot: new Bucket(30, 30, time),
     };
+  }
+  snapshotAvailable() {
+    return this.aggregate.snapshot.available(1, this.now());
   }
   acquire(accountId: string, kind: Kind, bytes: number): () => void {
     const time = this.now();
@@ -79,6 +85,8 @@ export class ScreenBudget {
       this.accounts.set(accountId, account);
     }
     account.last = time;
+    if (!account.buckets[kind].available(1, time))
+      throw new ScreenError('throttled', 429, 'Screen budget exceeded. Retry later.');
     this.aggregate[kind].take(1, time);
     account.buckets[kind].take(1, time);
     this.aggregate.bytes.take(bytes, time);

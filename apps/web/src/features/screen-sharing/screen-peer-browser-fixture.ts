@@ -13,6 +13,7 @@ import type {
   ScreenSignalNotice,
 } from '@tricord/shared';
 import { ScreenPeer, type ScreenPeerLifecycle } from './screen-peer';
+import { ScreenContentMonitor } from './screen-content';
 import { createScreenReceiveLane, type ScreenReceiveHandle } from './screen-receiver';
 import type { ScreenPlaybackElement } from './screen-playback';
 import { selectionFixture } from '../../../../api/src/screen/selection-fixture';
@@ -79,6 +80,8 @@ export function createScreenPeerFixture(
   const incoming: MediaStreamTrack[] = [],
     sourceTracks: MediaStreamTrack[] = [];
   let peer: ScreenPeer | undefined, rtc: RTCPeerConnection | undefined;
+  let contentMonitor: ScreenContentMonitor | undefined;
+  let sourceMotion = true;
   let receiver: ScreenReceiveHandle | undefined;
   let plan: ReturnType<typeof selectionFixture>,
     selected: ReturnType<ReturnType<typeof selectionFixture>['select']>;
@@ -337,10 +340,10 @@ export function createScreenPeerFixture(
         const paint = canvas.getContext('2d')!;
         let step = 0;
         const render = () => {
-          paint.fillStyle = step % 2 ? '#123456' : '#c45d12';
+          paint.fillStyle = sourceMotion ? ['#123456', '#c45d12', '#f4f4f4'][step % 3]! : '#123456';
           paint.fillRect(0, 0, size.width, size.height);
           paint.fillStyle = '#fff';
-          paint.fillRect((step++ * 13) % (size.width - 40), 20, 40, 40);
+          paint.fillRect(((sourceMotion ? step++ : 0) * 13) % (size.width - 40), 20, 40, 40);
         };
         render();
         draw = setInterval(render, 50);
@@ -396,8 +399,10 @@ export function createScreenPeerFixture(
           sound: 'tab',
         };
       }
-      if (role === 'publisher')
+      if (role === 'publisher') {
         source = { video: sourceTracks[0]!, audio: sourceTracks[1]!, sound: 'tab' };
+        contentMonitor ??= new ScreenContentMonitor(source.video);
+      }
       current = Object.freeze({ generation: {}, deadline: grantDeadline });
       const lifecycle: ScreenPeerLifecycle = {
         inspect: () => current,
@@ -488,6 +493,7 @@ export function createScreenPeerFixture(
           lifecycle,
           createPeer: createNative,
           source,
+          content: () => contentMonitor!.inspect().kind,
           send,
           onTrack: inspectTrack,
           onError: (error) => {
@@ -505,6 +511,19 @@ export function createScreenPeerFixture(
     async offer() {
       if (!peer) throw new Error('Missing peer.');
       await observe(peer.offer(), operations);
+    },
+    async restartIce() {
+      if (!peer) throw new Error('Missing peer.');
+      await observe(peer.offer(true), operations);
+    },
+    mediaStatistics() {
+      return peer?.inspectMedia() ?? receiver?.inspectMedia();
+    },
+    contentAnalysis() {
+      return contentMonitor?.inspect();
+    },
+    sourceMotion(value: boolean) {
+      sourceMotion = value;
     },
     async setVideoQuality(request: unknown) {
       if (!peer) throw new Error('Missing peer.');
@@ -524,6 +543,7 @@ export function createScreenPeerFixture(
             kind: sender.track!.kind,
             source: { width, height, frameRate },
             encodings: sender.getParameters().encodings,
+            degradationPreference: sender.getParameters().degradationPreference,
           };
         });
     },
@@ -630,6 +650,12 @@ export function createScreenPeerFixture(
         local: local.candidateType,
         remote: remote.candidateType,
         protocol: local.protocol,
+        videoNacks: [...stats.values()]
+          .filter((row) => row.type === 'inbound-rtp' && row.kind === 'video')
+          .reduce((sum, row) => sum + (row.nackCount ?? 0), 0),
+        retransmittedVideoPackets: [...stats.values()]
+          .filter((row) => row.type === 'outbound-rtp' && row.kind === 'video')
+          .reduce((sum, row) => sum + (row.retransmittedPacketsSent ?? 0), 0),
         video: [...stats.values()]
           .filter((row) => row.type === 'inbound-rtp' && row.kind === 'video')
           .reduce((sum, row) => sum + (row.framesDecoded ?? 0), 0),
@@ -679,6 +705,7 @@ export function createScreenPeerFixture(
       clean(f.releaseCleanup);
       clean(() => lane?.dispose());
       clean(() => peer?.dispose());
+      clean(() => contentMonitor?.dispose());
       clean(() => {
         if (rtc && rtc.connectionState !== 'closed') rtc.close();
       });

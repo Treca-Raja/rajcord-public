@@ -1,3 +1,7 @@
+import { SCREEN_VIDEO_BITRATES } from '@tricord/shared';
+
+const feasibilityBitrates: readonly number[] = [...SCREEN_VIDEO_BITRATES, 17000000];
+
 export type Counters = {
   time: number;
   bytes: number;
@@ -37,18 +41,38 @@ export function delta(before: Counters, after: Counters) {
 }
 
 export function options(args: string[]) {
-  const result = { runtime: 'all', codec: 'VP8', content: 'motion', phaseMs: 10000 };
+  const result = {
+    runtime: 'all',
+    codec: 'VP8',
+    content: 'motion',
+    hint: 'auto',
+    phaseMs: 10000,
+    bitrates: [2000000, 8000000],
+  };
   for (const arg of args) {
-    const match = /^--(runtime|codec|content|phase-ms)=(.+)$/.exec(arg);
+    const match = /^--(runtime|codec|content|hint|phase-ms|bitrates-mbps)=(.+)$/.exec(arg);
     if (!match)
       throw new Error(
-        'Expected --runtime=edge|electron|all, --codec=VP8|H264, --content=motion|stress or --phase-ms=5000..60000.',
+        'Expected --runtime=edge|electron|all, --codec=VP8|H264|VP9|AV1, --content=motion|stress|text|static, --hint=auto|detail|motion|fixed, --bitrates-mbps=<screen bitrates> or --phase-ms=5000..60000.',
       );
     const [, key, value] = match;
     if (key === 'runtime' && ['edge', 'electron', 'all'].includes(value!)) result.runtime = value!;
-    else if (key === 'codec' && ['VP8', 'H264'].includes(value!)) result.codec = value!;
-    else if (key === 'content' && ['motion', 'stress'].includes(value!)) result.content = value!;
-    else if (
+    else if (key === 'codec' && ['VP8', 'H264', 'VP9', 'AV1'].includes(value!))
+      result.codec = value!;
+    else if (key === 'content' && ['motion', 'stress', 'text', 'static'].includes(value!))
+      result.content = value!;
+    else if (key === 'hint' && ['auto', 'detail', 'motion', 'fixed'].includes(value!))
+      result.hint = value!;
+    else if (key === 'bitrates-mbps') {
+      const rates = value!.split(',').map((rate) => Number(rate) * 1000000);
+      if (
+        !/^\d+(,\d+)*$/.test(value!) ||
+        rates.some((rate) => !feasibilityBitrates.includes(rate)) ||
+        new Set(rates).size !== rates.length
+      )
+        throw new Error('Choose distinct supported screen bitrates.');
+      result.bitrates = rates;
+    } else if (
       key === 'phase-ms' &&
       /^\d+$/.test(value!) &&
       Number(value) >= 5000 &&

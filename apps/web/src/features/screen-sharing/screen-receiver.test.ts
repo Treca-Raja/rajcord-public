@@ -56,6 +56,10 @@ class Rtc extends EventTarget {
     super.removeEventListener(name, callback);
   });
   getConfiguration = vi.fn(() => this.config);
+  setConfiguration = vi.fn((config: RTCConfiguration) => {
+    this.config = config;
+  });
+  getStats = vi.fn(async () => new Map() as RTCStatsReport);
   getTransceivers = vi.fn(() => this.transceivers);
   addTransceiver = vi.fn((_kind: string, init: RTCRtpTransceiverInit) => {
     const transceiver = { direction: init.direction };
@@ -102,7 +106,7 @@ function deferred<T>() {
   drains.push(() => resolve(undefined as T));
   return { promise, resolve, reject };
 }
-function fixture(sound: 'none' | 'tab' | 'system' = 'tab') {
+function fixture(sound: 'none' | 'tab' | 'system' | 'application' | 'source' = 'tab') {
   const rtcs: Rtc[] = [],
     elements: Element[] = [];
   const outgoing = new Track(),
@@ -231,6 +235,50 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+it('answers an ICE restart with rotated TURN credentials while a statistics read is pending', async () => {
+  const f = fixture('none');
+  const { request } = f.selection();
+  const initial = [
+    { urls: ['turn:relay.example:3478'], username: 'firstUser', credential: 'firstPassword' },
+  ];
+  let servers = initial;
+  const receiver = f.lane.open({
+    ...request,
+    iceServers: initial,
+    currentIceServers: () => servers,
+  });
+  const rtc = f.rtcs[0]!;
+  const offer = (revision: number) =>
+    receiver.receive({
+      epoch: request.endpoint.epoch,
+      linkId: request.endpoint.linkId,
+      revision,
+      sequence: revision,
+      payload: { type: 'offer', sdp: screenSdp('offer', false, 'test' + revision) },
+    });
+  await offer(1);
+  expect(rtc.setConfiguration).not.toHaveBeenCalled();
+  rtc.deliver(new Track());
+  const stats = deferred<RTCStatsReport>();
+  rtc.getStats.mockReturnValueOnce(stats.promise);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(rtc.getStats).toHaveBeenCalledOnce();
+  expect(f.lane.inspect().pending.statistics).toBe(true);
+  servers = [{ ...initial[0]!, username: 'renewedUser', credential: 'renewedPassword' }];
+  await offer(2);
+  expect(rtc.setConfiguration).toHaveBeenCalledExactlyOnceWith({
+    ...rtc.config,
+    iceServers: servers,
+  });
+  expect(rtc.createAnswer).toHaveBeenCalledTimes(2);
+  expect(receiver.inspect().phase).toBe('ready');
+  receiver.stop();
+  expect(f.lane.inspect().pending.statistics).toBe(true);
+  stats.resolve(new Map() as RTCStatsReport);
+  await flush();
+  expect(f.lane.inspect().pending.statistics).toBe(false);
+});
+
 it('owns one direct recvonly peer and exposes a narrow lane with immutable local state', async () => {
   const f = fixture(),
     first = f.open();
@@ -246,7 +294,7 @@ it('owns one direct recvonly peer and exposes a narrow lane with immutable local
     playback: null,
   });
   expect(Object.isFrozen(first.receiver.inspect())).toBe(true);
-  expect(() => f.lane.open(f.selection().request)).toThrowError(/outstanding|owned/);
+  expect(() => f.lane.open(first.request)).toThrowError(/receiver|outstanding|owned/);
   expect(f.rtcs).toHaveLength(1);
   first.receiver.stop();
   await flush();
@@ -256,7 +304,77 @@ it('owns one direct recvonly peer and exposes a narrow lane with immutable local
     expect.any(AbortSignal),
   );
 });
-it.each(['none', 'tab', 'system'] as const)(
+it('owns several distinct incoming links independently', async () => {
+  const f = fixture(),
+    first = f.open(),
+    second = f.open();
+  expect(f.lane.inspect()).toMatchObject({ activeCount: 2, capacity: null, occupied: true });
+  await Promise.all([ready(first), ready(second)]);
+  first.receiver.stop();
+  await flush();
+  expect(first.request.cleanup).toHaveBeenCalledOnce();
+  expect(first.receiver.inspect().phase).toBe('closed');
+  expect(second.receiver.inspect().phase).toBe('ready');
+  expect(f.lane.inspect().activeCount).toBe(1);
+  second.receiver.dispose();
+});
+it('admits more than nineteen receivers while retaining exact-link admission fences', () => {
+  const f = fixture();
+  const selected = f.selection();
+  f.lane.open(selected.request);
+  Array.from({ length: 20 }, () => f.open());
+  expect(f.lane.inspect()).toMatchObject({ activeCount: 21, capacity: null });
+  expect(() => f.lane.open(selected.request)).toThrowError(/already has a receiver/);
+  expect(f.rtcs).toHaveLength(21);
+  f.lane.dispose();
+});
+it('bounds retired work across distinct links and readmits after a raw operation settles', async () => {
+  const f = fixture('none');
+  const active = f.open();
+  await ready(active);
+  const stopped = f.open();
+  await ready(stopped);
+  const stats = deferred<RTCStatsReport>();
+  stopped.rtc.getStats.mockReturnValueOnce(stats.promise);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(stopped.rtc.getStats).toHaveBeenCalledOnce();
+  stopped.receiver.stop();
+  for (let i = 0; i < 8; i++) {
+    const selected = f.open();
+    const cleanup = deferred<void>();
+    vi.mocked(selected.request.cleanup).mockReturnValueOnce(cleanup.promise);
+    selected.receiver.stop();
+  }
+  await vi.advanceTimersByTimeAsync(5000);
+  const replacement = f.selection().request;
+  expect(() => f.lane.open(replacement)).toThrow(/outstanding work on stopped screen links/);
+  expect(f.rtcs).toHaveLength(10);
+  expect(active.receiver.inspect().phase).toBe('ready');
+  stats.resolve(new Map() as RTCStatsReport);
+  await flush();
+  f.lane.open(replacement);
+  expect(f.lane.inspect().activeCount).toBe(2);
+});
+it('keeps a closing receiver registered when a close observer reenters before cleanup', async () => {
+  const f = fixture();
+  const selected = f.open();
+  const cleanup = deferred<void>();
+  vi.mocked(selected.request.cleanup).mockReturnValueOnce(cleanup.promise);
+  let checked = false;
+  selected.receiver.subscribe((state) => {
+    if (state.phase === 'closed' && !checked) {
+      checked = true;
+      expect(() => f.lane.open(selected.request)).toThrow(/already has a receiver/);
+    }
+  });
+  selected.receiver.stop();
+  expect(checked).toBe(true);
+  expect(() => f.lane.open(selected.request)).toThrow(/already has a receiver/);
+  cleanup.resolve();
+  await flush();
+  f.lane.open(selected.request);
+});
+it.each(['none', 'tab', 'system', 'application', 'source'] as const)(
   'collects exactly negotiated %s tracks without sound substitution',
   async (sound) => {
     const f = fixture(sound),
@@ -378,7 +496,7 @@ it.each(['hide', 'stop', 'dispose', 'invalidate', 'ended'] as const)(
     expect(selected.receiver.inspect().phase).toBe(action === 'hide' ? 'paused-hidden' : 'closed');
     expect(selected.receiver.inspect().cleanup).toMatchObject({ status: 'pending', pending: true });
     expect(selected.listeners.size).toBe(0);
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     selected.receiver.stop();
     selected.receiver.dispose();
     selected.receiver.hide();
@@ -420,7 +538,7 @@ it.each(['sink', 'play'] as const)(
       await result;
       await flush();
       expect(f.lane.inspect().pending.playback).toBe(true);
-      for (let i = 0; i < 10; i++) expect(() => f.lane.open(f.selection().request)).toThrow();
+      for (let i = 0; i < 10; i++) expect(() => f.lane.open(selected.request)).toThrow();
       expect(f.rtcs).toHaveLength(1);
       if (late === 'resolve') raw.resolve();
       else raw.reject(new Error('Owned late native failure'));
@@ -451,7 +569,7 @@ it.each(['rtc', 'signal'] as const)(
     await result;
     await flush();
     expect(f.lane.inspect().pending[kind]).toBe(true);
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     raw.resolve();
     await flush();
     const next = f.open();
@@ -476,7 +594,7 @@ it.each(['resolve', 'reject'] as const)(
       pending: true,
     });
     expect(vi.mocked(selected.request.cleanup).mock.calls[0]![2].aborted).toBe(true);
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     if (late === 'resolve') raw.resolve();
     else raw.reject(new Error('Owned late cleanup failure'));
     await flush();
@@ -646,7 +764,7 @@ it.each(['resolve', 'reject'] as const)(
       expect(f.lane.inspect().pending.cleanup).toBe(true);
       f.lane.dispose();
       expect(selected.request.cleanup).toHaveBeenCalledOnce();
-      expect(() => f.lane.open(f.selection().request)).toThrow();
+      expect(() => f.lane.open(selected.request)).toThrow();
       if (late === 'resolve') raw.resolve();
       else raw.reject(lateError);
       await flush();
@@ -692,7 +810,7 @@ it.each(['throw', 'missing', 'expired'] as const)(
     });
     expect(selected.request.lifecycle.onInvalidated).not.toHaveBeenCalled();
     expect(f.options.createRtc).not.toHaveBeenCalled();
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     expect(f.options.onError).toHaveBeenCalledOnce();
     if (kind === 'throw') expect(f.options.onError).toHaveBeenCalledWith(failure);
     raw.resolve();
@@ -863,7 +981,7 @@ it('retains the native slot after playback timeout and local Stop, with no repla
   await expect(selected.receiver.play()).rejects.toMatchObject({ code: 'busy' });
   selected.receiver.stop();
   await flush();
-  expect(() => f.lane.open(f.selection().request)).toThrow();
+  expect(() => f.lane.open(selected.request)).toThrow();
   expect(f.rtcs).toHaveLength(1);
   raw.resolve();
   await flush();
@@ -876,13 +994,13 @@ it('rejects reentrant open during native construction and cleanup, without alloc
     selected = f.selection(),
     create = f.options.createRtc.getMockImplementation()!;
   f.options.createRtc.mockImplementationOnce((config) => {
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     return create(config);
   });
   const receiver = f.lane.open(selected.request);
   vi.mocked(selected.request.cleanup).mockImplementationOnce(async (reference) => {
     expect(Object.isFrozen(reference)).toBe(true);
-    expect(() => f.lane.open(f.selection().request)).toThrow();
+    expect(() => f.lane.open(selected.request)).toThrow();
     expect(f.rtcs[0]!.close).toHaveBeenCalledOnce();
     expect(Object.keys(reference).sort()).toEqual(['epoch', 'linkId']);
   });

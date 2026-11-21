@@ -4,6 +4,7 @@ import {
   parseScreenIce,
   parseScreenSignal,
   parseScreenReference,
+  screenQualityCeiling,
   type ScreenAck,
   type ScreenDescription,
   type ScreenLinkRequest,
@@ -23,6 +24,9 @@ import {
 } from './screen-quality';
 import { screenIceServers, sameScreenIceServers } from './screen-ice';
 import { adoptScreenRenewal, type ScreenRenewalPermit } from './screen-renewal';
+import { ScreenStatistics, type ScreenMediaSample } from './screen-statistics';
+import { screenCodecContentType } from './screen-codec';
+import type { ScreenContentKind } from './screen-content';
 
 // A local revocation/deadline seam, never a bearer grant. The signaling transport must
 // authenticate and freshly authorize both endpoints on the server for every delivery.
@@ -51,11 +55,15 @@ export type ScreenRtcPeer = Pick<
   setLocalDescription(description?: RTCLocalSessionDescriptionInit): Promise<void>;
   setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void>;
   addIceCandidate(candidate?: RTCIceCandidateInit | null): Promise<void>;
+  getStats?(): Promise<RTCStatsReport>;
+  setConfiguration?(configuration: RTCConfiguration): void;
 };
 type Task = { run(): Promise<void>; resolve(): void; reject(error: unknown): void };
 type Phase = 'idle' | 'offering' | 'awaiting-answer' | 'answering' | 'stable' | 'closed';
 const failure = (message: string) => new Error('Screen peer: ' + message);
 const ownedPeers = new WeakSet<ScreenRtcPeer>();
+
+const disconnectGraceMs = 3000;
 
 export class ScreenPeer {
   private readonly peer: ScreenRtcPeer;
@@ -90,6 +98,21 @@ export class ScreenPeer {
   private qualityRequested?: ScreenVideoRequest;
   private qualityApplied?: ScreenVideoApplied;
   private qualityPending = 0;
+  private readonly statistics = new ScreenStatistics();
+  private mediaSample: ScreenMediaSample | null = null;
+  private statisticsError = false;
+  private monitoring?: ReturnType<typeof setTimeout>;
+  private recovery?: ReturnType<typeof setTimeout>;
+  private recoveryInGrace = false;
+  private recoveryStarted = 0;
+  private recoveryAttempts = 0;
+  private connectedSince = 0;
+  private initialRequest?: ScreenVideoRequest;
+  private videoTransceiver?: RTCRtpTransceiver;
+  private preferredCodec: string | null = null;
+  private codecPreferenceError = false;
+  private statisticsPending = false;
+  private statisticsTimeout?: ReturnType<typeof setTimeout>;
 
   constructor(
     private readonly options: {
@@ -102,7 +125,10 @@ export class ScreenPeer {
       onError(error: Error): void;
       now?: () => number;
       iceServers?: readonly RTCIceServer[];
+      currentIceServers?: () => readonly RTCIceServer[];
       initialVideoQuality?: unknown;
+      content?: () => ScreenContentKind;
+      codecPreference?: () => Promise<string | null>;
     },
   ) {
     options = this.options = {
@@ -119,7 +145,7 @@ export class ScreenPeer {
     );
     if (
       !['publisher', 'viewer'].includes(options.endpoint.role) ||
-      !['none', 'tab', 'system'].includes(options.endpoint.sound)
+      !['none', 'tab', 'system', 'application', 'source'].includes(options.endpoint.sound)
     )
       throw failure('invalid endpoint.');
     const current = options.lifecycle.inspect();
@@ -153,7 +179,7 @@ export class ScreenPeer {
         if (track.readyState !== 'live' || !track.enabled) throw failure('source ended.');
       });
     } else if (options.source) throw failure('viewer cannot send capture.');
-    const initialVideo =
+    let initialVideo =
       options.initialVideoQuality === undefined
         ? undefined
         : this.source
@@ -161,6 +187,16 @@ export class ScreenPeer {
           : (() => {
               throw failure('only a publisher can set initial video quality.');
             })();
+    this.initialRequest = initialVideo?.request;
+    if (initialVideo) initialVideo = this.videoPlan(initialVideo.request);
+    if (
+      !options.content &&
+      this.source &&
+      this.initialRequest &&
+      'contentHint' in this.source.video
+    )
+      this.source.video.contentHint =
+        screenQualityCeiling(this.initialRequest.publisher).frameRate > 30 ? 'motion' : 'detail';
     const iceServers = screenIceServers(options.iceServers);
     this.peer = options.createPeer({
       iceServers: structuredClone(iceServers),
@@ -189,8 +225,7 @@ export class ScreenPeer {
         if (this.closed) return;
         try {
           this.check();
-          if (this.peer.connectionState === 'failed' || this.peer.connectionState === 'closed')
-            throw failure('connection ended.');
+          this.connectionChanged();
         } catch (error) {
           this.close(this.error(error));
         }
@@ -203,7 +238,10 @@ export class ScreenPeer {
             ? { sendEncodings: [initialVideo.encoding] }
             : {}),
         });
-        if (track === this.source?.video) this.videoSender = transceiver?.sender;
+        if (track === this.source?.video) {
+          this.videoSender = transceiver?.sender;
+          this.videoTransceiver = transceiver;
+        }
       }
       const unsubscribe = options.lifecycle.onInvalidated(() =>
         this.close(failure('lifecycle ended.')),
@@ -264,7 +302,7 @@ export class ScreenPeer {
     };
     return this.enqueue(async () => {
       target();
-      const plan = screenVideoPlan(request, track.getSettings());
+      const plan = this.videoPlan(request);
       const verify = () => {
         target();
         if (!sameScreenVideoSource(plan.source, screenVideoSource(track.getSettings())))
@@ -293,14 +331,18 @@ export class ScreenPeer {
         this.check();
         if (
           (this.source && this.videoSender && this.videoSender.track !== this.source.video) ||
-          (this.qualityApplied &&
-            (!this.source ||
-              !sameScreenVideoSource(
-                this.qualityApplied.plan.source,
-                screenVideoSource(this.source.video.getSettings()),
-              )))
+          (this.qualityApplied && !this.source)
         )
           throw new ScreenVideoQualityError('stale', 'Video sender source changed.');
+        if (
+          this.qualityApplied &&
+          this.source &&
+          !sameScreenVideoSource(
+            this.qualityApplied.plan.source,
+            screenVideoSource(this.source.video.getSettings()),
+          )
+        )
+          this.qualityApplied = undefined;
       } catch (error) {
         this.close(this.error(error));
       }
@@ -439,7 +481,7 @@ export class ScreenPeer {
     const ack = await this.wait(this.options.send(signal, this.abort.signal));
     if (!ack?.ok || ack.data?.delivered !== true) throw failure('signaling delivery rejected.');
   }
-  offer(): Promise<void> {
+  offer(iceRestart = false): Promise<void> {
     if (
       this.options.endpoint.role !== 'publisher' ||
       !['idle', 'stable'].includes(this.phase) ||
@@ -451,7 +493,45 @@ export class ScreenPeer {
     const revision = ++this.revision;
     this.begin();
     return this.enqueue(async () => {
-      const offer = await this.wait(this.peer.createOffer());
+      const request = this.qualityRequested ?? this.initialRequest;
+      if (request?.publisher.resolution !== undefined && this.videoSender) {
+        await applyScreenVideoPlan(
+          this.videoSender,
+          this.videoPlan(request),
+          (raw) => this.wait(raw),
+          () => this.check(),
+        );
+      }
+      if (revision === 1 && this.options.codecPreference) {
+        const preferred = await this.wait(this.options.codecPreference());
+        this.check();
+        if (
+          preferred &&
+          this.videoTransceiver?.setCodecPreferences &&
+          typeof RTCRtpSender !== 'undefined'
+        ) {
+          const codecs = RTCRtpSender.getCapabilities('video')?.codecs ?? [];
+          const first = codecs.filter(
+            (codec) => screenCodecContentType(codec).toLowerCase() === preferred.toLowerCase(),
+          );
+          if (first.length) {
+            try {
+              this.videoTransceiver.setCodecPreferences([
+                ...first,
+                ...codecs.filter((codec) => !first.includes(codec)),
+              ]);
+              this.preferredCodec = preferred;
+            } catch {
+              this.codecPreferenceError = true;
+              this.videoTransceiver.setCodecPreferences([]);
+            }
+          }
+        }
+      }
+      if (iceRestart) this.refreshIceServers();
+      const offer = await this.wait(
+        this.peer.createOffer(iceRestart ? { iceRestart: true } : undefined),
+      );
       if (offer.type !== 'offer' || !offer.sdp) throw failure('invalid local offer.');
       this.local = this.described(offer.sdp, 'offer');
       this.localCount += this.local.candidates;
@@ -545,6 +625,7 @@ export class ScreenPeer {
         await this.wait(this.peer.setRemoteDescription(payload));
       } else {
         const remote = this.described(payload.sdp, 'offer');
+        this.refreshIceServers();
         await this.wait(this.peer.setRemoteDescription(payload));
         this.peer.getTransceivers().forEach((transceiver) => {
           transceiver.direction = 'recvonly';
@@ -562,6 +643,193 @@ export class ScreenPeer {
       }
       this.phase = 'stable';
       clearTimeout(this.negotiation);
+      this.scheduleMonitoring();
+    });
+  }
+  private connectionChanged() {
+    const state = this.peer.connectionState;
+    if (state === 'closed') throw failure('connection ended.');
+    if (state === 'connected') {
+      clearTimeout(this.recovery);
+      this.recovery = undefined;
+      this.recoveryInGrace = false;
+      this.recoveryStarted = 0;
+      this.connectedSince = this.now();
+      return;
+    }
+    if (state !== 'failed' && state !== 'disconnected') return;
+    if (this.connectedSince && this.now() - this.connectedSince >= 30000) this.recoveryAttempts = 0;
+    this.connectedSince = 0;
+    if (!this.recoveryStarted) this.recoveryStarted = this.now();
+    if (state === 'failed' && this.recoveryInGrace) {
+      clearTimeout(this.recovery);
+      this.recovery = undefined;
+    }
+    this.scheduleRecovery(state === 'failed' ? 0 : disconnectGraceMs);
+  }
+  private refreshIceServers() {
+    if (!this.options.currentIceServers) return;
+    this.check();
+    const servers = screenIceServers(this.options.currentIceServers());
+    const configuration = this.peer.getConfiguration();
+    if (sameScreenIceServers(configuration.iceServers ?? [], servers)) return;
+    if (!this.peer.setConfiguration) throw failure('ICE configuration refresh unavailable.');
+    this.peer.setConfiguration({ ...configuration, iceServers: structuredClone(servers) });
+    if (!sameScreenIceServers(this.peer.getConfiguration().iceServers ?? [], servers))
+      throw failure('ICE configuration refresh was not confirmed.');
+  }
+  private scheduleRecovery(delay: number) {
+    if (this.recovery || this.closed) return;
+    this.recoveryInGrace = delay === disconnectGraceMs;
+    this.recovery = setTimeout(() => {
+      this.recovery = undefined;
+      this.recoveryInGrace = false;
+      try {
+        this.check();
+        if (this.peer.connectionState === 'connected') return;
+        if (this.now() - this.recoveryStarted >= 20000)
+          throw failure('connection recovery timed out.');
+        if (
+          this.options.endpoint.role === 'publisher' &&
+          this.phase === 'stable' &&
+          !this.pumping &&
+          !this.tasks.length
+        ) {
+          if (this.recoveryAttempts >= 2) throw failure('connection recovery exhausted.');
+          this.recoveryAttempts++;
+          void this.offer(true).catch((cause) => this.close(this.error(cause)));
+          this.scheduleRecovery(8000);
+        } else this.scheduleRecovery(1000);
+      } catch (cause) {
+        this.close(this.error(cause));
+      }
+    }, delay);
+  }
+  private videoPlan(request: ScreenVideoRequest) {
+    const plan = screenVideoPlan(request, this.source!.video.getSettings());
+    return Object.freeze({
+      ...plan,
+      content: this.options.content?.() ?? (plan.ceiling.frameRate > 30 ? 'motion' : 'detail'),
+    });
+  }
+  private async refreshVideoLimits(request: ScreenVideoRequest): Promise<void> {
+    return this.enqueue(async () => {
+      this.check();
+      const current = this.videoPlan(this.qualityRequested ?? request);
+      const track = this.source!.video;
+      const verify = () => {
+        this.check();
+        if (this.videoSender!.track !== track) throw failure('video sender source changed.');
+      };
+      const result = await applyScreenVideoPlan(
+        this.videoSender!,
+        current,
+        (raw) => this.wait(raw),
+        verify,
+      );
+      verify();
+      this.qualityApplied = sameScreenVideoSource(
+        current.source,
+        screenVideoSource(track.getSettings()),
+      )
+        ? result
+        : undefined;
+    });
+  }
+  private scheduleMonitoring() {
+    if (this.closed || this.monitoring || (!this.peer.getStats && !this.source)) return;
+    this.monitoring = setTimeout(() => {
+      this.monitoring = undefined;
+      runInBackground(this.monitorMedia());
+    }, 2000);
+  }
+  private async monitorMedia() {
+    try {
+      this.check();
+      await this.maintainVideoLimits();
+      this.scheduleMonitoring();
+      if (!this.peer.getStats) return;
+      if (this.statisticsPending) return;
+      let report: RTCStatsReport;
+      try {
+        const raw = this.peer.getStats!();
+        this.statisticsPending = true;
+        void raw.then(
+          () => {
+            this.statisticsPending = false;
+          },
+          () => {
+            this.statisticsPending = false;
+          },
+        );
+        report = await Promise.race([
+          this.wait(raw),
+          new Promise<never>((_, reject) => {
+            this.statisticsTimeout = setTimeout(
+              () => reject(failure('statistics timed out.')),
+              5000,
+            );
+          }),
+        ]);
+      } catch {
+        // A rejected operation is settled; a timed-out operation retains admission until it settles.
+        if (this.closed) return;
+        this.statisticsError = true;
+        this.mediaSample = null;
+        // Diagnostic failure is visible in inspection, but must not terminate healthy media.
+        return;
+      } finally {
+        clearTimeout(this.statisticsTimeout);
+      }
+      this.check();
+      this.statisticsError = false;
+      this.mediaSample = this.statistics.sample(report, this.source ? 'outbound' : 'inbound');
+    } catch (cause) {
+      if (!this.closed) this.close(this.error(cause));
+    } finally {
+      this.scheduleMonitoring();
+    }
+  }
+  private async maintainVideoLimits() {
+    const request = this.qualityRequested ?? this.initialRequest;
+    if (
+      !request ||
+      !this.source ||
+      !this.videoSender ||
+      this.phase !== 'stable' ||
+      this.qualityPending ||
+      this.pumping ||
+      this.tasks.length
+    )
+      return;
+    const plan = this.videoPlan(request);
+    const applied = this.qualityApplied;
+    if (
+      applied &&
+      applied.plan.content === plan.content &&
+      sameScreenVideoSource(applied.plan.source, plan.source) &&
+      Object.entries(plan.encoding).every(
+        ([key, value]) => applied.plan.encoding[key as keyof typeof plan.encoding] === value,
+      )
+    )
+      return;
+    await this.refreshVideoLimits(request);
+  }
+  inspectMedia() {
+    return Object.freeze({
+      sample: this.closed ? null : this.mediaSample,
+      statistics: this.closed
+        ? 'closed'
+        : !this.peer.getStats
+          ? 'unsupported'
+          : this.statisticsError
+            ? 'error'
+            : this.mediaSample
+              ? 'available'
+              : 'pending',
+      recoveryAttempts: this.recoveryAttempts,
+      preferredCodec: this.preferredCodec,
+      codecPreferenceError: this.codecPreferenceError,
     });
   }
   private candidate(event: RTCPeerConnectionIceEvent) {
@@ -682,6 +950,9 @@ export class ScreenPeer {
     this.phase = 'closed';
     clearTimeout(this.expiry);
     clearTimeout(this.negotiation);
+    clearTimeout(this.monitoring);
+    clearTimeout(this.recovery);
+    clearTimeout(this.statisticsTimeout);
     for (const task of this.tasks.splice(0)) task.reject(this.closed);
     for (const cancel of this.cancellations) cancel(this.closed);
     this.cancellations.clear();
