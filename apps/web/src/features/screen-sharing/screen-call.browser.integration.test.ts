@@ -18,7 +18,7 @@ navigator.mediaDevices.getDisplayMedia=async(options)=>{
  const canvas=document.createElement('canvas');canvas.width=options.video.width.ideal;canvas.height=options.video.height.ideal;
  const context=canvas.getContext('2d');let frame=0;
  const draw=()=>{context.fillStyle='#1c2630';context.fillRect(0,0,1920,1080);context.fillStyle='#a6ce8a';context.fillRect((frame++*12)%1800,100,120,800);context.fillStyle='white';context.font='50px sans-serif';context.fillText('OWNED SYNTHETIC SCREEN '+frame,60,80)};
- draw();const drawing=setInterval(draw,16),stream=canvas.captureStream(options.video.frameRate.ideal),video=stream.getVideoTracks()[0];
+ draw();const drawing=setInterval(draw,1000/options.video.frameRate.ideal),stream=canvas.captureStream(options.video.frameRate.ideal),video=stream.getVideoTracks()[0];
  const settings=video.getSettings.bind(video),stop=video.stop.bind(video);
  video.getSettings=()=>({...settings(),displaySurface:'browser',});
  video.stop=()=>{clearInterval(drawing);stop()};f.tracks.push(video);
@@ -266,7 +266,10 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           for (const browser of browsers.slice(2)) {
             // Bound this ten-client correctness fixture's encoder load. The
             // publisher retains 720p60; high-rate fan-out needs a separate hardware budget.
-            if (sound === 'nine') await choose(browser, 'Watch frame rate', '15');
+            if (sound === 'nine') {
+              await choose(browser, 'Watch resolution', '480');
+              await choose(browser, 'Watch frame rate', '15');
+            }
             await browser.wait(
               "[...document.querySelectorAll('.screen-share-item')].some(item=>item.textContent.includes('Screen owner'))",
             );
@@ -287,10 +290,20 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           expect(fanout).toHaveLength(viewerCount);
           expect(fanout.filter((cap) => cap === 2000000)).toHaveLength(1);
           expect(fanout.filter((cap) => cap === 4000000)).toHaveLength(viewerCount - 1);
+          if (sound === 'nine') {
+            const scales = await a.js(
+              "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).filter(sender=>sender.track?.kind==='video').map(sender=>sender.getParameters().encodings[0].scaleResolutionDownBy).sort()",
+            );
+            expect(scales).toEqual([1, ...Array(viewerCount - 1).fill(720 / 480)]);
+          }
           const secondPublisher = browsers[2]!;
           await secondPublisher.js(
             'document.querySelector(\'[aria-label="Open stream settings"]\').click()',
           );
+          if (sound === 'nine') {
+            await choose(secondPublisher, 'Screen resolution', '480');
+            await choose(secondPublisher, 'Screen frame rate', '15');
+          }
           await secondPublisher.click('Prepare source');
           await secondPublisher.wait(
             "document.querySelector('#screen-panel')?.dataset.prepared==='true'",
