@@ -12,6 +12,7 @@ import { screenSdp } from '../../../../api/src/screen/signaling-fixture';
 class Track extends EventTarget {
   readyState = 'live';
   enabled = true;
+  muted = false;
   constructor(readonly kind = 'video') {
     super();
   }
@@ -233,6 +234,40 @@ afterEach(async () => {
   for (const check of checks.splice(0)) check();
   expect(vi.getTimerCount()).toBe(0);
   vi.useRealTimers();
+});
+
+it('waits for the first video packet before starting native playback', async () => {
+  const f = fixture('none');
+  const link = f.open();
+  await negotiated(link);
+  const { receiver, rtc } = link;
+  const video = new Track();
+  video.muted = true;
+  rtc.deliver(video);
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(receiver.inspect().phase).toBe('receiving');
+  expect(f.elements).toHaveLength(0);
+  video.muted = false;
+  video.dispatchEvent(new Event('unmute'));
+  expect(receiver.inspect().phase).toBe('ready');
+  receiver.setOutput('exact-A');
+  await receiver.play();
+  expect(receiver.inspect().playback?.phase).toBe('playing');
+});
+
+it('expires an incoming video that never receives packets and ignores late unmute', async () => {
+  const f = fixture('none');
+  const link = f.open();
+  await negotiated(link);
+  const { receiver, rtc } = link;
+  const video = new Track();
+  video.muted = true;
+  rtc.deliver(video);
+  await vi.advanceTimersByTimeAsync(10000);
+  video.muted = false;
+  video.dispatchEvent(new Event('unmute'));
+  expect(receiver.inspect()).toMatchObject({ phase: 'closed', reason: 'tracks-timeout' });
+  expect(f.elements).toHaveLength(0);
 });
 
 it('answers an ICE restart with rotated TURN credentials while a statistics read is pending', async () => {

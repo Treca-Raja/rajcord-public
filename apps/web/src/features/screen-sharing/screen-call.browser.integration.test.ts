@@ -386,11 +386,37 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           expect(
             await browser.js("document.querySelector('[data-voice-status]')?.dataset.voiceStatus"),
           ).toBe('connected');
+        if (sound === 'nine')
+          expect(
+            commandDiagnostics.filter(
+              ({ event, code }) => event === 'screen:renew' && code === 'throttled',
+            ),
+          ).toEqual([]);
       } catch (cause) {
         const diagnostics = await Promise.allSettled(
           browsers.map((browser) =>
             browser.js(
-              "({phase:document.querySelector('#screen-panel')?.dataset.phase,error:document.querySelector('.screen-error')?.textContent,peers:window.__screenTest.peers.map(peer=>({connection:peer.connectionState,signaling:peer.signalingState}))})",
+              `(async () => ({
+                phase: document.querySelector('#screen-panel')?.dataset.phase,
+                error: document.querySelector('.screen-error')?.textContent,
+                peers: await Promise.all(window.__screenTest.peers
+                  .filter(peer => peer.getTransceivers().some(t => t.receiver.track.kind === 'video'))
+                  .slice(-12).map(async peer => {
+                    const video = peer.getReceivers().find(r => r.track.kind === 'video')?.track;
+                    const stats = [...(await peer.getStats()).values()].filter(s => s.kind === 'video');
+                    return {
+                      connection: peer.connectionState, signaling: peer.signalingState,
+                      muted: video?.muted, track: video?.readyState,
+                      inbound: stats.filter(s => s.type === 'inbound-rtp').map(s => ({
+                        bytes: s.bytesReceived, frames: s.framesDecoded, keys: s.keyFramesDecoded,
+                      })),
+                      outbound: stats.filter(s => s.type === 'outbound-rtp').map(s => ({
+                        bytes: s.bytesSent, frames: s.framesEncoded, keys: s.keyFramesEncoded,
+                        limitation: s.qualityLimitationReason,
+                      })),
+                    };
+                  })),
+              }))()`,
             ),
           ),
         );

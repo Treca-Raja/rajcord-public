@@ -22,6 +22,12 @@ The stream fixture typed in the same focused composer while real loopback playba
 
 Run the workspace review fixture with `--final-ux` to write only the affected screenshots under `artifacts/design-v1-final-ux/`.
 
+## Nine-viewer integration diagnosis
+
+The failing Linux run recorded six throttled initial renewals during staggered viewer discovery. A controller regression covers nine joins and checks that every authorized link is offered within the existing budget. The actual-app nine-viewer case also checks for throttled renewals.
+
+In a controlled Edge comparison with the SDP answer deferred six seconds, the remote video track existed before it received media. Starting native playback on track delivery exhausted the five-second playback deadline. Waiting for the first video unmute produced a decoded frame under the existing ten-second receiver deadline. A track that stays muted still expires, and late unmute cannot revive it. The hosted failure log did not record packet arrival times.
+
 ## Design System v1 integration review
 
 Reviewed the feature against develop at `1fc5c9b`. After CSS consolidation, the 1440 x 900 and 768 x 900 workspace captures and the open 390 x 844 navigation capture matched their accepted images byte for byte. Computed styles for sampled workspace components matched the pre-cleanup styles at four widths in both appearances. The populated app switched between Original and Retro in Settings, saved the preference and retained the draft. At all five fixture sizes the composer stayed visible with zero horizontal overflow. Five draft edits caused zero mutations inside the 50 observed message rows.

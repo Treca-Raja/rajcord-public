@@ -104,6 +104,9 @@ type Incoming = {
 type Outgoing = { peer: ScreenPeer; life: ScreenLifetime; shareId: string };
 type PublisherOffer = { link: ScreenLinkGrant['link']; deadline: number };
 type WatchRecovery = { attempts: number; readyAt: number; timer?: ReturnType<typeof setTimeout> };
+// The account budget refills one initial renewal every five seconds. Keep one
+// burst slot in reserve for a transient failure or network timing variance.
+const RENEWAL_REFILL_MS = 5000;
 const qualityOnly = (quality: ScreenQuality): ScreenQuality => ({
   profile: quality.profile,
   videoBitrate: quality.videoBitrate,
@@ -149,6 +152,7 @@ export class ScreenCall {
   private renewing?: Set<string>;
   private renewalPending = false;
   private renewalFailures = 0;
+  private renewalRefilledAt = 0;
   private publishing = false;
   private preparing = false;
   private sourceCleanup?: Promise<unknown>;
@@ -700,10 +704,13 @@ export class ScreenCall {
       this.renewalPending = true;
       return;
     }
+    // Two prompt renewals can run from a full bucket. Further notices share
+    // the next admission, whose response contains every current link grant.
+    const delay = Math.max(100, this.renewalRefilledAt - RENEWAL_REFILL_MS - performance.now());
     this.renewalTimer = setTimeout(() => {
       this.renewalTimer = undefined;
       runInBackground(this.renew());
-    }, 100);
+    }, delay);
   }
   private async renewalPages(
     binding: OwnedScreenBinding,
@@ -795,6 +802,8 @@ export class ScreenCall {
   }
   private async renew() {
     if (this.renewing || !this.current()) return;
+    this.renewalRefilledAt =
+      Math.max(this.renewalRefilledAt, performance.now()) + RENEWAL_REFILL_MS;
     const closedLinks = new Set<string>();
     this.renewing = closedLinks;
     const binding = this.binding!,

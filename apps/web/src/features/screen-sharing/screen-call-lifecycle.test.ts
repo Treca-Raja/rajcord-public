@@ -449,6 +449,52 @@ it('coalesces new viewer notices into a follow-up after an active renewal', asyn
   ]);
 });
 
+it('paces staggered viewer discovery while admitting all nine authorized links', async () => {
+  const f = await fixture();
+  const life = new ScreenLifetime(Date.now() + 45000);
+  const own = { ...f.share, id: crypto.randomUUID() };
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
+  const grants: ScreenLinkGrant[] = [];
+  const open = vi
+    .spyOn(
+      f.call as unknown as { openPublisher(link: ScreenLinkGrant['link']): Promise<void> },
+      'openPublisher',
+    )
+    .mockResolvedValue();
+  const command = f.command.getMockImplementation()!;
+  f.command.mockImplementation(async (event, request) => {
+    if (event !== 'screen:renew') return command(event, request);
+    return {
+      remainingMs: 45000,
+      publication: { share: own, remainingMs: 45000 },
+      links: [f.notice().grant, ...grants],
+    };
+  });
+  for (let n = 0; n < 9; n++) {
+    const grant = {
+      remainingMs: 45000,
+      link: {
+        ...f.notice().grant.link,
+        id: crypto.randomUUID(),
+        shareId: own.id,
+        publisherId: own.publisherId,
+        viewerId: crypto.randomUUID(),
+      },
+    };
+    grants.push(grant);
+    f.emit('link', { ...f.notice(), grant });
+    await vi.advanceTimersByTimeAsync(250);
+  }
+  const renewals = () => f.command.mock.calls.filter(([event]) => event === 'screen:renew');
+  expect(renewals()).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(renewals()).toHaveLength(3);
+  expect(new Set(open.mock.calls.map(([link]) => link.id))).toEqual(
+    new Set(grants.map((grant) => grant.link.id)),
+  );
+});
+
 it('does not reopen an outgoing link closed between renewal pages', async () => {
   const f = await fixture(),
     gate = deferred(),
