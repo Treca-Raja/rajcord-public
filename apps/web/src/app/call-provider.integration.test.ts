@@ -1821,7 +1821,8 @@ it('returns focus to the mobile dock action that opened the call view', async ()
           })`),
           JSON.stringify(step),
         ).toMatchObject({ open: true });
-        await browser.wait("document.activeElement.matches('.screen-close')");
+        const initialFocus = step.action === share ? '.screen-settings-close' : '.screen-close';
+        await browser.wait(`document.activeElement.matches('${initialFocus}')`);
         expect(await browser.js('!fixture.openAction.checkVisibility()')).toBe(true);
         if (step.connecting) await browser.js("fixture.screenSet({phase:'connecting'})");
         await browser.js("document.querySelector('.screen-close').click()");
@@ -2067,6 +2068,65 @@ it('keeps typing in a wider portrait call when the on-screen keyboard shortens t
   );
 });
 
+it('moves focus into stream settings and keeps covered portrait chat out of the tab order', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 650,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await browser.wait("document.querySelector('#screen-panel')?.dataset.discussion==='true'");
+      const key = async (name: 'Enter' | 'Tab' | 'Escape', windowsVirtualKeyCode: number) => {
+        for (const type of ['keyDown', 'keyUp'])
+          await browser.call('Input.dispatchKeyEvent', {
+            type,
+            key: name,
+            code: name,
+            windowsVirtualKeyCode,
+            ...(type === 'keyDown' && name === 'Enter' ? { text: '\r' } : {}),
+          });
+      };
+      await browser.js(`fixture.composer=document.querySelector('.chat-workspace textarea');
+        fixture.composer.focus()`);
+      await browser.call('Input.insertText', { text: 'Draft while watching' });
+
+      for (const selector of [
+        '[aria-label="Open stream settings"]',
+        '.screen-call-toolbar [aria-label="Share Your Screen"]',
+      ]) {
+        await browser.js(`fixture.settingsTrigger=document.querySelector(${JSON.stringify(selector)});
+          fixture.settingsTrigger.focus()`);
+        await key('Enter', 13);
+        await browser.wait("document.activeElement?.matches('.screen-settings-close')");
+        expect(
+          await browser.js(
+            `document.querySelector('.chat-workspace').inert && !fixture.callChatReadable`,
+          ),
+        ).toBe(true);
+        await browser.js('fixture.composer.focus()');
+        expect(await browser.js("document.activeElement?.matches('.screen-settings-close')")).toBe(
+          true,
+        );
+        await key('Tab', 9);
+        expect(await browser.js("!!document.activeElement?.closest('#screen-settings')")).toBe(
+          true,
+        );
+        await key('Escape', 27);
+        await browser.wait('document.activeElement===fixture.settingsTrigger');
+        expect(
+          await browser.js(`document.querySelector('#screen-settings').hidden &&
+            !document.querySelector('.chat-workspace').inert && fixture.callChatReadable &&
+            fixture.composer.value==='Draft while watching' && fixture.screens.inspect().watching==='first'`),
+        ).toBe(true);
+      }
+    },
+    'approved',
+    portraitUiFixture,
+  );
+});
+
 it('keeps the rendered stream settings heading and subtitle readable in both palettes', async () => {
   await mountedFixture(
     async (browser) => {
@@ -2272,9 +2332,39 @@ it('replaces a watched stream on Watch Stream and shows an ended state when the 
       expect(
         await browser.js("document.querySelector('.screen-stage-ended').textContent"),
       ).toContain('Participant');
+      await browser.click('Back to channel');
+      await browser.wait("!document.querySelector('#screen-panel')");
+      await browser.js('fixture.screens.open()');
+      await browser.wait("document.querySelector('.screen-panel')?.dataset.layout==='grid'");
+      expect(await browser.js("!!document.querySelector('.screen-stage-ended')")).toBe(false);
+
+      await browser.js("fixture.screens.watch('first')");
+      await browser.wait("!!document.querySelector('[data-screen-share-id=first]')");
+      // The server can deliver the link close and the directory removal in separate updates.
+      await browser.js('fixture.screenSet({watching:null,watchingShareIds:[]})');
+      await browser.wait("document.querySelector('.screen-panel')?.dataset.layout==='grid'");
+      await browser.js('fixture.screenSet({shares:[]})');
+      await browser.wait("document.body.textContent.includes('This stream has ended.')");
       await browser.click('Close Stream');
       await browser.wait("document.querySelector('.screen-panel').dataset.layout==='grid'");
       expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    screenUiFixture,
+  );
+});
+
+it('clears the previous stream when the viewer stops watching before the publisher stops', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait("!!document.querySelector('[data-screen-share-id=first]')");
+      await browser.click('Stop watching');
+      await browser.wait("document.querySelector('.screen-panel')?.dataset.layout==='grid'");
+      await browser.js(
+        "fixture.screenSet({shares:fixture.screens.inspect().shares.filter(s=>s.id!=='first')})",
+      );
+      await browser.wait("!document.querySelector('.screen-stream-tile[data-share-id=first]')");
+      expect(await browser.js("!!document.querySelector('.screen-stage-ended')")).toBe(false);
     },
     'approved',
     screenUiFixture,

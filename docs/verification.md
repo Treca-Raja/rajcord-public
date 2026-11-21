@@ -38,6 +38,8 @@ The final browser integration run passed all 116 tests across nine files, includ
 
 Follow-up Chromium checks kept the in-call composer focused and editable when the emulated portrait viewport shrank from 540 × 900 to 540 × 470. The draft also survived a switch to landscape. The rendered stream settings heading and subtitle met 4.5:1 in Original and Retro. The local Windows portable suite passed all 1,643 tests, including the readiness diagnostics with a simulated deadline and the real loopback startup checks.
 
+The Chromium call fixture also delivered the watch-link closure and share removal in separate updates. The ended message appeared after removal, cleared when returning to the channel, and stayed absent when the viewer had already stopped watching. At an emulated 390 × 650 viewport, opening stream settings moved keyboard focus into the panel and blocked focus in chat. Escape returned focus to the opener while preserving the draft and the watched stream.
+
 # Fixed-format gameplay sharing — 2026-11-19
 
 Six local Edge clients joined a voice room. One publisher sent the same high-motion CS:GO recording to two direct viewers at 1920×1080, 60 fps and 20 Mb/s per viewer. The capture used Chromium’s file-backed fake device. The application set the native fixed degradation preference before the offer and verified the selected encoding settings. Each row represents a separate run of thirteen five-second intervals on the same Ryzen 5 5600 / RTX 3060 Ti workstation.

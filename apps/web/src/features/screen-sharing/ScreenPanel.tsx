@@ -172,11 +172,13 @@ function ConnectedScreenPanel({
   currentControls.current = controls;
   const panel = useRef<HTMLElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
+  const settingsCloseButton = useRef<HTMLButtonElement>(null);
+  const settingsToggle = useRef<HTMLButtonElement>(null);
+  const settingsTrigger = useRef<HTMLButtonElement | null>(null);
   const previousShareCount = useRef(state.shares.length);
   const participants = useMemo(() => call?.voice.participants ?? [], [call?.voice.participants]);
-  const activeShare =
-    state.shares.find((item) => item.id === state.watching) ??
-    state.shares.find((item) => item.id === state.ownShareId);
+  const watchedShare = state.shares.find((item) => item.id === state.watching);
+  const activeShare = watchedShare ?? state.shares.find((item) => item.id === state.ownShareId);
   const activePublisher = activeShare
     ? (participants.find((person) => person.id === activeShare.publisherId)?.name ?? 'Participant')
     : '';
@@ -187,12 +189,13 @@ function ConnectedScreenPanel({
   const gallery = !endedStream && (state.layout === 'grid' || (!state.watching && !localVideo));
   const canShowDiscussion = state.open && portrait && !gallery && !fullscreen && !!chatName;
   const chatVisible = canShowDiscussion && chatSelected;
+  const chatInteractive = chatVisible && !settingsVisible;
   const showParticipantStrip =
     !gallery && !chatVisible && (participantsVisible || canShowDiscussion);
   useLayoutEffect(() => {
-    onChatVisibleChange?.(chatVisible && !settingsVisible);
+    onChatVisibleChange?.(chatInteractive);
     return () => onChatVisibleChange?.(false);
-  }, [chatVisible, settingsVisible, onChatVisibleChange]);
+  }, [chatInteractive, onChatVisibleChange]);
 
   const availableShares = state.shares.filter(
     (item) => !state.watchingShareIds.includes(item.id) && item.id !== state.ownShareId,
@@ -216,17 +219,36 @@ function ConnectedScreenPanel({
     participants.length +
     (localVideo ? 1 : 0);
 
+  const channelId = call?.voice.channelId;
+  useLayoutEffect(() => {
+    lastWatched.current = null;
+    setEndedStream(null);
+  }, [controls, channelId, state.open, state.hidden]);
   useEffect(() => {
-    const previous = lastWatched.current;
+    if (!state.open || state.hidden) return;
     if (state.watching) {
-      lastWatched.current = { id: state.watching, name: activePublisher };
+      if (watchedShare) lastWatched.current = { id: watchedShare.id, name: activePublisher };
       setEndedStream(null);
-    } else {
-      if (previous && !state.shares.some((item) => item.id === previous.id))
-        setEndedStream(previous.name);
-      lastWatched.current = null;
+      return;
     }
-  }, [state.watching, state.shares, activePublisher]);
+    // A closed link can arrive before the directory removes its share.
+    const previous = lastWatched.current;
+    if (state.selectingShareId) lastWatched.current = null;
+    else if (previous && !state.shares.some((item) => item.id === previous.id)) {
+      lastWatched.current = null;
+      setEndedStream(previous.name);
+    }
+  }, [
+    controls,
+    channelId,
+    state.open,
+    state.hidden,
+    state.watching,
+    state.selectingShareId,
+    state.shares,
+    watchedShare,
+    activePublisher,
+  ]);
   useLayoutEffect(() => {
     const host = media.current;
     if (!state.open || !gallery || !host) return;
@@ -276,7 +298,7 @@ function ConnectedScreenPanel({
       for (const child of parent.children) {
         if (!(child instanceof HTMLElement) || child === element) continue;
         if (!original.has(child)) original.set(child, child.inert);
-        child.inert = !(chatVisible && child.classList.contains('chat-workspace'));
+        child.inert = !(chatInteractive && child.classList.contains('chat-workspace'));
       }
     };
     syncSiblings();
@@ -286,7 +308,7 @@ function ConnectedScreenPanel({
       observer.disconnect();
       for (const [child, inert] of original) child.inert = inert;
     };
-  }, [state.open, chatVisible]);
+  }, [state.open, chatInteractive]);
   useEffect(() => {
     if (!state.open) return;
     const priorFocus =
@@ -294,6 +316,20 @@ function ConnectedScreenPanel({
     closeButton.current?.focus({ preventScroll: true });
     return () => priorFocus?.focus({ preventScroll: true });
   }, [state.open]);
+  useEffect(() => {
+    if (!state.open) {
+      settingsTrigger.current = null;
+    } else if (settingsVisible) {
+      settingsTrigger.current ??= settingsToggle.current;
+      settingsCloseButton.current?.focus({ preventScroll: true });
+    } else if (settingsTrigger.current) {
+      const trigger = settingsTrigger.current;
+      settingsTrigger.current = null;
+      (trigger.isConnected && !trigger.disabled ? trigger : settingsToggle.current)?.focus({
+        preventScroll: true,
+      });
+    }
+  }, [state.open, settingsVisible]);
 
   useLayoutEffect(() => {
     const host = media.current;
@@ -413,6 +449,15 @@ function ConnectedScreenPanel({
   };
   const displayQuality =
     activeShare && (state.watching ? requested(activeShare, watchQuality) : activeShare);
+  function openSettings(trigger: HTMLButtonElement) {
+    if (settingsVisible) return;
+    settingsTrigger.current = trigger;
+    setSettingsVisible(true);
+  }
+  function stopWatchingShare(shareId: string) {
+    if (lastWatched.current?.id === shareId) lastWatched.current = null;
+    controls.stopWatchingShare(shareId);
+  }
   const renderStream = (item: Readonly<ScreenShare>) => {
     const watched = state.watchingShareIds.includes(item.id);
     const publisher =
@@ -441,7 +486,7 @@ function ConnectedScreenPanel({
         }}
         multiple={() => {
           setSettingsVisible(false);
-          if (watched) controls.stopWatchingShare(item.id);
+          if (watched) stopWatchingShare(item.id);
           else run(() => addToMulti(item));
         }}
       />
@@ -531,7 +576,10 @@ function ConnectedScreenPanel({
         {state.watchingShareIds.length > 0 && (
           <button
             className="screen-stop"
-            onClick={() => controls.stopWatching()}
+            onClick={() => {
+              lastWatched.current = null;
+              controls.stopWatching();
+            }}
             title="Stop watching"
           >
             <Square size={13} /> Stop watching
@@ -646,6 +694,13 @@ function ConnectedScreenPanel({
         className="screen-settings"
         aria-label="Screen share settings"
         hidden={!settingsVisible}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape' || event.defaultPrevented || event.nativeEvent.isComposing)
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          setSettingsVisible(false);
+        }}
       >
         <div className="screen-settings-header">
           <span className="screen-header-icon" aria-hidden="true">
@@ -656,6 +711,7 @@ function ConnectedScreenPanel({
             <span>Quality, sound and viewers</span>
           </div>
           <button
+            ref={settingsCloseButton}
             className="screen-settings-close"
             aria-label="Close screen settings"
             title="Close screen settings"
@@ -935,7 +991,7 @@ function ConnectedScreenPanel({
                         disabled={!!state.selectingShareId}
                         onClick={() => {
                           setSettingsVisible(false);
-                          if (watched) controls.stopWatchingShare(item.id);
+                          if (watched) stopWatchingShare(item.id);
                           else run(() => addToMulti(item));
                         }}
                       >
@@ -1064,19 +1120,23 @@ function ConnectedScreenPanel({
                 aria-label="Share Your Screen"
                 title="Share Your Screen"
                 disabled={busy}
-                onClick={() => setSettingsVisible(true)}
+                onClick={(event) => openSettings(event.currentTarget)}
               >
                 <MonitorUp size={19} />
               </button>
             )}
             <button
+              ref={settingsToggle}
               className={settingsVisible ? 'is-active' : ''}
               aria-label={settingsVisible ? 'Close stream settings' : 'Open stream settings'}
               aria-pressed={settingsVisible}
               aria-expanded={settingsVisible}
               aria-controls="screen-settings"
               title={settingsVisible ? 'Close stream settings' : 'Open stream settings'}
-              onClick={() => setSettingsVisible(!settingsVisible)}
+              onClick={(event) => {
+                if (settingsVisible) setSettingsVisible(false);
+                else openSettings(event.currentTarget);
+              }}
             >
               <Settings2 size={19} />
             </button>
