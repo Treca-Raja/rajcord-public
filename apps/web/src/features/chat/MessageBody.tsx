@@ -1,7 +1,7 @@
 import { safeHttpUrl, type ChannelReference } from '@tricord/shared';
 import { Fragment } from 'react';
 import { EmojiText } from '../../shared/emoji/EmojiText';
-import { channelReferenceParts } from './channel-references';
+import { channelReferenceParts, type NavigateToChannel } from './channel-references';
 
 export type MessagePart = { text: string; href?: string };
 
@@ -93,7 +93,7 @@ export function MessageBody({
   body: string;
   mentions?: { username: string }[];
   channels?: ChannelReference[];
-  onChannel?: (channel: ChannelReference) => void;
+  onChannel?: NavigateToChannel;
 }) {
   return (
     <p className="message-body">
@@ -116,7 +116,7 @@ export function MessageBody({
                   type="button"
                   className="channel-reference"
                   key={position}
-                  onClick={() => onChannel(reference.channel!)}
+                  onClick={(event) => onChannel(reference.channel!, event.currentTarget)}
                   aria-label={
                     'Open ' +
                     (reference.channel.kind === 'channel' ? 'text' : 'voice') +

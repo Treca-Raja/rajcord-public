@@ -1,4 +1,4 @@
-// Preserve the existing cascade while feature entrypoints change the module graph.
+import '../shared/tokens.css';
 import '../features/notifications/styles.css';
 import '../features/chat/styles.css';
 import '../features/voice/styles.css';
@@ -6,6 +6,7 @@ import '../features/screen-sharing/styles.css';
 import '../features/account/styles.css';
 import './shell.css';
 import '../shared/styles.css';
-import '@fontsource-variable/inter/index.css';
+import '@fontsource-variable/ibm-plex-sans/index.css';
+import '@fontsource/ibm-plex-mono/400.css';
 import '../features/appearance/styles.css';
 import '../workspace-redesign.css';

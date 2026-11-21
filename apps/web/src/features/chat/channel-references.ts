@@ -1,5 +1,7 @@
 import type { ChannelReference, Conversation } from '@tricord/shared';
 
+export type NavigateToChannel = (channel: ChannelReference, trigger: HTMLButtonElement) => void;
+
 export interface DraftChannelReference {
   display: string;
   channel: ChannelReference;

@@ -7,6 +7,7 @@ import type {
   ScreenSelectRequest,
 } from '@tricord/shared';
 import { ScreenCall } from './screen-call';
+import { ScreenPlaybackError } from './screen-playback';
 import { ScreenLifetime } from './capture-session';
 import type { ScreenSocket } from './screen-socket';
 import type { OwnedScreenBinding } from './screen-binding';
@@ -447,6 +448,52 @@ it('coalesces new viewer notices into a follow-up after an active renewal', asyn
     second.link.id,
     third.link.id,
   ]);
+});
+
+it('paces staggered viewer discovery while admitting all nine authorized links', async () => {
+  const f = await fixture();
+  const life = new ScreenLifetime(Date.now() + 45000);
+  const own = { ...f.share, id: crypto.randomUUID() };
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
+  const grants: ScreenLinkGrant[] = [];
+  const open = vi
+    .spyOn(
+      f.call as unknown as { openPublisher(link: ScreenLinkGrant['link']): Promise<void> },
+      'openPublisher',
+    )
+    .mockResolvedValue();
+  const command = f.command.getMockImplementation()!;
+  f.command.mockImplementation(async (event, request) => {
+    if (event !== 'screen:renew') return command(event, request);
+    return {
+      remainingMs: 45000,
+      publication: { share: own, remainingMs: 45000 },
+      links: [f.notice().grant, ...grants],
+    };
+  });
+  for (let n = 0; n < 9; n++) {
+    const grant = {
+      remainingMs: 45000,
+      link: {
+        ...f.notice().grant.link,
+        id: crypto.randomUUID(),
+        shareId: own.id,
+        publisherId: own.publisherId,
+        viewerId: crypto.randomUUID(),
+      },
+    };
+    grants.push(grant);
+    f.emit('link', { ...f.notice(), grant });
+    await vi.advanceTimersByTimeAsync(250);
+  }
+  const renewals = () => f.command.mock.calls.filter(([event]) => event === 'screen:renew');
+  expect(renewals()).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(renewals()).toHaveLength(3);
+  expect(new Set(open.mock.calls.map(([link]) => link.id))).toEqual(
+    new Set(grants.map((grant) => grant.link.id)),
+  );
 });
 
 it('does not reopen an outgoing link closed between renewal pages', async () => {
@@ -1173,6 +1220,51 @@ it('retains stream audio controls across close and reopen and applies them to ev
   expect(first.stop).toHaveBeenCalledTimes(1);
   expect(first.setVolume).toHaveBeenLastCalledWith(0.35);
 });
+
+it.each(['recovered', 'timed out again', 'stopped'] as const)(
+  'bounds automatic playback startup retry when the watch is %s',
+  async (outcome) => {
+    const f = await fixture();
+    f.call.observeVoice(voiceState());
+    const receiver = f.openIncoming.mock.results[0]!.value;
+    const firstPlay = deferred();
+    const timeout = new ScreenPlaybackError('timeout', 'Playback operation timed out.');
+    receiver.play.mockImplementationOnce(() => firstPlay.promise);
+    receiver.ready();
+    const playback = receiver.inspect().playback!;
+    const failed = { ...playback, phase: 'error', error: timeout } as const;
+    receiver.update({ playback: { ...failed, pendingNative: true } });
+    firstPlay.reject(timeout);
+    await flush();
+    expect(receiver.play).toHaveBeenCalledTimes(1);
+    expect(f.call.inspect().playback).toBe(timeout.message);
+    expect(f.call.inspect().playbackTimeout).toBe(timeout.message);
+
+    if (outcome === 'stopped') {
+      f.call.stopWatching();
+      receiver.update({ playback: { ...failed, pendingNative: false } });
+      expect(receiver.play).toHaveBeenCalledTimes(1);
+      expect(f.call.inspect().playbackTimeout).toBe('');
+      return;
+    }
+    receiver.play.mockImplementationOnce(async () => {
+      receiver.update({ playback: { ...playback, phase: 'routing', pendingNative: true } });
+      expect(f.call.inspect().playbackTimeout).toBe(timeout.message);
+      if (outcome === 'timed out again') {
+        receiver.update({ playback: { ...failed, pendingNative: false } });
+        throw timeout;
+      }
+      receiver.update({ playback: { ...playback, phase: 'playing' } });
+    });
+    receiver.update({ playback: { ...failed, pendingNative: false } });
+    await flush();
+    expect(receiver.play).toHaveBeenCalledTimes(2);
+    expect(receiver.setOutput).toHaveBeenLastCalledWith('headphones');
+    expect(f.call.inspect().error).toBe('');
+    expect(f.call.inspect().playbackTimeout).toBe(outcome === 'recovered' ? '' : timeout.message);
+    if (outcome === 'recovered') expect(f.call.inspect().playback).toBe('playing');
+  },
+);
 
 it('rejects invalid stream volume without changing the retained controls or receiver', async () => {
   const f = await fixture();

@@ -335,7 +335,6 @@ export function GifSearch({
         ) : !consent ? (
           <div className="gif-search-empty">
             <Search size={25} />
-            <strong>A little expression goes a long way</strong>
             <p>
               Press Search to contact {providerName} directly from your browser and load still
               previews. Search terms and preview requests go to {providerName}.

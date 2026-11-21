@@ -23,7 +23,7 @@ it('hides the menu bar and follows only trusted supported themes and Windows hig
     setAccentColor: vi.fn(),
     setMenuBarVisibility: vi.fn(),
   });
-  expect(windowsChromeOptions()).toEqual({ autoHideMenuBar: true, accentColor: '#252629' });
+  expect(windowsChromeOptions()).toEqual({ autoHideMenuBar: true, accentColor: '#1d1929' });
   installWindowsChrome(owner as unknown as BrowserWindow, (event) => event === trusted);
   expect(owner.setMenuBarVisibility).toHaveBeenCalledExactlyOnceWith(false);
 

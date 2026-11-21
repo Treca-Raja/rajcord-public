@@ -102,14 +102,14 @@
 .notification-feedback {
   position: fixed;
   z-index: 25;
-  bottom: 24px;
-  right: 24px;
+  top: calc(var(--workspace-header-height, 60px) + 8px);
+  right: 16px;
   width: min(390px, calc(100vw - 32px));
   display: flex;
   align-items: flex-start;
   gap: 14px;
   padding: 20px;
-  border: 1px solid #afe9d040;
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-panel);
   background: var(--surface-raised);
   box-shadow: var(--shadow-panel);
@@ -141,7 +141,7 @@
 .notification-feedback button {
   display: block;
   margin-top: 8px;
-  color: #c4e99c;
+  color: var(--text-secondary);
 }
 .notification-toasts {
   position: fixed;
@@ -178,7 +178,7 @@
     padding: 14px;
   }
   .notification-invitation {
-    bottom: 16px;
-    right: 16px;
+    padding: 12px;
+    gap: 8px;
   }
 }

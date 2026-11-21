@@ -2,7 +2,7 @@ import { ipcMain, nativeTheme } from 'electron';
 import type { BrowserWindow, IpcMainEvent } from 'electron';
 
 // Match the sidebar surface in the hosted workspace's Original and Retro themes.
-const originalColor = '#252629';
+const originalColor = '#1d1929';
 const retroColor = '#23483c';
 
 export function windowsChromeOptions() {

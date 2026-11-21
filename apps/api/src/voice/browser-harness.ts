@@ -35,7 +35,12 @@ export async function waitForDebuggingPage(port: string) {
   throw new Error('Test browser did not publish a debugging page.');
 }
 export async function launch(
-  options: { fakeMicrophone?: boolean; fakeVideoFile?: string; fakeAudioFile?: string } = {},
+  options: {
+    fakeMicrophone?: boolean;
+    fakeVideoFile?: string;
+    fakeAudioFile?: string;
+    visible?: boolean;
+  } = {},
 ) {
   if ((options.fakeVideoFile || options.fakeAudioFile) && options.fakeMicrophone === false)
     throw new Error('File-backed capture requires fake media devices.');
@@ -64,7 +69,7 @@ export async function launch(
     process.env.TRICORD_BROWSER_PATH ||
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     [
-      '--headless=new',
+      ...(options.visible ? ['--new-window', '--window-size=1440,900'] : ['--headless=new']),
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
@@ -98,8 +103,8 @@ export async function launch(
   const cleanup = async () => {
     for (let i = 0; i < 50 && child.exitCode === null && child.signalCode === null; i++)
       await delay(100);
-    if (child.exitCode === null && child.signalCode === null) child.kill();
-    for (let i = 0; i < 50 && child.exitCode === null && child.signalCode === null; i++)
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    for (let i = 0; i < 150 && child.exitCode === null && child.signalCode === null; i++)
       await delay(100);
     if (child.exitCode === null && child.signalCode === null && !launchError)
       throw new Error('Test browser did not exit');

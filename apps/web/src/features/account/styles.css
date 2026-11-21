@@ -5,7 +5,7 @@
   justify-content: center;
   gap: 100px;
   padding: 48px 24px;
-  background: radial-gradient(ellipse at 18% 30%, #cabaff0d, transparent 48%), var(--surface-rail);
+  background: var(--surface-chat);
 }
 .auth-intro {
   max-width: 380px;
@@ -46,7 +46,7 @@
   letter-spacing: -0.7px;
 }
 .auth-card p {
-  color: #aeb7c5;
+  color: var(--text-secondary);
   line-height: 1.7;
 }
 .auth-card form {
@@ -102,11 +102,11 @@
     color var(--motion-fast) var(--motion-ease);
 }
 .primary {
-  background: var(--accent-mint);
-  color: #1a3040;
+  background: var(--accent-brand);
+  color: var(--text-on-accent);
 }
 .primary:hover {
-  background: #c2f4df;
+  background: color-mix(in srgb, var(--accent-brand) 84%, var(--text-primary));
 }
 .secondary {
   background: var(--surface-raised);
@@ -114,7 +114,7 @@
 }
 .danger {
   color: #ffb0b0;
-  background: #4d2930;
+  background: var(--accent-red-soft);
   border: 1px solid #78424c;
 }
 .primary:disabled,
@@ -148,11 +148,11 @@
   padding-top: 20px;
 }
 .form-error {
-  color: #ffb0b0 !important;
+  color: var(--error) !important;
   margin: 15px 0 !important;
 }
 .form-success {
-  color: #c4e99c !important;
+  color: var(--accent-voice) !important;
   margin: 15px 0 !important;
 }
 .auth-mark {
@@ -175,7 +175,7 @@
 }
 .account-identity span {
   font-weight: 400;
-  color: #aeb7c5;
+  color: var(--text-secondary);
 }
 .modal-backdrop {
   position: fixed;
@@ -243,7 +243,7 @@
 }
 .account-content > p {
   line-height: 1.8;
-  color: #aeb7c5;
+  color: var(--text-secondary);
   margin: 20px 0;
 }
 .account-content form {
@@ -296,7 +296,7 @@
   position: fixed;
   bottom: 20px;
   left: 20px;
-  background: #4d2930;
+  background: var(--accent-red-soft);
   padding: 16px;
   z-index: 40;
 }
@@ -352,6 +352,6 @@
 }
 .password-recovery-issuer input[readonly] {
   width: 100%;
-  font-family: monospace;
+  font-family: var(--font-mono);
   overflow-wrap: anywhere;
 }

@@ -188,6 +188,8 @@ try {
       source: `(()=>{window.__delayedPresenceAck=false;const Base=window.WebSocket;window.WebSocket=class extends Base{constructor(...args){super(...args);this.addEventListener('message',event=>{if(String(event.data).includes('"fixtureDelayed":true'))window.__delayedPresenceAck=true})}}})()`,
     });
     await browser.call('Page.navigate', { url: origin });
+    await wait(browser, "!!document.querySelector('button[aria-controls=workspace-activity]')");
+    await browser.js("document.querySelector('button[aria-controls=workspace-activity]').click()");
     await wait(browser, ready, 'initial authoritative presence');
   }
   await wait(a, state(member.id, 'online'));
