@@ -1835,33 +1835,34 @@ it('returns focus to the mobile dock action that opened the call view', async ()
   );
 });
 
-it('returns focus to Activity after closing a call opened from its mobile drawer', async () => {
-  const appFixture = screenUiFixture
-    .replace(
-      'import { ScreenPanel }',
-      "import { App } from '/src/app/App.tsx';\nimport { ScreenPanel }",
-    )
-    .replace('open:true,prepared:false', 'open:false,prepared:false')
-    .replace(
-      "shares,watching:'first',watchingShareIds:['first']",
-      'shares:[],watching:null,watchingShareIds:[]',
-    )
-    .replace(
-      'h(AuthRoot,{screenApplication:application},h(View))',
-      'h(App,{screenApplication:application})',
-    )
-    .replace(
-      "if(path==='/api/account/sessions')",
-      `if(path==='/api/conversations') return response({conversations:[]});
+const workspaceScreenFixture = screenUiFixture
+  .replace(
+    'import { ScreenPanel }',
+    "import { App } from '/src/app/App.tsx';\nimport { ScreenPanel }",
+  )
+  .replace('open:true,prepared:false', 'open:false,prepared:false')
+  .replace(
+    "shares,watching:'first',watchingShareIds:['first']",
+    'shares,watching:null,watchingShareIds:[]',
+  )
+  .replace(
+    'h(AuthRoot,{screenApplication:application},h(View))',
+    'h(App,{screenApplication:application})',
+  )
+  .replace(
+    "if(path==='/api/account/sessions')",
+    `if(path==='/api/conversations') return response({conversations:[]});
  if(path==='/api/invitations') return response({invitations:[]});
  if(path==='/api/members') return response({users:[]});
  if(path==='/api/channel-categories') return response({categories:[],nextAfter:null});
  if(path==='/api/account/sessions')`,
-    )
-    .replace(
-      'const style=document.createElement',
-      "localStorage.setItem('tricord-notification-prompt:account','seen');\nconst style=document.createElement",
-    );
+  )
+  .replace(
+    'const style=document.createElement',
+    "localStorage.setItem('tricord-notification-prompt:account','seen');\nconst style=document.createElement",
+  );
+
+it('returns focus to Activity after closing a call opened from its mobile drawer', async () => {
   await mountedFixture(
     async (browser) => {
       await browser.call('Emulation.setDeviceMetricsOverride', {
@@ -1917,7 +1918,112 @@ it('returns focus to Activity after closing a call opened from its mobile drawer
       ).toBe('false');
     },
     'approved',
-    appFixture,
+    workspaceScreenFixture.replace('shares,watching:null', 'shares:[],watching:null'),
+  );
+});
+
+it('keeps focus in account settings opened from Activity and restores it on close', async () => {
+  await mountedFixture(
+    async (browser) => {
+      const press = async (
+        key: 'Enter' | 'Escape',
+        windowsVirtualKeyCode: number,
+        text?: string,
+      ) => {
+        await browser.call('Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          key,
+          code: key,
+          windowsVirtualKeyCode,
+          text,
+        });
+        await browser.call('Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          key,
+          code: key,
+          windowsVirtualKeyCode,
+        });
+      };
+      for (const width of [390, 1440]) {
+        await browser.call('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 844,
+          deviceScaleFactor: 1,
+          mobile: width === 390,
+        });
+        await browser.wait(
+          'innerWidth===' + width + " && !!document.querySelector('.members-action')",
+        );
+        await browser.js("document.querySelector('.members-action').focus()");
+        await press('Enter', 13, '\r');
+        await browser.wait("!!document.querySelector('.activity-footer button')");
+        await browser.js("document.querySelector('.activity-footer button').focus()");
+        await press('Enter', 13, '\r');
+        await browser.wait("!!document.querySelector('.account-panel')");
+        await browser.js(
+          'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+        );
+        expect(await browser.js("document.activeElement.getAttribute('aria-label')")).toBe(
+          'Close settings',
+        );
+        expect(await browser.js("!!document.querySelector('#workspace-activity')")).toBe(false);
+        await press('Escape', 27);
+        await browser.wait("!document.querySelector('.account-panel')");
+        expect(await browser.js("document.activeElement.matches('.members-action')")).toBe(true);
+      }
+    },
+    'approved',
+    workspaceScreenFixture,
+  );
+});
+
+it('keeps call controls visible and clickable at compact workspace widths', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait("!!document.querySelector('[data-voice-channel-id=lounge]')");
+      await browser.js(`fixture.deviceList=[
+        {kind:'audioinput',deviceId:'mic',label:'Microphone',groupId:'m'},
+        {kind:'audioinput',deviceId:'default',label:'Synthetic device',groupId:'m'},
+        {kind:'audiooutput',deviceId:'speaker',label:'Speakers',groupId:'s'},
+        {kind:'audiooutput',deviceId:'default',label:'Synthetic device',groupId:'s'}
+      ];
+      document.querySelector('[data-voice-channel-id=lounge]').click()`);
+      await browser.wait('fixture.captureCalls===1');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait(
+        "!!document.querySelector('.voice-dock[data-voice-status=connected]') && !!document.querySelector('#screen-panel')",
+      );
+      await browser.js("fixture.screens.watch('first')");
+      for (const width of [768, 320]) {
+        await browser.call('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 844,
+          deviceScaleFactor: 1,
+          mobile: width === 320,
+        });
+        await browser.wait('innerWidth===' + width);
+        for (const phase of ['ready', 'sharing']) {
+          await browser.js(`fixture.screenSet({phase:'${phase}'})`);
+          await browser.js(
+            'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+          );
+          const unreachable = await browser.js(`(() => {
+            const panel = document.querySelector('#screen-panel');
+            const bounds = panel.getBoundingClientRect();
+            return [...panel.querySelectorAll('.screen-call-header button, .screen-call-toolbar button')]
+              .filter(button => {
+                const {left,right,top,bottom,width,height} = button.getBoundingClientRect();
+                const hit = document.elementFromPoint(left + width/2, top + height/2);
+                return left < bounds.left || right > bounds.right || !button.contains(hit);
+              })
+              .map(button => button.getAttribute('aria-label') ?? button.textContent.trim());
+          })()`);
+          expect(unreachable, `width ${width}, phase ${phase}`).toEqual([]);
+        }
+      }
+    },
+    'approved',
+    workspaceScreenFixture,
   );
 });
 

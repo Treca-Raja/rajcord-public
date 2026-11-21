@@ -210,12 +210,7 @@ export function MemberPanel({
           )}
         </div>
         <div className="activity-footer">
-          <button
-            onClick={() => {
-              close();
-              settings();
-            }}
-          >
+          <button onClick={settings}>
             <Settings2 size={15} aria-hidden="true" /> Manage accounts &amp; approvals
           </button>
         </div>

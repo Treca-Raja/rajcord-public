@@ -42,6 +42,9 @@
   position: relative;
   overflow: hidden;
 }
+.chat:has(> .screen-panel) {
+  container: screen-call / inline-size;
+}
 .live-shell.screen-call-open .voice-panel .screen-launcher {
   display: none;
 }
@@ -54,6 +57,7 @@
   z-index: 20;
   inset: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
@@ -63,6 +67,7 @@
   animation: screen-enter 140ms ease-out;
 }
 .screen-panel:fullscreen {
+  container: screen-call / inline-size;
   width: 100vw;
   height: 100vh;
   border-radius: 0;
@@ -1154,7 +1159,7 @@
     transform: translateY(0);
   }
 }
-@media (max-width: 750px) {
+@container screen-call (max-width: 750px) {
   .screen-fullscreen-control {
     position: static;
   }
@@ -1236,7 +1241,7 @@
     bottom: 70px;
   }
 }
-@media (max-width: 480px) {
+@container screen-call (max-width: 480px) {
   .screen-call-context {
     gap: 7px;
     flex: 1;
@@ -1281,6 +1286,9 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
+  }
+  .screen-call-toolbar {
+    flex-wrap: wrap;
   }
   .screen-leave-control {
     padding-inline: 8px;

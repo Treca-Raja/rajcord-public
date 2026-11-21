@@ -40,6 +40,8 @@ Follow-up Chromium checks kept the in-call composer focused and editable when th
 
 The Chromium call fixture also delivered the watch-link closure and share removal in separate updates. The ended message appeared after removal, cleared when returning to the channel, and stayed absent when the viewer had already stopped watching. At an emulated 390 × 650 viewport, opening stream settings moved keyboard focus into the panel and blocked focus in chat. Escape returned focus to the opener while preserving the draft and the watched stream.
 
+At 768 and 320 px, the Chromium workspace fixture confirmed that the call header and toolbar controls fit inside the panel and accept pointer input while watching and while sharing and watching together. At 390 and 1440 px, opening account settings from Activity kept keyboard focus in the dialog and Escape returned focus to Activity.
+
 # Fixed-format gameplay sharing — 2026-11-19
 
 Six local Edge clients joined a voice room. One publisher sent the same high-motion CS:GO recording to two direct viewers at 1920×1080, 60 fps and 20 Mb/s per viewer. The capture used Chromium’s file-backed fake device. The application set the native fixed degradation preference before the offer and verified the selected encoding settings. Each row represents a separate run of thirteen five-second intervals on the same Ryzen 5 5600 / RTX 3060 Ti workstation.

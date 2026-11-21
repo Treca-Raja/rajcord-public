@@ -93,9 +93,12 @@ function Community() {
   const activityTrigger = useRef<HTMLButtonElement>(null);
   const returnToActivity = useRef(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
-  function closeActivity() {
+  function dismissActivity() {
     if (wide) setActivityPinned(false);
     else setMembersOpen(false);
+  }
+  function closeActivity() {
+    dismissActivity();
     requestAnimationFrame(() => activityTrigger.current?.focus({ preventScroll: true }));
   }
   const [rosterAvailable, setRosterAvailable] = useState(false);
@@ -622,7 +625,10 @@ function Community() {
             />
           }
           close={closeActivity}
-          settings={() => openSettings('people')}
+          settings={() => {
+            dismissActivity();
+            openSettings('people', activityTrigger.current ?? undefined);
+          }}
           retry={() => {
             presence.retry();
             runInBackground(reload());
