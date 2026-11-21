@@ -34,9 +34,11 @@ export async function waitForDebuggingPage(port: string) {
   }
   throw new Error('Test browser did not publish a debugging page.');
 }
-export async function launch(options: { fakeMicrophone?: boolean; fakeVideoFile?: string } = {}) {
-  if (options.fakeVideoFile && options.fakeMicrophone === false)
-    throw new Error('A file-backed camera requires fake media devices.');
+export async function launch(
+  options: { fakeMicrophone?: boolean; fakeVideoFile?: string; fakeAudioFile?: string } = {},
+) {
+  if ((options.fakeVideoFile || options.fakeAudioFile) && options.fakeMicrophone === false)
+    throw new Error('File-backed capture requires fake media devices.');
   const profile = await mkdtemp(path.join(tmpdir(), 'tricord-voice-browser-'));
   const wav = Buffer.alloc(44 + 48000 * 2 * 4);
   wav.write('RIFF');
@@ -78,7 +80,7 @@ export async function launch(options: { fakeMicrophone?: boolean; fakeVideoFile?
         : [
             '--use-fake-ui-for-media-stream',
             '--use-fake-device-for-media-stream',
-            '--use-file-for-fake-audio-capture=' + audio,
+            '--use-file-for-fake-audio-capture=' + (options.fakeAudioFile ?? audio),
           ]),
       '--autoplay-policy=no-user-gesture-required',
       'about:blank',

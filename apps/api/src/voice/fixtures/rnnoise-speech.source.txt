@@ -1,0 +1,6 @@
+Open Speech Repository, American English Harvard sentences
+OSR_us_000_0010_8k.wav, first 3 seconds, 8 kHz mono PCM
+https://www.voiptroubleshooter.com/open_speech/american/OSR_us_000_0010_8k.wav
+
+The Open Speech Repository permits copying and modification with source attribution.
+https://www.voiptroubleshooter.com/open_speech/american.html

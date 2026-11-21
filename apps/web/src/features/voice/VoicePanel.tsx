@@ -464,7 +464,7 @@ function VoiceSettings() {
               'Echo cancellation',
               'Reduces speaker audio picked up by your microphone.',
             ],
-            ['noiseSuppression', 'Noise suppression', 'Reduces steady background noise.'],
+            ['noiseSuppression', 'Noise suppression', 'Automatically reduces background noise.'],
             ['autoGainControl', 'Automatic gain', 'Helps keep your speaking volume consistent.'],
           ] as const
         ).map(([key, label, description]) => (
@@ -486,11 +486,15 @@ function VoiceSettings() {
             {voice.processingApplied && (
               <small>
                 Applied:{' '}
-                {voice.processingApplied[key] === undefined
-                  ? 'Not reported'
-                  : voice.processingApplied[key]
-                    ? 'On'
-                    : 'Off'}
+                {key === 'noiseSuppression' && voice.noiseSuppressionEngine === 'rnnoise'
+                  ? 'RNNoise'
+                  : key === 'noiseSuppression' && voice.noiseSuppressionEngine === 'browser'
+                    ? 'Browser fallback'
+                    : voice.processingApplied[key] === undefined
+                      ? 'Not reported'
+                      : voice.processingApplied[key]
+                        ? 'On'
+                        : 'Off'}
               </small>
             )}
           </label>
@@ -501,11 +505,13 @@ function VoiceSettings() {
             : voice.processingBusy
               ? 'Applying microphone processing…'
               : voice.processingApplied
-                ? processingKeys.every(
-                    (key) => voice.processingApplied?.[key] === voice.processing[key],
-                  )
-                  ? 'The microphone reports the requested settings.'
-                  : 'The microphone did not apply or report every requested setting.'
+                ? voice.noiseSuppressionEngine === 'unavailable'
+                  ? 'RNNoise is unavailable and browser noise suppression could not be confirmed.'
+                  : processingKeys.every(
+                        (key) => voice.processingApplied?.[key] === voice.processing[key],
+                      )
+                    ? 'The requested microphone settings are active.'
+                    : 'The microphone did not apply or report every requested setting.'
                 : 'Settings apply when your microphone starts. Changing them in a call restarts the selected microphone and preserves mute.'}
         </p>
         <p>
