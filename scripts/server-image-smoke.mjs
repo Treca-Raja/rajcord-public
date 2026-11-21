@@ -129,6 +129,21 @@ try {
   containers.push(name + '-api');
   const info = JSON.parse(docker(['inspect', name + '-api']).toString())[0];
   assert.equal(info.Config.User, 'node');
+  const minimatchInventory = docker([
+    'exec',
+    name + '-api',
+    'node',
+    '-p',
+    "require('node:fs').readdirSync('node_modules/.pnpm').filter(name => name.startsWith('minimatch@')).join(' ')",
+  ])
+    .toString()
+    .trim();
+  assert.doesNotMatch(
+    minimatchInventory,
+    /\bminimatch@(?:(?:[7-9]|10)\.|11\.0\.0\b)/,
+    'Server image contains a minimatch version affected by GHSA-g3hv-75wg-m249',
+  );
+  console.log(`Server image minimatch inventory: ${minimatchInventory || 'absent'}`);
   const port = info.NetworkSettings.Ports['3001/tcp'][0].HostPort;
   const origin = 'http://127.0.0.1:' + port;
   ready = false;
