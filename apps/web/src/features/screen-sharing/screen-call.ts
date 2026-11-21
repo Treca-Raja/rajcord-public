@@ -46,6 +46,7 @@ export type ScreenCallState = Readonly<{
   selectingShareId: string | null;
   layout: 'focus' | 'grid';
   playback: string;
+  playbackTimeout: string;
   playbackMuted: boolean;
   playbackVolume: number;
   hidden: boolean;
@@ -101,6 +102,7 @@ type Incoming = {
   life: ScreenLifetime;
   handle: ScreenReceiveHandle;
   selection: ScreenSelectRequest;
+  playbackTimeout: string;
 };
 type Outgoing = { peer: ScreenPeer; life: ScreenLifetime; shareId: string };
 type PublisherOffer = { link: ScreenLinkGrant['link']; deadline: number };
@@ -126,6 +128,7 @@ export class ScreenCall {
     selectingShareId: null,
     layout: 'focus',
     playback: '',
+    playbackTimeout: '',
     playbackMuted: false,
     playbackVolume: 1,
     hidden: false,
@@ -300,7 +303,17 @@ export class ScreenCall {
   private updateWatching(
     patch: Partial<Pick<ScreenCallState, 'watching' | 'layout' | 'playback'>>,
   ) {
-    this.update({ ...patch, watchingShareIds: Object.freeze([...this.receiving.keys()]) });
+    this.update({
+      ...patch,
+      playbackTimeout: this.watchPlaybackTimeout(),
+      watchingShareIds: Object.freeze([...this.receiving.keys()]),
+    });
+  }
+  private watchPlaybackTimeout() {
+    for (const watch of this.receiving.values()) {
+      if (watch.playbackTimeout) return watch.playbackTimeout;
+    }
+    return '';
   }
   private error(cause: unknown) {
     this.update({ error: cause instanceof Error ? cause.message : 'Screen sharing failed.' });
@@ -1128,6 +1141,7 @@ export class ScreenCall {
         life,
         handle: undefined as unknown as ScreenReceiveHandle,
         selection,
+        playbackTimeout: '',
       };
       const handle = this.options.attachment.openIncoming({
         iceServers: this.iceServers,
@@ -1179,11 +1193,18 @@ export class ScreenCall {
         }
         const recovery = this.watchRecoveries.get(shareId);
         if (state.phase === 'ready' && recovery && !recovery.readyAt) recovery.readyAt = Date.now();
-        if (this.state.watching === shareId)
-          this.update({
-            playback: state.playback?.error?.message ?? state.playback?.phase ?? state.phase,
-          });
         const playback = state.playback;
+        const previousTimeout = incoming.playbackTimeout;
+        if (playback?.error?.code === 'timeout') incoming.playbackTimeout = playback.error.message;
+        else if (playback?.phase === 'playing' || playback?.error) incoming.playbackTimeout = '';
+        const focused = this.state.watching === shareId;
+        if (focused || previousTimeout !== incoming.playbackTimeout)
+          this.update({
+            ...(focused
+              ? { playback: playback?.error?.message ?? playback?.phase ?? state.phase }
+              : {}),
+            playbackTimeout: this.watchPlaybackTimeout(),
+          });
         if (
           playback?.phase === 'playing' ||
           playback?.phase === 'paused' ||
@@ -1202,7 +1223,7 @@ export class ScreenCall {
           this.configurePlayback();
           retryPlaybackOnTimeout = startup;
           void handle.play().catch((cause) => {
-            if (startup && cause instanceof ScreenPlaybackError && cause.code === 'timeout') return;
+            if (cause instanceof ScreenPlaybackError && cause.code === 'timeout') return;
             if (this.receiving.get(shareId) === incoming) this.error(cause);
           });
         }

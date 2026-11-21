@@ -1181,9 +1181,9 @@ function ConnectedScreenPanel({
           volume={(value) => call?.controls.volume(menuParticipant.id, value)}
         />
       )}
-      {(error || state.error) && (
+      {(error || state.error || state.playbackTimeout) && (
         <p className="screen-error" role="alert">
-          {error || state.error}
+          {error || state.error || state.playbackTimeout}
         </p>
       )}
     </section>

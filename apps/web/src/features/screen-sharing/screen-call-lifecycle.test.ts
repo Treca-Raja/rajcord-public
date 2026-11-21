@@ -1238,14 +1238,18 @@ it.each(['recovered', 'timed out again', 'stopped'] as const)(
     await flush();
     expect(receiver.play).toHaveBeenCalledTimes(1);
     expect(f.call.inspect().playback).toBe(timeout.message);
+    expect(f.call.inspect().playbackTimeout).toBe(timeout.message);
 
     if (outcome === 'stopped') {
       f.call.stopWatching();
       receiver.update({ playback: { ...failed, pendingNative: false } });
       expect(receiver.play).toHaveBeenCalledTimes(1);
+      expect(f.call.inspect().playbackTimeout).toBe('');
       return;
     }
     receiver.play.mockImplementationOnce(async () => {
+      receiver.update({ playback: { ...playback, phase: 'routing', pendingNative: true } });
+      expect(f.call.inspect().playbackTimeout).toBe(timeout.message);
       if (outcome === 'timed out again') {
         receiver.update({ playback: { ...failed, pendingNative: false } });
         throw timeout;
@@ -1256,7 +1260,8 @@ it.each(['recovered', 'timed out again', 'stopped'] as const)(
     await flush();
     expect(receiver.play).toHaveBeenCalledTimes(2);
     expect(receiver.setOutput).toHaveBeenLastCalledWith('headphones');
-    expect(f.call.inspect().error).toBe(outcome === 'recovered' ? '' : timeout.message);
+    expect(f.call.inspect().error).toBe('');
+    expect(f.call.inspect().playbackTimeout).toBe(outcome === 'recovered' ? '' : timeout.message);
     if (outcome === 'recovered') expect(f.call.inspect().playback).toBe('playing');
   },
 );

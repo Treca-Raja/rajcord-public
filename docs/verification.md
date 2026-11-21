@@ -44,7 +44,7 @@ At 768 and 320 px, the Chromium workspace fixture confirmed that the call header
 
 At 390 px, the keyboard fixture joined voice from the navigation drawer and waited for the drawer to close. **Back to channel** then returned focus to **Open call view** and kept voice connected. Reopening through **Activity → Browse call** returned focus to Activity. During a watched stream, activating a voice-channel link from the in-call chat focused the linked room. Escape returned focus to the link while the same stream stayed selected.
 
-The loopback playback fixture held the viewer's first native `play()` call until the startup timeout. After the native operation settled, the retry presented actual video in the same tile. Unit coverage confirmed that a second timeout surfaces the error and stopping the watch prevents a retry. The separate nine-viewer loopback case also passed.
+The loopback playback fixture held the viewer's first native `play()` call until the startup timeout. After the native operation settled, the retry presented actual video in the same tile. The follow-up held the first audio-output request and verified that the call showed the timeout with stream settings closed. Releasing the request allowed one retry, which resumed video in the same tile and cleared the alert. Unit coverage confirmed that a second timeout remains visible and stopping the watch clears the alert and prevents a retry. The separate nine-viewer loopback case also passed.
 
 # Fixed-format gameplay sharing — 2026-11-19
 
