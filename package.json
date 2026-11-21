@@ -60,7 +60,7 @@
     "eslint": "^10.0.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "^17.0.0",
-    "prettier": "^3.6.0",
+    "prettier": "^3.10.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.72.1",
     "vitest": "^5.1.0",
