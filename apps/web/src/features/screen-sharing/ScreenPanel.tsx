@@ -104,13 +104,29 @@ type CallChatProps = {
   onChatVisibleChange?: (visible: boolean) => void;
 };
 type PanelProps = CallChatProps & { voiceChannels?: readonly VoiceChannel[] };
-const portraitQuery = '(max-width: 480px), (max-width: 750px) and (orientation: portrait)';
+const portraitViewportQuery = '(max-width: 480px), (max-width: 750px) and (orientation: portrait)';
+const compactTouchQuery = '(max-width: 750px) and (pointer: coarse)';
 function subscribePortrait(callback: () => void) {
-  const query = window.matchMedia(portraitQuery);
-  query.addEventListener('change', callback);
-  return () => query.removeEventListener('change', callback);
+  const viewport = window.matchMedia(portraitViewportQuery);
+  const touch = window.matchMedia(compactTouchQuery);
+  const orientation = window.screen.orientation;
+  viewport.addEventListener('change', callback);
+  touch.addEventListener('change', callback);
+  orientation?.addEventListener('change', callback);
+  return () => {
+    viewport.removeEventListener('change', callback);
+    touch.removeEventListener('change', callback);
+    orientation?.removeEventListener('change', callback);
+  };
 }
-const inPortrait = () => window.matchMedia(portraitQuery).matches;
+function inPortrait() {
+  // A soft keyboard can make a portrait device's viewport shorter than it is wide.
+  return (
+    window.matchMedia(portraitViewportQuery).matches ||
+    (window.matchMedia(compactTouchQuery).matches &&
+      window.screen.orientation?.type.startsWith('portrait') === true)
+  );
+}
 
 export function ScreenPanel({ voiceChannels = [], ...chat }: PanelProps) {
   const call = useCall();
@@ -463,6 +479,7 @@ function ConnectedScreenPanel({
       role="region"
       aria-label="Screen sharing call"
       data-layout={gallery ? 'grid' : 'focus'}
+      data-portrait={portrait}
       data-members={participantsVisible || canShowDiscussion}
       data-discussion={chatVisible}
       data-phase={state.phase}

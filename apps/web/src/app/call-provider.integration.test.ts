@@ -2018,6 +2018,94 @@ const portraitUiFixture = screenUiFixture
     "h(ScreenPanel,{voiceChannels:[{id:'lounge',name:'The lounge'}],chatName:'general',onChatVisibleChange:visible=>f.callChatReadable=visible}),h('div',{className:'chat-workspace'},h(ChatComposer,{body:draft,onChange:setDraft,onSend:e=>e.preventDefault(),reply:null,replyLoading:false,onCancelReply:()=>{},disabled:false,sending:false,retrying:false,members:[],userId:'account'}))",
   );
 
+it('keeps typing in a wider portrait call when the on-screen keyboard shortens the viewport', async () => {
+  await mountedFixture(
+    async (browser) => {
+      const resize = (height: number, portrait: boolean) =>
+        browser.call('Emulation.setDeviceMetricsOverride', {
+          width: 540,
+          height,
+          screenWidth: portrait ? 540 : 900,
+          screenHeight: portrait ? 900 : 540,
+          deviceScaleFactor: 1,
+          mobile: true,
+          screenOrientation: {
+            type: portrait ? 'portraitPrimary' : 'landscapePrimary',
+            angle: portrait ? 0 : 90,
+          },
+        });
+      await browser.call('Emulation.setTouchEmulationEnabled', { enabled: true });
+      await resize(900, true);
+      await browser.wait("document.querySelector('#screen-panel')?.dataset.discussion==='true'");
+      await browser.js(
+        "fixture.composer=document.querySelector('.chat-workspace textarea');fixture.composer.focus()",
+      );
+      await browser.call('Input.insertText', { text: 'Draft during stream' });
+      await resize(470, true);
+      await browser.wait('innerHeight===470 && matchMedia("(orientation: landscape)").matches');
+      await browser.call('Input.insertText', { text: '!' });
+      expect(
+        await browser.js(`(() => {
+          const chat = document.querySelector('.chat-workspace');
+          const composer = chat.querySelector('textarea');
+          return document.querySelector('#screen-panel').dataset.discussion==='true' &&
+            !chat.inert && document.activeElement===fixture.composer &&
+            composer===fixture.composer && composer.value==='Draft during stream!' &&
+            composer.getBoundingClientRect().bottom<=innerHeight &&
+            getComputedStyle(chat.parentElement).display==='grid';
+        })()`),
+      ).toBe(true);
+
+      await resize(470, false);
+      await browser.wait(
+        "document.querySelector('#screen-panel').dataset.discussion==='false' && document.querySelector('.chat-workspace').inert",
+      );
+      expect(await browser.js('fixture.composer.value')).toBe('Draft during stream!');
+    },
+    'approved',
+    portraitUiFixture,
+  );
+});
+
+it('keeps the rendered stream settings heading and subtitle readable in both palettes', async () => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.screens && !!document.querySelector("#screen-panel")');
+      await browser.js('document.querySelector(\'[aria-label="Open stream settings"]\').click()');
+      await browser.wait("!document.querySelector('#screen-settings').hidden");
+      for (const theme of ['original', 'retro']) {
+        const ratios = (await browser.js(`(() => {
+          document.documentElement.dataset.appearance=${JSON.stringify(theme)};
+          const settings = document.querySelector('#screen-settings');
+          const header = settings.querySelector('.screen-settings-header');
+          const context = document.createElement('canvas').getContext('2d');
+          function luminance(color) {
+            context.clearRect(0, 0, 1, 1);
+            context.fillStyle = color;
+            context.fillRect(0, 0, 1, 1);
+            const [r,g,b] = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3)
+              .map(channel => channel / 255)
+              .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+            return r * 0.2126 + g * 0.7152 + b * 0.0722;
+          }
+          const headerBackground = getComputedStyle(header).backgroundColor;
+          const background = luminance(headerBackground === 'rgba(0, 0, 0, 0)'
+            ? getComputedStyle(settings).backgroundColor : headerBackground);
+          return ['.screen-settings-header strong', '.screen-settings-header > div > span'].map(selector => {
+            const foreground = luminance(getComputedStyle(settings.querySelector(selector)).color);
+            return (Math.max(background, foreground) + 0.05) /
+              (Math.min(background, foreground) + 0.05);
+          });
+        })()`)) as number[];
+        expect(ratios).toHaveLength(2);
+        for (const ratio of ratios) expect(ratio, theme).toBeGreaterThanOrEqual(4.5);
+      }
+    },
+    'approved',
+    screenUiFixture,
+  );
+});
+
 it('keeps portrait video at the top, people below it, and sharing, watching and leaving independent', async () => {
   await mountedFixture(
     async (browser) => {
