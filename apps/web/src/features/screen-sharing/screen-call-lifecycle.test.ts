@@ -31,6 +31,7 @@ const voiceState = (patch: Partial<VoiceState> = {}): VoiceState => ({
   outputVolume: 1,
   processing: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   processingApplied: null,
+  noiseSuppressionEngine: null,
   processingBusy: false,
   processingError: '',
   inputMissing: false,

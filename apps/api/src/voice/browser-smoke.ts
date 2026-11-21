@@ -44,6 +44,23 @@ try {
   );
   const a = await launch();
   browsers.push(a);
+  await a.call('Page.addScriptToEvaluateOnNewDocument', {
+    source: `window.__noiseGraphs=[];window.__microphoneCaptures=[];
+      const originalCapture=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia=async constraints=>{
+        const stream=await originalCapture(constraints);
+        if (constraints.audio?.deviceId?.exact) window.__microphoneCaptures.push({track:stream.getAudioTracks()[0],constraints});
+        return stream;
+      };
+      window.AudioWorkletNode=class extends AudioWorkletNode {
+        constructor(context,name,options){super(context,name,options);this.isRNNoise=name==='rajcord-rnnoise'}
+        connect(destination,...options){
+          if(this.isRNNoise)window.__noiseGraphs.push({node:this,output:destination.stream.getAudioTracks()[0]});
+          return super.connect(destination,...options);
+        }
+      };
+      window.__sending=track=>window.__peers.some(peer=>peer.getSenders().some(sender=>sender.track===track));`,
+  });
   const b = await launch();
   browsers.push(b);
   await setup(a, first.token, origin);
@@ -72,6 +89,47 @@ try {
   }
   await a.wait('(' + received + ').then(bytes=>bytes>1000)');
   await b.wait('(' + received + ').then(bytes=>bytes>1000)');
+  await a.wait(
+    'window.__noiseGraphs.length===1 && window.__sending(window.__noiseGraphs[0].output)',
+  );
+  assert.equal(await a.js('window.__noiseGraphs[0].node.context.sampleRate'), 48000);
+  assert.equal(await a.js('window.__noiseGraphs[0].output.getSettings().channelCount'), 1);
+  assert.equal(
+    await a.js('window.__microphoneCaptures[0].track.getSettings().noiseSuppression'),
+    false,
+  );
+  await a.js("document.querySelector('.profile-settings').click()");
+  await a.click('Voice & audio');
+  await a.wait(
+    "document.querySelector('.voice-processing').textContent.includes('Applied: RNNoise')",
+  );
+  await a.js("window.__noiseGraphs[0].node.dispatchEvent(new Event('processorerror'))");
+  await a.wait(`window.__microphoneCaptures.length===2 && window.__sending(window.__microphoneCaptures[1].track) &&
+    window.__microphoneCaptures[0].track.readyState==='ended' && window.__noiseGraphs[0].output.readyState==='ended' &&
+    window.__noiseGraphs[0].node.context.state==='closed' && document.querySelector('.voice-processing').textContent.includes('Browser fallback')`);
+  assert.equal(
+    await a.js('window.__microphoneCaptures[1].track.getSettings().noiseSuppression'),
+    true,
+  );
+  assert.equal(await a.js('window.__microphoneCaptures[1].track.enabled'), true);
+  // This steady tone is only a stimulus for the independent playback-gain checks below.
+  await a.js(`Array.from(document.querySelectorAll('.voice-processing-option')).find(label=>
+    label.textContent.includes('Noise suppression')).querySelector('input').click()`);
+  await a.wait(
+    'window.__microphoneCaptures.length===3 && window.__sending(window.__microphoneCaptures[2].track)',
+  );
+  assert.equal(
+    await a.js('window.__microphoneCaptures[2].track.getSettings().noiseSuppression'),
+    false,
+  );
+  assert.equal(await a.js('window.__noiseGraphs.length'), 1);
+  assert.equal(
+    await a.js(
+      'new Set(window.__microphoneCaptures.map(c=>c.constraints.audio.deviceId.exact)).size',
+    ),
+    1,
+  );
+  await a.js('document.querySelector(\'[aria-label="Close settings"]\').click()');
   assert.ok(
     (await server.voice!.media.listParticipants([...server.voice!.leases.values()][0]!.room)).every(
       (p) => p.tracks.every((t) => t.source === 2),
@@ -370,6 +428,9 @@ try {
     'explicit input/output selection',
     'both join muted',
     'bidirectional received audio bytes',
+    'production RNNoise worklet sends a 48 kHz mono derived track with Chromium suppression disabled',
+    'processor failure falls back once to Chromium on the exact microphone and releases its graph',
+    'switching suppression off publishes the direct capture with browser suppression off',
     'microphone-only media grants',
     'remote mute state',
     'deafen stops playback',
