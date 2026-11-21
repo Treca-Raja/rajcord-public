@@ -92,6 +92,7 @@ function Community() {
   const activityVisible = !screenOpen && (wide ? activityPinned : membersOpen);
   const activityTrigger = useRef<HTMLButtonElement>(null);
   const callReturnFocus = useRef<'activity' | 'navigation' | null>(null);
+  const previousScreenOpen = useRef(false);
   const navigationTrigger = useRef<HTMLButtonElement>(null);
   const mobileCallTrigger = useRef<HTMLButtonElement>(null);
   function dismissActivity() {
@@ -278,6 +279,8 @@ function Community() {
   }, []);
   const voiceStatus = call?.voice.status;
   useEffect(() => {
+    if (screenOpen === previousScreenOpen.current) return;
+    previousScreenOpen.current = screenOpen;
     if (screenOpen) {
       if (mobile) callReturnFocus.current = 'navigation';
       setMobile(false);

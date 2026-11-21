@@ -1931,6 +1931,107 @@ it('returns focus to the call dock after joining from mobile navigation and to A
   );
 });
 
+it('opens mobile voice navigation from a channel link while a stream is playing', async () => {
+  const gameId = '123e4567-e89b-42d3-a456-426614174000';
+  const conversation = {
+    id: 'general',
+    kind: 'channel',
+    name: 'General',
+    archived: false,
+    topic: '',
+    category: null,
+    position: 0,
+    metadataRevision: '1',
+    unreadCount: 0,
+    mentionCount: 0,
+    lastReadSeq: '1',
+    activity: '1',
+    managerId: null,
+    members: [],
+  };
+  const message = {
+    id: 'note',
+    clientId: 'note',
+    conversationId: conversation.id,
+    featureVersion: 2,
+    seq: '1',
+    change: '1',
+    contextChange: '1',
+    author: { id: 'friend', username: 'friend', displayName: 'Friend' },
+    body: `Meet in <voice:${gameId}>`,
+    createdAt: '2026-11-21T00:00:00Z',
+    editedAt: null,
+    deleted: false,
+    pinned: false,
+    replyCount: 0,
+    replyTo: null,
+    threadRoot: null,
+    reactions: [],
+    mentions: [],
+  };
+  const app = workspaceScreenFixture
+    .replace("id:'games',name:'Games'", `id:'${gameId}',name:'Games'`)
+    .replace(
+      'return response({conversations:[]});',
+      `return response(${JSON.stringify({ conversations: [conversation] })});`,
+    )
+    .replace(
+      "if(path==='/api/invitations')",
+      `if(String(path).startsWith('/api/conversations/general/messages')) return response(${JSON.stringify(
+        { messages: [message], nextBefore: null, change: '1', hasMore: false },
+      )});
+      if(path==='/api/invitations')`,
+    );
+  await mountedFixture(
+    async (browser) => {
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: 390,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+      });
+      await browser.wait("!!document.querySelector('.message-body .channel-reference')");
+      await browser.js("document.querySelector('.mobile-menu').click()");
+      await browser.wait("!!document.querySelector('.mobile-open [data-voice-channel-id=lounge]')");
+      await browser.js(`fixture.deviceList=[
+        {kind:'audioinput',deviceId:'mic',label:'Microphone',groupId:'m'},
+        {kind:'audioinput',deviceId:'default',label:'Synthetic device',groupId:'m'},
+        {kind:'audiooutput',deviceId:'speaker',label:'Speakers',groupId:'s'},
+        {kind:'audiooutput',deviceId:'default',label:'Synthetic device',groupId:'s'}
+      ]; document.querySelector('[data-voice-channel-id=lounge]').click()`);
+      await browser.wait('fixture.captureCalls===1');
+      await browser.js('fixture.finishCapture()');
+      await browser.wait(
+        "!!document.querySelector('#screen-panel') && !document.querySelector('.mobile-open')",
+      );
+      await browser.js("fixture.screens.watch('first')");
+      await browser.wait(
+        "document.querySelector('#screen-panel').dataset.discussion==='true' && !document.querySelector('.chat-workspace').inert",
+      );
+      await browser.js("document.querySelector('.channel-reference').focus()");
+      const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 };
+      await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', text: '\r', ...key });
+      await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', ...key });
+      await browser.js(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      await browser.js(
+        "Promise.all(document.querySelector('.sidebar').getAnimations().map(animation=>animation.finished.catch(()=>{})))",
+      );
+      expect(
+        await browser.js(`({
+          drawer:!!document.querySelector('.mobile-open'),
+          focus:document.activeElement.dataset.voiceChannelId,
+          visible:document.activeElement.checkVisibility({visibilityProperty:true}),
+          watching:fixture.screens.inspect().watching
+        })`),
+      ).toEqual({ drawer: true, focus: gameId, visible: true, watching: 'first' });
+    },
+    'approved',
+    app,
+  );
+});
+
 it('keeps focus in account settings opened from Activity and restores it on close', async () => {
   await mountedFixture(
     async (browser) => {
