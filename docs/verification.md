@@ -1773,3 +1773,25 @@ A Linux release source-branch run passed all **100 browser integration cases** b
 The local Windows x64 NSIS build and package audit passed with a disposable Ed25519 key. The audit verified the packaged public key, the manifest signature and the final installer's SHA-512. Windows reported the installer as unsigned. The pinned Electron updater provider tests accepted a newer verified release and its cached installer, and rejected foreign signatures, oversized metadata and downgrades. The mocked native flow covered explicit consent, changed bytes, a renamed cache file and shell launch failure.
 
 The production signing key and public feed still require setup. Two-version installation, Windows prompts and preservation of the installed profile remain to be exercised on a disposable Windows account before publication.
+
+## Automatic RNNoise microphone suppression
+
+The Windows production build, lint and import checks passed, along with 1,639 unit tests and 183 PostgreSQL and LiveKit integration tests. The account-settings browser test confirmed that existing per-account preferences reload. The built two-client Edge voice smoke passed 32 checks, including publication of the derived 48 kHz mono track, fallback after a simulated processor error, direct capture with suppression off and track cleanup. A worklet regression compared varying render quantum sizes against the vendored WASM frame by frame and found no dropped or repeated samples.
+
+Ten Edge clients each kept one RNNoise publication and received the other nine streams throughout the 65-second local voice soak. All clients recovered after signaling loss and an API restart. Leaving released their microphones and peer connections.
+
+The Windows x64 unsigned installer build and package audit passed. An isolated Electron 45.1.0 renderer with production CSP, sandbox and context isolation resolved the built WASM and worklet and processed a 44.1 kHz synthetic media track at 48 kHz. It produced mono speech output and was ready in 33 ms on loopback. The broader Electron smoke passed microphone permission/reset and device discovery, then stopped at notification opt-in. Installer execution requires a disposable Windows account because the local account has an existing installation and profile.
+
+To reproduce the audio comparison, run `pnpm build` and `pnpm --filter @tricord/api test:voice:rnnoise`. The test feeds identical audio to separate Edge profiles with echo cancellation and automatic gain off. Its fixture combines a recorded speech excerpt with deterministic fan tones and keyboard-like transients. It writes measured windows to `artifacts/rnnoise-audio.json`. [Speech fixture attribution](../apps/api/src/voice/fixtures/rnnoise-speech.source.txt)
+
+| Input window         | Suppression off RMS | Chromium RMS | RNNoise RMS |
+| -------------------- | ------------------: | -----------: | ----------: |
+| Silence              |                   0 |            0 |           0 |
+| Fan                  |             0.01727 |      0.00206 |     0.00015 |
+| Keyboard-like clicks |             0.01963 |      0.01316 |     0.00228 |
+| Quiet speech         |             0.00735 |      0.00641 |     0.00756 |
+| Speech with noise    |             0.04382 |      0.04042 |     0.03579 |
+
+On the Ryzen 5 5600 test host, production WASM and worklet setup took about 29 ms in Edge over loopback. The timing excludes microphone acquisition. Correlation on the recorded speech measured 30 ms of processing delay, including 10 ms of worklet buffering. The 12-second RNNoise capture had no missed callback windows by the harness's playback-time check. Two minutes of offline WASM processing used 2.0 CPU seconds, about 1.7% of one core at real-time speed. That number covers the kernel and test loop. Browser, audio I/O and WebRTC overhead require separate measurement.
+
+Two-person device acceptance remains open. Compare ON and OFF on a real microphone in Chromium and installed Electron with echo cancellation and automatic gain held constant. The remote listener should check quiet speech, the beginning and end of phrases, simultaneous speech and typing, fan or HVAC noise, and room conversation. Repeat after mute, deafen, device change, unplug/replug, rejoin and a network reconnect. The fixture measures signal levels and continuity. Speech intelligibility, acoustic echo, listener preference and WAN behavior require that listening test.

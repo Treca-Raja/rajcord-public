@@ -18,6 +18,7 @@
     "test:browser": "tsx --env-file-if-exists=.env src/auth/browser-smoke.ts",
     "test:presence": "tsx --env-file-if-exists=.env src/presence-browser-smoke.ts",
     "test:voice": "tsx --env-file-if-exists=.env src/voice/browser-smoke.ts",
+    "test:voice:rnnoise": "tsx src/voice/rnnoise-audio-smoke.ts",
     "test:voice:load": "tsx --env-file-if-exists=.env src/voice/load-smoke.ts",
     "test:voice:check": "tsx --env-file-if-exists=.env src/voice/check-test-services.ts",
     "test:screen": "pnpm build && node dist/screen/feasibility-smoke.js",

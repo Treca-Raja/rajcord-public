@@ -41,7 +41,10 @@ const statsExpression = `Promise.all(window.__peers.filter(p=>p.connectionState=
  const stats=reports.flatMap(r=>[...r.values()]);
  const incoming=stats.filter(s=>s.type==='inbound-rtp'&&s.kind==='audio');
  const sum=key=>incoming.reduce((total,s)=>total+(s[key]||0),0);
- return {streams:incoming.filter(s=>s.bytesReceived>0).length,bytes:sum('bytesReceived'),packets:sum('packetsReceived'),lost:sum('packetsLost'),energy:sum('totalAudioEnergy'),maxJitterMs:Math.max(0,...incoming.map(s=>(s.jitter||0)*1000)),connections:window.__peers.filter(p=>p.connectionState==='connected').length,captures:window.__captureCount,microphones:window.__captures.filter(t=>t.readyState==='live').length,status:document.querySelector('[data-voice-status]')?.dataset.voiceStatus};
+ const peers=window.__peers.filter(p=>p.connectionState==='connected');
+ const processedMicrophones=peers.flatMap(p=>p.getSenders()).filter(({track})=>
+   track?.kind==='audio'&&track.readyState==='live'&&!window.__captures.includes(track)).length;
+ return {streams:incoming.filter(s=>s.bytesReceived>0).length,bytes:sum('bytesReceived'),packets:sum('packetsReceived'),lost:sum('packetsLost'),energy:sum('totalAudioEnergy'),maxJitterMs:Math.max(0,...incoming.map(s=>(s.jitter||0)*1000)),connections:peers.length,captures:window.__captureCount,microphones:window.__captures.filter(t=>t.readyState==='live').length,processedMicrophones,status:document.querySelector('[data-voice-status]')?.dataset.voiceStatus};
 })`;
 type Stats = {
   streams: number;
@@ -53,6 +56,7 @@ type Stats = {
   connections: number;
   captures: number;
   microphones: number;
+  processedMicrophones: number;
   status: string;
 };
 const samples: {
@@ -77,7 +81,7 @@ async function waitForAll() {
     await browser.wait(
       '(' +
         statsExpression +
-        `).then(s=>s.streams===${clientCount - 1}&&s.energy>0&&s.connections===2&&s.microphones===1)`,
+        `).then(s=>s.streams===${clientCount - 1}&&s.energy>0&&s.connections===2&&s.microphones===1&&s.processedMicrophones===1)`,
     );
   }
 }
@@ -124,7 +128,7 @@ try {
   assert.equal(participants.length, clientCount);
   assert.ok(participants.every((p) => p.tracks.some((t) => t.source === 2 && !t.muted)));
   checks.push(
-    clientCount + ' approved isolated browser clients publish microphone audio',
+    clientCount + ' approved isolated browser clients each publish one RNNoise microphone track',
     'each client receives ' + (clientCount - 1) + ' decoded audio streams',
   );
   const extra = await api(users[clientCount]!, '/join', { channelId });
@@ -162,9 +166,10 @@ try {
           s.status === 'connected' &&
           s.streams === clientCount - 1 &&
           s.connections === 2 &&
-          s.microphones === 1,
+          s.microphones === 1 &&
+          s.processedMicrophones === 1,
       ),
-      'Every client must remain connected to every other microphone stream',
+      'Every client must keep one RNNoise publication and receive every other microphone stream',
     );
     assert.ok(
       clients.every((s, i) => s.bytes > before[i]!.bytes),

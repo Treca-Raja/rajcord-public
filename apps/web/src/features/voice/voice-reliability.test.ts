@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { VoiceController } from './voice-controller';
 type MockTrack = {
+  media: { stop: () => void };
   muted: boolean;
   stop: ReturnType<typeof vi.fn>;
   mute: ReturnType<typeof vi.fn>;
@@ -24,6 +25,8 @@ const sdk = vi.hoisted(() => ({
   tracks: [] as MockTrack[],
   pendingMute: undefined as Promise<void> | undefined,
 }));
+const rnnoise = vi.hoisted(() => ({ supports: vi.fn(), start: vi.fn() }));
+vi.mock('./rnnoise', () => ({ supportsRNNoise: rnnoise.supports, startRNNoise: rnnoise.start }));
 vi.mock('livekit-client', () => ({
   RoomEvent: Object.fromEntries(
     [
@@ -69,6 +72,7 @@ vi.mock('livekit-client', () => ({
   LocalAudioTrack: class {
     constructor(media: { stop: () => void }) {
       const track = {
+        media,
         muted: false,
         stop: vi.fn(() => media.stop()),
         mute: vi.fn(async () => {
@@ -100,7 +104,11 @@ function stream(
     autoGainControl: true,
   },
 ) {
-  const media = Object.assign(new EventTarget(), { stop: vi.fn(), getSettings: () => settings });
+  const media = Object.assign(new EventTarget(), {
+    enabled: true,
+    stop: vi.fn(),
+    getSettings: () => settings,
+  });
   return { media, getTracks: () => [media], getAudioTracks: () => [media] };
 }
 let controller: VoiceController;
@@ -108,12 +116,16 @@ beforeEach(() => {
   sdk.rooms.length = 0;
   sdk.tracks.length = 0;
   sdk.pendingMute = undefined;
+  rnnoise.supports.mockReset().mockReturnValue(false);
+  rnnoise.start.mockReset();
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 afterEach(async () => {
   await controller?.leave();
   controller?.dispose();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 function setup() {
   const capture = stream();
@@ -240,6 +252,7 @@ it('clears a processing failure after explicitly selecting a working replacement
     }),
   ).rejects.toThrow();
   expect(controller.state.processingError).not.toBe('');
+  media.getUserMedia.mockResolvedValueOnce(stream({ noiseSuppression: false }));
   await controller.selectInput('replacement');
   expect(controller.state.processingError).toBe('');
   expect(controller.state.processingApplied).not.toBeNull();
@@ -740,4 +753,183 @@ it('participant volume changes during amplification setup are preserved when pla
   pending.resolve();
   await vi.waitFor(() => expect(f.element.play).toHaveBeenCalled());
   expect(f.element.volume).toBe(0.25);
+});
+
+function noiseGraph() {
+  const output = stream({}).media;
+  const stop = vi.fn(() => output.stop());
+  return { track: output, stop };
+}
+
+it('publishes the RNNoise output and disables browser suppression while preserving echo and gain', async () => {
+  const { media } = setup();
+  const first = stream({ noiseSuppression: false, echoCancellation: true, autoGainControl: true });
+  const graph = noiseGraph();
+  rnnoise.supports.mockReturnValue(true);
+  rnnoise.start.mockResolvedValueOnce(graph);
+  media.getUserMedia.mockResolvedValueOnce(first);
+  await controller.join('room');
+  expect(media.getUserMedia).toHaveBeenCalledExactlyOnceWith({
+    video: false,
+    audio: {
+      deviceId: { exact: 'mic' },
+      echoCancellation: true,
+      autoGainControl: true,
+      noiseSuppression: false,
+    },
+  });
+  expect(sdk.tracks[0]!.media).toBe(graph.track);
+  expect(controller.state.processingApplied?.noiseSuppression).toBe(true);
+  expect(controller.state.noiseSuppressionEngine).toBe('rnnoise');
+  expect(first.media.enabled).toBe(false);
+  await controller.mute();
+  expect(first.media.enabled).toBe(true);
+  await controller.deafen();
+  expect(first.media.enabled).toBe(false);
+  await controller.deafen();
+  expect(first.media.enabled).toBe(true);
+  sdk.rooms[0]!.emit('Reconnecting');
+  sdk.rooms[0]!.emit('Reconnected');
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  const direct = stream({ noiseSuppression: false, echoCancellation: true, autoGainControl: true });
+  media.getUserMedia.mockResolvedValueOnce(direct);
+  await controller.setProcessing({ ...controller.state.processing, noiseSuppression: false });
+  expect(sdk.tracks[1]!.media).toBe(direct.media);
+  expect(controller.state.noiseSuppressionEngine).toBeNull();
+  expect(controller.state.processingApplied?.noiseSuppression).toBe(false);
+  expect(first.media.stop).toHaveBeenCalledOnce();
+  expect(graph.stop).toHaveBeenCalledOnce();
+  expect(rnnoise.start).toHaveBeenCalledOnce();
+  const restarted = noiseGraph();
+  rnnoise.start.mockResolvedValueOnce(restarted);
+  media.getUserMedia.mockResolvedValueOnce(stream({ noiseSuppression: false }));
+  await controller.setProcessing({ ...controller.state.processing, noiseSuppression: true });
+  expect(sdk.tracks[2]!.media).toBe(restarted.track);
+  expect(sdk.tracks[2]!.muted).toBe(false);
+  expect(controller.state.noiseSuppressionEngine).toBe('rnnoise');
+});
+
+it('recaptures the same microphone with browser suppression after startup failure and latches it for the call', async () => {
+  const { media } = setup();
+  const first = stream({ noiseSuppression: false });
+  rnnoise.supports.mockReturnValue(true);
+  rnnoise.start.mockRejectedValueOnce(new Error('WASM blocked'));
+  media.getUserMedia.mockResolvedValueOnce(first);
+  await controller.join('room');
+  expect(first.media.stop).toHaveBeenCalledOnce();
+  expect(first.media.stop.mock.invocationCallOrder[0]).toBeLessThan(
+    media.getUserMedia.mock.invocationCallOrder[1]!,
+  );
+  expect(media.getUserMedia.mock.calls.map(([options]) => options.audio)).toEqual([
+    {
+      deviceId: { exact: 'mic' },
+      echoCancellation: true,
+      autoGainControl: true,
+      noiseSuppression: false,
+    },
+    {
+      deviceId: { exact: 'mic' },
+      echoCancellation: true,
+      autoGainControl: true,
+      noiseSuppression: true,
+    },
+  ]);
+  expect(sdk.tracks).toHaveLength(1);
+  expect(controller.state.noiseSuppressionEngine).toBe('browser');
+  await controller.selectInput('replacement');
+  expect(rnnoise.start).toHaveBeenCalledOnce();
+  expect(media.getUserMedia.mock.lastCall?.[0].audio.deviceId).toEqual({ exact: 'replacement' });
+});
+
+it('uses the browser once after runtime failure during reconnect and ignores stale processor errors', async () => {
+  const { media, capture } = setup();
+  const first = stream({ noiseSuppression: false });
+  const graph = noiseGraph();
+  rnnoise.supports.mockReturnValue(true);
+  rnnoise.start.mockResolvedValueOnce(graph);
+  media.getUserMedia.mockResolvedValueOnce(first);
+  await controller.join('room');
+  await controller.mute();
+  const room = sdk.rooms[0]!;
+  const fail = rnnoise.start.mock.lastCall?.[2] as (error: Error) => void;
+  room.emit('Reconnecting');
+  fail(new Error('Processor error'));
+  expect(first.media.enabled).toBe(false);
+  expect(controller.state.noiseSuppressionEngine).toBeNull();
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  room.emit('Reconnected');
+  await vi.waitFor(() => expect(controller.state.noiseSuppressionEngine).toBe('browser'));
+  expect(graph.stop).toHaveBeenCalledOnce();
+  expect(sdk.tracks[1]!.media).toBe(capture.media);
+  expect(sdk.tracks[1]!.muted).toBe(false);
+  fail(new Error('Duplicate error'));
+  expect(media.getUserMedia).toHaveBeenCalledTimes(2);
+  expect(room.localParticipant.publishTrack).toHaveBeenCalledTimes(2);
+  expect(room.localParticipant.unpublishTrack).toHaveBeenCalledOnce();
+});
+
+it('releases the software output on device loss even while the derived track is live', async () => {
+  const { media } = setup();
+  const first = stream({ noiseSuppression: false });
+  const graph = noiseGraph();
+  rnnoise.supports.mockReturnValue(true);
+  rnnoise.start.mockResolvedValueOnce(graph);
+  media.getUserMedia.mockResolvedValueOnce(first);
+  await controller.join('room');
+  first.media.dispatchEvent(new Event('ended'));
+  expect(controller.state.inputMissing).toBe(true);
+  expect(controller.state.noiseSuppressionEngine).toBeNull();
+  expect(graph.stop).toHaveBeenCalledOnce();
+  expect(sdk.rooms[0]!.localParticipant.unpublishTrack).toHaveBeenCalledOnce();
+});
+
+it('stops capture when leaving during worklet startup and discards a late processor', async () => {
+  const { media } = setup();
+  const first = stream({ noiseSuppression: false });
+  const pending = deferred<ReturnType<typeof noiseGraph>>();
+  const graph = noiseGraph();
+  rnnoise.supports.mockReturnValue(true);
+  rnnoise.start.mockReturnValueOnce(pending.promise);
+  media.getUserMedia.mockResolvedValueOnce(first);
+  const joining = controller.join('room');
+  await vi.waitFor(() => expect(rnnoise.start).toHaveBeenCalledOnce());
+  await controller.leave();
+  expect(first.media.stop).toHaveBeenCalled();
+  pending.resolve(graph);
+  await joining;
+  expect(graph.stop).toHaveBeenCalledOnce();
+  expect(sdk.rooms[0]!.localParticipant.publishTrack).not.toHaveBeenCalled();
+});
+
+it('indicates when neither RNNoise nor browser suppression can be confirmed', async () => {
+  const { media } = setup();
+  media.getUserMedia.mockResolvedValueOnce(stream({}));
+  await controller.join('room');
+  expect(controller.state.noiseSuppressionEngine).toBe('unavailable');
+  expect(controller.state.processingApplied?.noiseSuppression).toBeUndefined();
+  expect(sdk.rooms[0]!.localParticipant.publishTrack).toHaveBeenCalledOnce();
+});
+
+it('changes to the exact selected microphone after reconnect without reviving the previous graph', async () => {
+  const { media } = setup();
+  const first = stream({ noiseSuppression: false });
+  const firstGraph = noiseGraph();
+  const replacement = stream({ noiseSuppression: false });
+  const secondGraph = noiseGraph();
+  rnnoise.supports.mockReturnValue(true);
+  rnnoise.start.mockResolvedValueOnce(firstGraph).mockResolvedValueOnce(secondGraph);
+  media.getUserMedia.mockResolvedValueOnce(first).mockResolvedValueOnce(replacement);
+  await controller.join('room');
+  sdk.rooms[0]!.emit('Reconnecting');
+  await controller.selectInput('replacement');
+  expect(firstGraph.stop).toHaveBeenCalledOnce();
+  expect(media.getUserMedia).toHaveBeenCalledOnce();
+  sdk.rooms[0]!.emit('Reconnected');
+  await vi.waitFor(() => expect(controller.state.noiseSuppressionEngine).toBe('rnnoise'));
+  expect(media.getUserMedia.mock.lastCall?.[0].audio.deviceId).toEqual({ exact: 'replacement' });
+  expect(sdk.tracks[1]!.media).toBe(secondGraph.track);
+  expect(secondGraph.stop).not.toHaveBeenCalled();
+  await controller.selectInput('');
+  expect(secondGraph.stop).toHaveBeenCalledOnce();
+  expect(controller.state.noiseSuppressionEngine).toBeNull();
 });

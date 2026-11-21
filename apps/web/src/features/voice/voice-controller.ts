@@ -5,10 +5,16 @@ import { ScreenBindingOwner, type ScreenBindingDependency } from '../screen-shar
 import type { VoiceRequest } from './voice-session';
 import {
   defaultProcessing,
+  processingKeys,
   processingSettings,
   appliedProcessing,
   type MicrophoneProcessing,
 } from './voice-processing';
+import {
+  captureMicrophone,
+  type MicrophoneCapture,
+  type NoiseSuppressionEngine,
+} from './voice-microphone';
 export type VoiceChannel = {
   id: string;
   name: string;
@@ -24,6 +30,7 @@ export type VoiceState = {
   outputVolume: number;
   processing: MicrophoneProcessing;
   processingApplied: Partial<MicrophoneProcessing> | null;
+  noiseSuppressionEngine: NoiseSuppressionEngine;
   processingBusy: boolean;
   processingError: string;
   inputMissing: boolean;
@@ -36,6 +43,14 @@ export type VoiceState = {
 };
 type Request = VoiceRequest;
 type Lease = { id: string; channelId: string; credential: string; useServerIceServers?: boolean };
+type Microphone = {
+  input: string;
+  track: LocalAudioTrack;
+  capture: MicrophoneCapture;
+  stop: () => void;
+  readonly stopped: boolean;
+  failed: boolean;
+};
 export const concreteDevices = <T extends Pick<MediaDeviceInfo, 'kind' | 'deviceId'>>(
   devices: readonly T[],
   kind: MediaDeviceKind,
@@ -54,6 +69,7 @@ export class VoiceController {
     outputVolume: 1,
     processing: defaultProcessing,
     processingApplied: null,
+    noiseSuppressionEngine: null,
     processingBusy: false,
     processingError: '',
     inputMissing: false,
@@ -66,13 +82,16 @@ export class VoiceController {
   };
   private room?: Room;
   private lease?: Lease;
-  private microphone?: LocalAudioTrack;
-  private publishing = new WeakSet<LocalAudioTrack>();
+  private microphone?: Microphone;
+  private publishing = new WeakSet<Microphone>();
+  private microphonePublications = new WeakMap<Room, Promise<void>>();
+  private captureCancellation?: AbortController;
+  private captureAttempt = 0;
+  private rnnoiseFailed = false;
   private elements = new Map<string, HTMLAudioElement>();
   private outputAudio = new VoiceOutput();
   private volumes = new Map<string, number>();
   private generation = 0;
-  private captureAttempt = 0;
   private outputAttempt = 0;
   private playback = new WeakMap<HTMLAudioElement, Promise<void>>();
   private wanted = false;
@@ -221,13 +240,36 @@ export class VoiceController {
   }
   async selectInput(id: string) {
     const generation = this.generation;
+    const changed = this.state.input !== id || this.state.inputMissing;
     this.update({ input: id, inputMissing: false });
+    if (!id || (changed && this.state.status === 'reconnecting')) {
+      this.captureCancellation?.abort();
+      this.captureCancellation = undefined;
+      this.update({ processingApplied: null, noiseSuppressionEngine: null });
+      if (!id) await this.releaseMicrophone();
+      else this.microphone?.stop();
+      return;
+    }
     if (this.state.status === 'connected') {
+      if (
+        !changed &&
+        this.microphone?.input === id &&
+        !this.microphone.failed &&
+        !this.microphone.stopped
+      )
+        return;
       try {
         await this.capture(this.generation);
       } catch (error) {
-        if (this.wanted && generation === this.generation && this.state.input === id)
-          this.update({ inputMissing: true, error: (error as Error).message });
+        if (this.wanted && generation === this.generation && this.state.input === id) {
+          this.update({
+            inputMissing: true,
+            processingApplied: null,
+            noiseSuppressionEngine: null,
+            error: (error as Error).message,
+          });
+          await this.releaseMicrophone();
+        }
       }
     }
   }
@@ -240,119 +282,229 @@ export class VoiceController {
     for (const element of this.elements.values()) await this.play(element);
   }
   private async capture(generation: number) {
-    const room = this.room,
-      input = this.state.input,
-      attempt = ++this.captureAttempt;
+    const room = this.room;
+    const { input, processing, inputMissing } = this.state;
+    if (!room || !input || inputMissing) return;
+    this.captureCancellation?.abort();
+    // Chromium can reuse an open capture's audio processing when the same device is reopened.
+    // Release it before changing capture constraints, including during browser fallback.
+    if (this.microphone) {
+      this.microphone.stop();
+      this.update({ processingApplied: null, noiseSuppressionEngine: null });
+    }
+    const cancellation = new AbortController();
+    const attempt = ++this.captureAttempt;
+    this.captureCancellation = cancellation;
+    const { signal } = cancellation;
     const current = () =>
+      !signal.aborted &&
+      attempt === this.captureAttempt &&
       this.wanted &&
       generation === this.generation &&
       this.room === room &&
-      attempt === this.captureAttempt &&
       this.state.input === input &&
       !this.state.inputMissing;
-    if (!room || !input || this.state.inputMissing) return;
-    const { LocalAudioTrack, Track } = await import('livekit-client');
-    if (!current()) return;
-    const stream = await navigator.mediaDevices
-      .getUserMedia({
-        video: false,
-        audio: {
-          deviceId: { exact: input },
-          ...this.state.processing,
-        },
-      })
-      .catch((error: unknown) => {
-        if (current()) throw error;
-        return undefined;
-      });
-    if (!stream) return;
-    if (!current()) {
-      stream.getTracks().forEach((t) => t.stop());
-      return;
-    }
-    const media = stream.getAudioTracks()[0]!;
-    // User-provided tracks prevent SDK device fallback/reacquisition.
-    const track = new LocalAudioTrack(media, undefined, true);
-    this.publishing.add(track);
+
+    let microphone: Microphone | undefined;
+    const processorFailed = (error: Error) => {
+      const active = this.microphone === microphone && microphone !== undefined;
+      if (
+        (!active && !current()) ||
+        this.state.input !== input ||
+        !this.state.processing.noiseSuppression
+      )
+        return;
+      if (microphone?.failed) return;
+      this.noteRNNoiseFailure(error);
+      if (microphone) {
+        microphone.failed = true;
+        microphone.capture.source.enabled = false;
+      }
+      if (active) this.update({ processingApplied: null, noiseSuppressionEngine: null });
+      if (this.state.status === 'connected' && (current() || !this.captureCancellation))
+        runInBackground(this.recoverMicrophone(generation, input));
+    };
+
     try {
-      const previous = this.microphone;
-      this.microphone = track;
-      if (previous) {
-        previous.stop();
-        await room.localParticipant.unpublishTrack(previous);
-      }
-      if (!current()) {
-        track.stop();
-        return;
-      }
-      media.addEventListener(
-        'ended',
-        () => {
-          if (this.microphone !== track) return;
-          this.microphone = undefined;
-          track.stop();
-          void room.localParticipant.unpublishTrack(track).catch(() => {});
-          this.update({
-            inputMissing: true,
-            processingApplied: null,
-            error: 'Microphone disconnected. Choose a replacement; voice remains connected.',
-          });
+      const { LocalAudioTrack, Track } = await import('livekit-client');
+      if (!current()) return;
+      const capture = await captureMicrophone(
+        input,
+        processing,
+        !this.rnnoiseFailed,
+        signal,
+        (error) => {
+          if (current()) this.noteRNNoiseFailure(error);
         },
-        { once: true },
+        processorFailed,
       );
-      // Publish muted so preference changes cannot be lost before the SDK assigns a SID.
-      await track.mute();
       if (!current()) {
-        track.stop();
+        capture.stop();
         return;
       }
-      await room.localParticipant.publishTrack(track, { source: Track.Source.Microphone });
-      if (!current()) {
+
+      // Keep the exact-device capture and the derived publication under the same owner.
+      const lifetime = new AbortController();
+      let track: LocalAudioTrack;
+      try {
+        track = new LocalAudioTrack(capture.outgoing, undefined, true);
+      } catch (error) {
+        capture.stop();
+        throw error;
+      }
+      const stop = () => {
+        if (lifetime.signal.aborted) return;
+        lifetime.abort();
+        capture.stop();
         track.stop();
-        await room.localParticipant.unpublishTrack(track);
-        if (this.microphone === track) this.microphone = undefined;
-      } else {
-        this.publishing.delete(track);
-        await this.applyMute();
-        if (current())
+      };
+      const next: Microphone = {
+        input,
+        track,
+        capture,
+        stop,
+        get stopped() {
+          return lifetime.signal.aborted;
+        },
+        failed: false,
+      };
+      microphone = next;
+      signal.addEventListener('abort', stop, { once: true });
+      this.publishing.add(next);
+      const publish = (this.microphonePublications.get(room) ?? Promise.resolve()).then(
+        async () => {
+          if (!current()) return;
+          signal.removeEventListener('abort', stop);
+          const previous = this.microphone;
+          this.microphone = next;
+          this.update({ processingApplied: null, noiseSuppressionEngine: null });
+          if (previous) {
+            previous.stop();
+            await room.localParticipant.unpublishTrack(previous.track);
+          }
+          if (!current()) return;
+          const ended = () => {
+            if (this.microphone !== next) return;
+            runInBackground(this.releaseMicrophone());
+            if (this.state.input !== input) return;
+            this.captureCancellation?.abort();
+            this.update({
+              inputMissing: true,
+              processingApplied: null,
+              noiseSuppressionEngine: null,
+              error: 'Microphone disconnected. Choose a replacement; voice remains connected.',
+            });
+          };
+          if (capture.source.readyState === 'ended') {
+            throw new Error('The selected microphone disconnected before publishing.');
+          }
+          capture.source.addEventListener('ended', ended, { signal: lifetime.signal, once: true });
+          // Publish muted so preference changes cannot be lost before the SDK assigns a SID.
+          await track.mute();
+          if (!current()) return;
+          await room.localParticipant.publishTrack(track, { source: Track.Source.Microphone });
+          try {
+            if (!current()) return;
+            this.publishing.delete(next);
+            await this.applyMute();
+            if (!current() || next.failed) return;
+          } finally {
+            if (!current()) await room.localParticipant.unpublishTrack(track);
+          }
           this.update({
-            processingApplied: appliedProcessing(media.getSettings()),
+            processingApplied: {
+              ...appliedProcessing(capture.source.getSettings()),
+              ...(capture.engine === 'rnnoise' ? { noiseSuppression: true } : {}),
+            },
+            noiseSuppressionEngine: capture.engine,
             processingError: '',
           });
+        },
+      );
+      this.microphonePublications.set(
+        room,
+        publish.catch(() => {}),
+      );
+      try {
+        await publish;
+      } catch (error) {
+        stop();
+        if (this.microphone === next) this.microphone = undefined;
+        throw error;
+      } finally {
+        this.publishing.delete(next);
+        signal.removeEventListener('abort', stop);
+        if (!current()) {
+          stop();
+          if (this.microphone === next) this.microphone = undefined;
+        }
       }
     } catch (error) {
-      track.stop();
-      if (this.microphone === track) this.microphone = undefined;
       if (current()) throw error;
     } finally {
-      this.publishing.delete(track);
+      if (this.captureCancellation === cancellation) this.captureCancellation = undefined;
     }
+  }
+  private noteRNNoiseFailure(error: unknown) {
+    if (this.rnnoiseFailed) return;
+    this.rnnoiseFailed = true;
+    console.warn('Rajcord RNNoise unavailable. Trying browser noise suppression.', error);
+  }
+  private async recoverMicrophone(generation: number, input: string) {
+    try {
+      await this.capture(generation);
+    } catch (error) {
+      if (!this.wanted || generation !== this.generation || this.state.input !== input) return;
+      this.update({
+        processingError:
+          'Could not restore microphone audio. Choose the microphone again to retry.',
+        inputMissing: true,
+      });
+      console.warn(
+        'Rajcord could not restore the selected microphone after RNNoise failed.',
+        error,
+      );
+      await this.releaseMicrophone();
+    }
+  }
+  private async releaseMicrophone() {
+    const microphone = this.microphone;
+    this.microphone = undefined;
+    microphone?.stop();
+    if (microphone) await this.room?.localParticipant.unpublishTrack(microphone.track);
   }
   async setProcessing(value: MicrophoneProcessing) {
     if (this.disposed) throw new Error('Voice controller was disposed.');
     if (this.state.status === 'reconnecting')
       throw new Error('Wait for voice to reconnect before changing microphone processing.');
     const processing = processingSettings(value);
+    if (
+      !this.state.processingError &&
+      processingKeys.every((key) => processing[key] === this.state.processing[key])
+    )
+      return;
     const generation = this.generation;
-    this.update({ processing, processingApplied: null, processingError: '', processingBusy: true });
+    this.update({
+      processing,
+      processingApplied: null,
+      noiseSuppressionEngine: null,
+      processingError: '',
+      processingBusy: true,
+    });
     try {
-      if (this.state.status === 'connected' || this.state.status === 'joining')
-        await this.capture(generation);
+      if (this.state.status === 'connected') await this.capture(generation);
     } catch (cause) {
       if (
         !this.disposed &&
         this.state.processing === processing &&
         generation === this.generation
       ) {
-        const microphone = this.microphone;
-        this.microphone = undefined;
-        microphone?.stop();
         this.update({
           muted: true,
           processingError:
             'Microphone processing could not be applied. The microphone is muted. Retry or check the selected microphone.',
         });
-        if (microphone && this.room) await this.room.localParticipant.unpublishTrack(microphone);
+        await this.releaseMicrophone();
       }
       throw cause;
     } finally {
@@ -370,6 +522,7 @@ export class VoiceController {
     )
       throw new Error('Select an available microphone and speakers first.');
     this.wanted = true;
+    this.rnnoiseFailed = false;
     const generation = ++this.generation;
     this.update({ status: 'joining', channelId, error: '', muted: true });
     this.retryCount = 0;
@@ -499,6 +652,12 @@ export class VoiceController {
     room.on(RoomEvent.Reconnected, () => {
       if (current()) {
         this.updateParticipants({ status: 'connected', error: '' });
+        if (this.state.input && !this.state.inputMissing && !this.captureCancellation) {
+          if (this.microphone?.failed)
+            runInBackground(this.recoverMicrophone(generation, this.state.input));
+          else if (this.microphone?.stopped || this.microphone?.input !== this.state.input)
+            runInBackground(this.selectInput(this.state.input));
+        }
       }
     });
     room.on(RoomEvent.Disconnected, () => {
@@ -567,9 +726,11 @@ export class VoiceController {
   }
   private clearMedia() {
     this.captureAttempt++;
+    this.captureCancellation?.abort();
+    this.captureCancellation = undefined;
     this.microphone?.stop();
     this.microphone = undefined;
-    this.update({ processingApplied: null });
+    this.update({ processingApplied: null, noiseSuppressionEngine: null });
     for (const element of this.elements.values()) {
       element.muted = true;
       element.pause();
@@ -617,9 +778,14 @@ export class VoiceController {
     for (const element of this.elements.values()) await this.play(element);
   }
   private async applyMute() {
-    if (this.microphone && this.publishing.has(this.microphone)) return;
-    if (this.state.muted || this.state.deafened) await this.microphone?.mute();
-    else if (!this.state.inputMissing) await this.microphone?.unmute();
+    const microphone = this.microphone;
+    if (!microphone || this.publishing.has(microphone) || microphone.stopped) return;
+    const muted =
+      this.state.muted || this.state.deafened || this.state.inputMissing || microphone.failed;
+    if (microphone.capture.source !== microphone.capture.outgoing)
+      microphone.capture.source.enabled = !muted;
+    if (muted) await microphone.track.mute();
+    else await microphone.track.unmute();
   }
   async resumeAudio() {
     for (const element of this.elements.values()) await this.play(element);
@@ -733,15 +899,12 @@ export class VoiceController {
       this.state.input &&
       !devices.some((d) => d.kind === 'audioinput' && d.deviceId === this.state.input)
     ) {
-      this.microphone?.stop();
-      if (this.microphone)
-        runInBackground(
-          this.room?.localParticipant.unpublishTrack(this.microphone).catch(() => {}),
-        );
-      this.microphone = undefined;
+      this.captureCancellation?.abort();
+      runInBackground(this.releaseMicrophone());
       this.update({
         inputMissing: true,
         processingApplied: null,
+        noiseSuppressionEngine: null,
         error: 'Selected microphone is missing. Choose a replacement.',
       });
     }
