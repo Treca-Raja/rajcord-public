@@ -694,7 +694,12 @@ try {
             : label;
     const selector = JSON.stringify(scope + ' [data-message-id="' + id + '"]');
     await wait('!!document.querySelector(' + selector + ')');
-    await js(`(()=>{const item=document.querySelector(${selector});item.scrollIntoView({block:'nearest'});
+    // The menu dismisses on timeline scroll and window resize. Deliver pending layout
+    // events before opening it, as a pointer user would after scrolling to the row.
+    await js(`(async()=>{
+      const item=document.querySelector(${selector});
+      item.scrollIntoView({block:'nearest',behavior:'instant'});
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const bounds=item.getBoundingClientRect();item.dispatchEvent(new MouseEvent('contextmenu',
         {bubbles:true,cancelable:true,clientX:bounds.left+100,clientY:bounds.top+20}));})()`);
     await wait('!!document.querySelector(\'[role=menu][aria-label="Message actions"]\')');
