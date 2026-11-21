@@ -450,10 +450,8 @@ export function Notifications({
         <aside className="notification-invitation" aria-label="Set up notifications">
           <Bell size={21} aria-hidden="true" />
           <div>
-            <strong>Keep up with your people</strong>
-            <p>
-              Want alerts for mentions, replies and messages? You choose popups, sound, or neither.
-            </p>
+            <strong>Message notifications</strong>
+            <p>Choose which mentions, replies and messages trigger a popup or sound.</p>
             <button
               className="primary"
               onClick={() => {

@@ -21,7 +21,7 @@ export type AuthContextValue = {
   ) => Promise<ApiResponseFor<Path, Method>>;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
-  openSettings: (tab?: SettingsTab) => void;
+  openSettings: (tab?: SettingsTab, returnFocusTo?: HTMLElement) => void;
   notificationSettingsHost: HTMLDivElement | null;
   voiceSettingsHost: HTMLDivElement | null;
 };

@@ -27,6 +27,7 @@ const screenState = {
   selectingShareId: null,
   layout: 'focus',
   playback: '',
+  playbackTimeout: '',
   playbackMuted: false,
   playbackVolume: 1,
   hidden: false,

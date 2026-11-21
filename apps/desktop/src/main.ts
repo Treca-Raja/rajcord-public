@@ -110,7 +110,7 @@ app
       minWidth: 720,
       minHeight: 600,
       show: !smoke && !authSmoke,
-      backgroundColor: '#16191f',
+      backgroundColor: '#101019',
       ...(process.platform === 'win32' ? windowsChromeOptions() : {}),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
@@ -200,7 +200,7 @@ app
         event.senderFrame?.url ?? '',
         event.senderFrame === win.webContents.mainFrame,
       );
-    installNotificationMain({ owner: win, notificationAppId, trustedSender });
+    installNotificationMain({ owner: win, notificationAppId, authSmoke, trustedSender });
     const screens = installScreenIpc({
       owner: win,
       ipc: ipcMain,

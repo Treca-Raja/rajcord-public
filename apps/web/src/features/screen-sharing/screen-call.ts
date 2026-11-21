@@ -22,6 +22,7 @@ import type { VoiceScreenSession, VoiceState } from '../voice/contracts';
 import { setScreenCaptureFormat, type WebScreenCapture } from './screen-capture';
 import { ScreenPeer } from './screen-peer';
 import type { ScreenReceiveHandle } from './screen-receiver';
+import { ScreenPlaybackError } from './screen-playback';
 import { publicScreenIceServers, screenIceServers } from './screen-ice';
 import { requireFixedScreenFormat, screenVideoRequest } from './screen-quality';
 import { screenRenewalPermit } from './screen-renewal';
@@ -45,6 +46,7 @@ export type ScreenCallState = Readonly<{
   selectingShareId: string | null;
   layout: 'focus' | 'grid';
   playback: string;
+  playbackTimeout: string;
   playbackMuted: boolean;
   playbackVolume: number;
   hidden: boolean;
@@ -100,10 +102,14 @@ type Incoming = {
   life: ScreenLifetime;
   handle: ScreenReceiveHandle;
   selection: ScreenSelectRequest;
+  playbackTimeout: string;
 };
 type Outgoing = { peer: ScreenPeer; life: ScreenLifetime; shareId: string };
 type PublisherOffer = { link: ScreenLinkGrant['link']; deadline: number };
 type WatchRecovery = { attempts: number; readyAt: number; timer?: ReturnType<typeof setTimeout> };
+// The account budget refills one initial renewal every five seconds. Keep one
+// burst slot in reserve for a transient failure or network timing variance.
+const RENEWAL_REFILL_MS = 5000;
 const qualityOnly = (quality: ScreenQuality): ScreenQuality => ({
   profile: quality.profile,
   videoBitrate: quality.videoBitrate,
@@ -122,6 +128,7 @@ export class ScreenCall {
     selectingShareId: null,
     layout: 'focus',
     playback: '',
+    playbackTimeout: '',
     playbackMuted: false,
     playbackVolume: 1,
     hidden: false,
@@ -149,6 +156,7 @@ export class ScreenCall {
   private renewing?: Set<string>;
   private renewalPending = false;
   private renewalFailures = 0;
+  private renewalRefilledAt = 0;
   private publishing = false;
   private preparing = false;
   private sourceCleanup?: Promise<unknown>;
@@ -215,13 +223,19 @@ export class ScreenCall {
           element.remove();
           return;
         }
+        element.setAttribute('aria-label', 'Shared screen video');
+        const existingTile = this.elements.get(linkId);
+        if (existingTile) {
+          existingTile.querySelector('video')?.remove();
+          existingTile.prepend(element);
+          return;
+        }
         const tile = document.createElement('div');
         tile.className = 'screen-incoming-tile';
         tile.dataset.screenShareId = incoming.shareId;
         tile.setAttribute('role', 'button');
         tile.tabIndex = 0;
         tile.setAttribute('aria-label', 'Shared screen. Activate to change the viewing layout.');
-        element.setAttribute('aria-label', 'Shared screen video');
         const label = document.createElement('span');
         label.className = 'screen-incoming-label';
         label.textContent = 'Shared screen';
@@ -289,7 +303,17 @@ export class ScreenCall {
   private updateWatching(
     patch: Partial<Pick<ScreenCallState, 'watching' | 'layout' | 'playback'>>,
   ) {
-    this.update({ ...patch, watchingShareIds: Object.freeze([...this.receiving.keys()]) });
+    this.update({
+      ...patch,
+      playbackTimeout: this.watchPlaybackTimeout(),
+      watchingShareIds: Object.freeze([...this.receiving.keys()]),
+    });
+  }
+  private watchPlaybackTimeout() {
+    for (const watch of this.receiving.values()) {
+      if (watch.playbackTimeout) return watch.playbackTimeout;
+    }
+    return '';
   }
   private error(cause: unknown) {
     this.update({ error: cause instanceof Error ? cause.message : 'Screen sharing failed.' });
@@ -700,10 +724,13 @@ export class ScreenCall {
       this.renewalPending = true;
       return;
     }
+    // Two prompt renewals can run from a full bucket. Further notices share
+    // the next admission, whose response contains every current link grant.
+    const delay = Math.max(100, this.renewalRefilledAt - RENEWAL_REFILL_MS - performance.now());
     this.renewalTimer = setTimeout(() => {
       this.renewalTimer = undefined;
       runInBackground(this.renew());
-    }, 100);
+    }, delay);
   }
   private async renewalPages(
     binding: OwnedScreenBinding,
@@ -795,6 +822,8 @@ export class ScreenCall {
   }
   private async renew() {
     if (this.renewing || !this.current()) return;
+    this.renewalRefilledAt =
+      Math.max(this.renewalRefilledAt, performance.now()) + RENEWAL_REFILL_MS;
     const closedLinks = new Set<string>();
     this.renewing = closedLinks;
     const binding = this.binding!,
@@ -1112,6 +1141,7 @@ export class ScreenCall {
         life,
         handle: undefined as unknown as ScreenReceiveHandle,
         selection,
+        playbackTimeout: '',
       };
       const handle = this.options.attachment.openIncoming({
         iceServers: this.iceServers,
@@ -1144,6 +1174,7 @@ export class ScreenCall {
       } else if (!this.state.watching || this.preferredWatch === shareId) {
         this.updateWatching({ watching: shareId, playback: 'Connecting…' });
       } else this.updateWatching({});
+      let retryPlaybackOnTimeout = false;
       handle.subscribe((state) => {
         if (this.receiving.get(shareId) !== incoming) return;
         if (state.phase === 'closed' || state.phase === 'paused-hidden') {
@@ -1162,13 +1193,37 @@ export class ScreenCall {
         }
         const recovery = this.watchRecoveries.get(shareId);
         if (state.phase === 'ready' && recovery && !recovery.readyAt) recovery.readyAt = Date.now();
-        if (this.state.watching === shareId)
+        const playback = state.playback;
+        const previousTimeout = incoming.playbackTimeout;
+        if (playback?.error?.code === 'timeout') incoming.playbackTimeout = playback.error.message;
+        else if (playback?.phase === 'playing' || playback?.error) incoming.playbackTimeout = '';
+        const focused = this.state.watching === shareId;
+        if (focused || previousTimeout !== incoming.playbackTimeout)
           this.update({
-            playback: state.playback?.error?.message ?? state.playback?.phase ?? state.phase,
+            ...(focused
+              ? { playback: playback?.error?.message ?? playback?.phase ?? state.phase }
+              : {}),
+            playbackTimeout: this.watchPlaybackTimeout(),
           });
-        if (state.phase === 'ready' && state.playback?.phase === 'idle') {
+        if (
+          playback?.phase === 'playing' ||
+          playback?.phase === 'paused' ||
+          (playback?.error && playback.error.code !== 'timeout')
+        )
+          retryPlaybackOnTimeout = false;
+        const startup = playback?.phase === 'idle';
+        const retry =
+          retryPlaybackOnTimeout &&
+          playback?.error?.code === 'timeout' &&
+          !playback.pendingNative &&
+          !this.state.hidden &&
+          this.current(binding);
+        if (state.phase === 'ready' && (startup || retry)) {
+          retryPlaybackOnTimeout = false;
           this.configurePlayback();
+          retryPlaybackOnTimeout = startup;
           void handle.play().catch((cause) => {
+            if (cause instanceof ScreenPlaybackError && cause.code === 'timeout') return;
             if (this.receiving.get(shareId) === incoming) this.error(cause);
           });
         }

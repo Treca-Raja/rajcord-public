@@ -2,9 +2,11 @@
 .chat-panel-history {
   container-type: inline-size;
 }
+.message-scroll[data-populated='true'] {
+  align-content: safe end;
+}
 .chat-message-entry {
-  --chat-meta-size: 94px;
-  --chat-columns: 32px minmax(0, 1fr) var(--chat-meta-size);
+  --chat-columns: 32px minmax(0, 1fr);
   display: grid;
   grid-template-columns: var(--chat-columns);
   column-gap: 12px;
@@ -18,23 +20,28 @@
   align-items: start;
   min-width: 0;
   position: relative;
-  padding: 5px 0;
-  border-radius: 7px;
+  padding: 8px 0 4px;
+  border-radius: 8px;
   transition: background-color var(--motion-fast) var(--motion-ease);
 }
 .chat-message-row.consecutive-message {
-  padding-block: 3px;
+  padding-block: 2px;
+}
+.consecutive-message .chat-message-content {
+  grid-row: 1;
+  grid-column: 2;
+  padding-top: 0;
 }
 .chat-message-row:hover {
-  background: #cabaff07;
+  background: var(--surface-inset);
 }
 .chat-message-row:focus-visible {
-  outline: 1px solid #8a9b77;
+  outline: 1px solid var(--focus);
   outline-offset: 2px;
 }
 .chat-message-row.mentions-you {
-  background: #dc9d2810;
-  box-shadow: inset 2px 0 #b88d42;
+  background: color-mix(in srgb, var(--accent-brand) 7%, transparent);
+  box-shadow: inset 2px 0 var(--accent-brand);
 }
 /* Outline and shadow paint a padded frame without adding scrollable overflow to the row. */
 .chat-message-row[data-reply-target='true'],
@@ -66,7 +73,8 @@
   grid-row: 1;
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 0 8px;
   min-width: 0;
   padding-top: 0;
   line-height: 18px;
@@ -82,25 +90,24 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 240px;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
 }
 .chat-author-name small {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 400;
-  color: var(--accent-lilac);
+  color: var(--text-muted);
 }
-.chat-message-author > span {
+.chat-author-handle {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
-  max-width: 200px;
+  max-width: 100%;
 }
 .chat-message-content {
   grid-column: 2 / -1;
@@ -112,10 +119,10 @@
   margin: 0;
   padding: 0;
   font-size: 15px;
-  line-height: 24px;
-  font-weight: 450;
-  letter-spacing: -0.01em;
-  color: #dce1f2;
+  line-height: 23px;
+  font-weight: 400;
+  max-inline-size: 82ch;
+  color: var(--text-primary);
 }
 .chat-message-content .reply-quote {
   display: flex;
@@ -127,10 +134,10 @@
   padding: 3px 8px;
   font-size: 12px;
   line-height: 18px;
-  border: 1px solid #cabaff26;
-  border-radius: 7px;
-  background: #cabaff08;
-  color: #bdb1df;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-inset);
+  color: var(--text-secondary);
   transition:
     color var(--motion-fast) var(--motion-ease),
     border-color var(--motion-fast) var(--motion-ease),
@@ -138,9 +145,9 @@
 }
 .chat-message-content .reply-quote:hover,
 .chat-message-content .reply-quote:focus-visible {
-  color: #e0d6fc;
-  border-color: #cabaff4d;
-  background: #cabaff10;
+  color: var(--text-primary);
+  border-color: var(--focus);
+  background: var(--surface-hover);
 }
 .reply-quote strong {
   flex-shrink: 0;
@@ -154,27 +161,28 @@
   white-space: nowrap;
 }
 .chat-message-information {
-  grid-column: 3;
-  grid-row: 1;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
-  padding-top: 0;
-  min-width: 0;
+  flex: none;
+  gap: 4px;
   line-height: 18px;
-  transition: opacity var(--motion-fast) var(--motion-ease);
+}
+.consecutive-message .message-text-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 8px;
 }
 .chat-message-information time {
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 .chat-message-flag {
   display: inline-flex;
   flex-shrink: 0;
-  color: #8798ae;
+  color: var(--text-muted);
 }
 .chat-message-reactions {
   grid-column: 2 / -1;
@@ -193,7 +201,7 @@
   padding: 1px 7px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-control);
-  background: #ffffff04;
+  background: var(--surface-inset);
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 20px;
@@ -202,27 +210,22 @@
     border-color var(--motion-fast) var(--motion-ease);
 }
 .chat-message-reactions button[aria-pressed='true'] {
-  background: #cabaff14;
-  border-color: #cabaff66;
+  background: var(--surface-selected);
+  border-color: var(--focus);
 }
 .chat-message-reactions button:hover {
-  background: #cabaff1a;
+  background: var(--surface-hover);
 }
 .chat-message-row .message-hover-actions {
   right: 0;
   top: 2px;
 }
-@media (hover: hover) {
-  .chat-message-row:hover .chat-message-information,
-  .chat-message-row:focus-within .chat-message-information {
-    opacity: 0;
-  }
-}
 @media (hover: none) {
-  .chat-message-entry {
-    --chat-meta-size: 132px;
+  .chat-message-row {
+    min-height: 44px;
   }
-  .chat-message-information {
+  .chat-message-author,
+  .consecutive-message .message-text-line {
     padding-right: 44px;
   }
 }
@@ -234,42 +237,19 @@
 }
 @container (max-width: 560px) {
   .chat-message-entry {
-    --chat-columns: 24px minmax(0, 1fr) var(--chat-meta-size);
-    column-gap: 10px;
+    --chat-columns: 28px minmax(0, 1fr);
+    column-gap: 8px;
   }
   .chat-message-avatar {
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     border-radius: 8px;
   }
   .chat-message-avatar .avatar {
-    font-size: 11px;
+    font-size: 12px;
   }
   .chat-message-author {
-    gap: 6px;
-    padding-top: 0;
-  }
-  .chat-message-author > span {
-    max-width: 120px;
-  }
-  .chat-author-name strong {
-    max-width: 180px;
-  }
-  @container (max-width: 380px) {
-    .chat-message-author {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 0;
-    }
-    .chat-message-author > span {
-      max-width: 100%;
-      font-size: 10px;
-    }
-  }
-  .chat-message-information {
-    grid-column: 3;
-    grid-row: 1;
-    padding-top: 0;
+    gap: 0 6px;
   }
   .chat-message-content {
     grid-column: 2 / -1;
@@ -282,7 +262,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-message-row,
-  .chat-message-information,
   .chat-message-reactions button {
     transition: none;
   }

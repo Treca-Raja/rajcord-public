@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Users, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, Settings2, X } from 'lucide-react';
 import { Avatar } from '@tricord/ui';
 import type { AuthUser, Conversation, PresenceSnapshot } from '@tricord/shared';
 import { groupPresence, type RosterMember } from './presence-state';
@@ -12,6 +12,7 @@ export function MemberPanel({
   connected,
   userId,
   drawer,
+  streamActivity,
   close,
   contact,
   settings,
@@ -24,6 +25,7 @@ export function MemberPanel({
   connected: boolean;
   userId: string;
   drawer: boolean;
+  streamActivity?: ReactNode;
   close: () => void;
   contact: (id: string) => void;
   settings: () => void;
@@ -112,16 +114,18 @@ export function MemberPanel({
         onClick={() => contact(person.id)}
         disabled={person.id === userId || person.status !== 'approved'}
       >
-        <Avatar>{person.displayName.slice(0, 1)}</Avatar>
+        <span className="roster-avatar" aria-hidden="true">
+          <Avatar>{person.displayName.slice(0, 1)}</Avatar>
+          <i className={'presence-dot ' + presence} />
+        </span>
         <div className="member-identity">
-          <strong>{person.displayName}</strong>
-          <small>
+          <strong title={person.displayName}>{person.displayName}</strong>
+          <small title={'@' + person.username}>
             @{person.username}
             {person.id === userId ? ' · You' : ''}
             {conversation?.managerId === person.id ? ' · Group manager' : ''}
           </small>
-          <small className="member-presence">
-            <i aria-hidden="true" className={'presence-dot ' + presence} />
+          <small className="sr-only">
             {presence === 'online' ? 'Online' : presence === 'offline' ? 'Offline' : 'Unavailable'}
           </small>
         </div>
@@ -133,6 +137,7 @@ export function MemberPanel({
       {drawer && <div className="members-backdrop" onClick={close} aria-hidden="true" />}
       <aside
         ref={panel}
+        id="workspace-activity"
         onFocusCapture={(event) => {
           focusedMember.current =
             (event.target as HTMLElement).closest<HTMLElement>('[data-member-id]')?.dataset
@@ -145,17 +150,16 @@ export function MemberPanel({
         className={'members presence-panel' + (drawer ? ' members-drawer' : '')}
         role={drawer ? 'dialog' : undefined}
         aria-modal={drawer ? true : undefined}
-        aria-label="Members"
+        aria-label="Activity"
         data-presence-state={ready ? 'ready' : 'unavailable'}
       >
         <header>
-          <Users size={17} /> Members
-          {drawer && (
-            <button aria-label="Close members" onClick={close}>
-              <X size={18} />
-            </button>
-          )}
+          <h2>Activity</h2>
+          <button aria-label="Close activity" title="Close activity" onClick={close}>
+            <X size={18} />
+          </button>
         </header>
+        {streamActivity}
         {privateConversation ? (
           <div className="member-views" role="group" aria-label="Member view">
             <button aria-pressed={view === 'participants'} onClick={() => setView('participants')}>
@@ -166,7 +170,7 @@ export function MemberPanel({
             </button>
           </div>
         ) : (
-          <h2 className="section-label">Community</h2>
+          <h2 className="roster-title">Members</h2>
         )}
         {!rosterAvailable ? (
           <p className="member-note" role="status">
@@ -191,7 +195,8 @@ export function MemberPanel({
                 aria-expanded={offlineExpanded}
                 onClick={() => setOfflineExpanded(!offlineExpanded)}
               >
-                Offline ({groups.offline.length}) {offlineExpanded ? '▾' : '▸'}
+                Offline ({groups.offline.length})
+                {offlineExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </button>
               {offlineExpanded && groups.offline.map((person) => row(person, 'offline'))}
               {groups.unavailable.length > 0 && <h2 className="section-label">Unavailable</h2>}
@@ -204,23 +209,10 @@ export function MemberPanel({
             <p className="member-note">No members in this view.</p>
           )}
         </div>
-        <div className="member-note">
-          <button
-            onClick={() => {
-              close();
-              settings();
-            }}
-          >
-            Manage accounts & approvals →
+        <div className="activity-footer">
+          <button onClick={settings}>
+            <Settings2 size={15} aria-hidden="true" /> Manage accounts &amp; approvals
           </button>
-        </div>
-        <div className="system-card" data-connection={connected ? 'connected' : 'disconnected'}>
-          <strong>{connected ? 'Connected' : 'Reconnecting…'}</strong>
-          <p>
-            {connected
-              ? 'Messages are saved to your server.'
-              : 'Your draft stays here. We’ll catch up when connected.'}
-          </p>
         </div>
       </aside>
     </>

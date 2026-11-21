@@ -31,7 +31,9 @@ export function AuthRoot({
   const [state, setState] = useState<AuthState | null>(null),
     [loading, setLoading] = useState(true),
     [connected, setConnected] = useState(false),
-    [settings, setSettings] = useState<SettingsTab | null>(null),
+    [settings, setSettings] = useState<{ tab: SettingsTab; returnFocusTo?: HTMLElement } | null>(
+      null,
+    ),
     [error, setError] = useState(''),
     [refreshError, setRefreshError] = useState(''),
     [refreshing, setRefreshing] = useState(false);
@@ -263,6 +265,9 @@ export function AuthRoot({
         {notice}
       </>
     );
+  function openSettings(tab: SettingsTab = 'account', returnFocusTo?: HTMLElement) {
+    setSettings({ tab, returnFocusTo });
+  }
   const context: AuthContextValue = {
     state,
     connected,
@@ -271,7 +276,7 @@ export function AuthRoot({
     requestContract,
     refresh,
     logout,
-    openSettings: (tab = 'account') => setSettings(tab),
+    openSettings,
     notificationSettingsHost,
     voiceSettingsHost,
   };
@@ -306,7 +311,7 @@ export function AuthRoot({
             >
               Check account status
             </button>
-            <button className="secondary" onClick={() => setSettings('account')}>
+            <button className="secondary" onClick={() => openSettings()}>
               Account settings
             </button>
             <button className="text-button" onClick={() => runInBackground(logout())}>
@@ -333,8 +338,9 @@ export function AuthRoot({
         <FeatureBoundary name="Account settings" onClose={() => setSettings(null)}>
           <AccountPanel
             key={state.user.id + ':' + state.csrfToken}
-            tab={settings}
-            setTab={setSettings}
+            tab={settings.tab}
+            setTab={(tab) => setSettings((current) => current && { ...current, tab })}
+            returnFocusTo={settings.returnFocusTo}
             notificationHostRef={setNotificationSettingsHost}
             voiceHostRef={setVoiceSettingsHost}
             close={() => setSettings(null)}

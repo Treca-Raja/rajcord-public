@@ -1,0 +1,91 @@
+:root {
+  color-scheme: dark;
+  --surface-chat: #101019;
+  --surface-sidebar: #1d1929;
+  --surface-raised: #302a40;
+  --text-primary: #f5f4f8;
+  --text-secondary: #c3bed1;
+  --text-muted: #9b95b1;
+  --accent-brand: #d4ff57;
+  --accent-media: #75b9ff;
+  --accent-voice: #5de9b3;
+  --text-on-accent: #101019;
+  --surface-inset: color-mix(in srgb, var(--surface-chat) 65%, var(--surface-sidebar));
+  --surface-hover: color-mix(in srgb, var(--surface-sidebar) 92%, var(--text-secondary));
+  --surface-selected: color-mix(in srgb, var(--surface-sidebar) 88%, var(--text-secondary));
+  --line: color-mix(in srgb, var(--text-secondary) 16%, transparent);
+  --line-strong: color-mix(in srgb, var(--text-secondary) 60%, var(--surface-raised));
+  --focus: var(--accent-media);
+  --warning: color-mix(in srgb, #ffbe65 80%, var(--text-primary));
+  --error: color-mix(in srgb, #ff7186 80%, var(--text-primary));
+  --disabled: color-mix(in srgb, var(--text-muted) 70%, var(--surface-sidebar));
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --font-ui: 'IBM Plex Sans Variable', 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --motion-fast: 120ms;
+  --motion-panel: 160ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --shadow-panel: 0 8px 24px #08071059;
+
+  /* Compatibility for settings and secondary surfaces during their migration. */
+  --accent-mint: var(--accent-voice);
+  --accent-lilac: var(--focus);
+  --accent-peach: var(--text-secondary);
+  --accent-red: var(--error);
+  --accent-soft: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+  --accent-red-soft: color-mix(in srgb, var(--error) 12%, transparent);
+}
+:root[data-appearance='retro'] {
+  color-scheme: light;
+  --accent-brand: #334d24;
+  --accent-media: #204665;
+  --accent-voice: #204a37;
+  --surface-selected: #aabbb2;
+  --surface-hover: #b6c3be;
+  --focus: #204665;
+  --error: #792037;
+  --warning: #573809;
+  --text-on-accent: #f5f6f1;
+  --surface-sidebar: #23483c;
+  --surface-chat: #c2cbd0;
+  --surface-raised: #d1d7d9;
+  --surface-inset: #b8c2c7;
+  --line: #42575d26;
+  --line-strong: #536570;
+  --text-primary: #283237;
+  --text-secondary: #36494d;
+  --text-muted: #3d494e;
+  --accent-mint: #284c3b;
+  --accent-lilac: #3c4e57;
+  --accent-peach: #715949;
+  --accent-soft: #284c3b14;
+  --radius-control: 10px;
+  --radius-panel: 16px;
+  --shadow-panel: 0 12px 32px #20352f26, inset 0 1px #ffffff40;
+  --message-cue-bg: #355e4b0d;
+  --message-cue-border: #355e4b80;
+  --surface-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='.035'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cpath d='M0 0h128v128H0z' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+:root[data-appearance='retro'] :is(.sidebar, .members) {
+  color-scheme: dark;
+  --warning: #ffd6a2;
+  --error: #ffb8c2;
+  --accent-brand: #d1e8b3;
+  --accent-media: #a7d3f3;
+  --accent-voice: #9de5c1;
+  --text-on-accent: #17362d;
+  --surface-selected: #345749;
+  --surface-hover: #305647;
+  --focus: #d1e8b3;
+  --surface-raised: #31574b;
+  --surface-inset: #193d34;
+  --line: #d1e1d51f;
+  --line-strong: #a4b5a9;
+  --text-primary: #e3ebe2;
+  --text-secondary: #cbd9ce;
+  --text-muted: #bfcec2;
+  --accent-mint: #b7d1a2;
+  --accent-lilac: #d0e0d1;
+  --accent-soft: #bfd3b514;
+}

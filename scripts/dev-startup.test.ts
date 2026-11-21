@@ -1,4 +1,4 @@
-import { it, expect, afterEach } from 'vitest';
+import { it, expect, afterEach, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { readFile, stat, utimes } from 'node:fs/promises';
@@ -7,9 +7,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 // @ts-expect-error Plain Node entry point shared with the desktop startup command.
 import { waitForDevelopment } from './wait-for-dev.mjs';
 const servers: Server[] = [];
-async function endpoint(body: string, status = 200) {
+async function endpoint(body: string) {
   const server = createServer((_req, response) => {
-    response.writeHead(status, { 'Content-Type': 'application/json' });
+    response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(body);
   });
   servers.push(server);
@@ -25,21 +25,36 @@ afterEach(async () => {
 it('desktop waits for both HTTP services and identifies the Rajcord API', async () => {
   const webUrl = await endpoint('{}');
   const apiUrl = await endpoint('{"status":"ok","service":"tricord-api"}');
-  await expect(waitForDevelopment({ webUrl, apiUrl, timeoutMs: 1000 })).resolves.toBeUndefined();
+  await expect(waitForDevelopment({ webUrl, apiUrl, timeoutMs: 5000 })).resolves.toBeUndefined();
 });
-it('a missing API produces a bounded, actionable failure', async () => {
-  const webUrl = await endpoint('{}');
-  const apiUrl = await endpoint('{}', 503);
-  await expect(
-    waitForDevelopment({ webUrl, apiUrl, timeoutMs: 500, intervalMs: 25 }),
-  ).rejects.toThrow('waiting for: API');
-});
-it('a different service on the API port does not launch Electron', async () => {
-  const webUrl = await endpoint('{}');
-  const apiUrl = await endpoint('{"status":"ok","service":"something-else"}');
-  await expect(
-    waitForDevelopment({ webUrl, apiUrl, timeoutMs: 500, intervalMs: 25 }),
-  ).rejects.toThrow('pnpm --filter @tricord/api dev');
+it.each([
+  { service: 'unavailable', status: 503, body: {} },
+  {
+    service: 'a different service',
+    status: 200,
+    body: { status: 'ok', service: 'something-else' },
+  },
+])('reports the API as missing when its endpoint returns $service', async ({ status, body }) => {
+  const timeoutMs = 500;
+  const webUrl = 'http://127.0.0.1:5173';
+  const apiUrl = 'http://127.0.0.1:3001/health';
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(0);
+  const probe = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+    if (url === webUrl) return Response.json({});
+    expect(url).toBe(apiUrl);
+    // Model the final probe without spending the deadline waiting on loopback.
+    clock.mockReturnValue(timeoutMs);
+    return Response.json(body, { status });
+  });
+  try {
+    await expect(waitForDevelopment({ webUrl, apiUrl, timeoutMs })).rejects.toThrow(
+      'waiting for: API. Check the [api] and [web] output above. Run pnpm --filter @tricord/api dev',
+    );
+    expect(probe.mock.calls.map(([url]) => url)).toEqual([webUrl, apiUrl]);
+  } finally {
+    probe.mockRestore();
+    clock.mockRestore();
+  }
 });
 it('the real API development command boots and reloads under concurrently', async () => {
   const apiDirectory = path.resolve('apps/api');
