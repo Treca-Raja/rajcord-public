@@ -1795,3 +1795,15 @@ To reproduce the audio comparison, run `pnpm build` and `pnpm --filter @tricord/
 On the Ryzen 5 5600 test host, production WASM and worklet setup took about 29 ms in Edge over loopback. The timing excludes microphone acquisition. Correlation on the recorded speech measured 30 ms of processing delay, including 10 ms of worklet buffering. The 12-second RNNoise capture had no missed callback windows by the harness's playback-time check. Two minutes of offline WASM processing used 2.0 CPU seconds, about 1.7% of one core at real-time speed. That number covers the kernel and test loop. Browser, audio I/O and WebRTC overhead require separate measurement.
 
 Two-person device acceptance remains open. Compare ON and OFF on a real microphone in Chromium and installed Electron with echo cancellation and automatic gain held constant. The remote listener should check quiet speech, the beginning and end of phrases, simultaneous speech and typing, fan or HVAC noise, and room conversation. Repeat after mute, deafen, device change, unplug/replug, rejoin and a network reconnect. The fixture measures signal levels and continuity. Speech intelligibility, acoustic echo, listener preference and WAN behavior require that listening test.
+
+## Dependabot alert #6 — 2026-11-21
+
+ESLint 10.15.0 and typescript-eslint 8.73.0 declare support for `minimatch` 11. Electron Builder 26.18.0 and Electron Universal 2.0.3 still declare older majors. Two overrides scoped to those exact parent versions resolve their `minimatch` dependencies to `11.0.9`. The remaining `3.1.5` and `5.1.9` versions are outside the advisory's affected range. [GitHub advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+
+The built Linux server image contains one `minimatch` version, `11.0.9`, via `@fastify/static` and `glob`. The image smoke test now checks the installed inventory for the affected versions. Rajcord uses Fastify's default wildcard route, which passes request paths to file lookup. The plugin's glob call enumerates routes at startup with a fixed pattern in explicit-route mode.
+
+The desktop packaging unit suite checks the whole pnpm lockfile for versions affected by the advisory. The check rejected `9.0.9` and `10.2.6` in the base lockfile, and all 1,640 local unit tests passed with the updated lockfile.
+
+Frozen installs passed on Windows and in the Linux image. Lint, workspace type checks, the server image build and smoke test, and the unsigned Windows x64 installer build and package audit passed. The production dependency audit passed. The full dependency audit reported one separate advisory for `joi` under the `wait-on` development dependency. Installer execution and macOS universal packaging remain unverified. [Joi advisory](https://github.com/advisories/GHSA-4528-x5fx-h6hg)
+
+All 111 browser integration tests passed across the initial run and the focused rerun. The first run used mismatched LiveKit credentials. The 18 media cases passed with the matching loopback configuration, including the nine-viewer generated-media case. The built app's authentication and messaging browser smoke passed against disposable PostgreSQL.

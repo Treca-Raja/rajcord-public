@@ -8,6 +8,8 @@ allowBuilds:
   esbuild: true
 
 overrides:
+  'app-builder-lib@26.18.0>minimatch': '11.0.9' # Remove after Electron Builder adopts minimatch 11.
+  '@electron/universal@2.0.3>minimatch': '11.0.9' # Remove after Electron Universal adopts minimatch 11.
   '@fastify/static@10>glob': '14.0.2' # Patch glob cancellation and its minimatch amplification dependency.
   'electron-updater@6.8.11>js-yaml': '4.3.2' # Patch YAML parser advisories without changing updater APIs.
   'drizzle-kit@0.31.11>@esbuild-kit/esm-loader': '-'

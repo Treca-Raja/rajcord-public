@@ -57,7 +57,7 @@
     "@types/node": "^24.0.0",
     "concurrently": "^9.2.0",
     "cross-env": "^10.1.0",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "^17.14.0",
     "prettier": "^3.10.0",
