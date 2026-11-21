@@ -246,6 +246,55 @@ async function withPeers(
     );
 }
 
+it('restarts native ICE with authenticated signaling while retaining capture and source sound', async () => {
+  await withPeers(
+    async (publisher, viewer) => {
+      const before = (await viewer.js(`${f}.snapshot().frames`)) as number;
+      await publisher.js(`${f}.restartIce()`);
+      for (const browser of [publisher, viewer])
+        await browser.wait(
+          `${f}.snapshot().phase==='stable' && ${f}.snapshot().connection==='connected'`,
+        );
+      await viewer.wait(`${f}.snapshot().frames>${before + 3} && ${f}.snapshot().rms>0.001`);
+      for (const browser of [publisher, viewer]) {
+        await browser.wait(`${f}.mediaStatistics()?.statistics==='available'`);
+        expect(await browser.js(`${f}.mediaStatistics()`)).toMatchObject({
+          sample: { route: 'direct', direction: browser === viewer ? 'inbound' : 'outbound' },
+        });
+        expect(await browser.js(`${f}.snapshot().peerErrors`)).toEqual([]);
+      }
+    },
+    undefined,
+    'lane',
+  );
+});
+
+it('switches content policy for real moving and static capture without changing selected FPS', async () => {
+  await withPeers(async (publisher, viewer) => {
+    await publisher.wait(
+      `${f}.contentAnalysis()?.kind==='motion' && ${f}.contentAnalysis()?.status==='available'`,
+    );
+    await publisher.js(
+      `${f}.setVideoQuality({revision:1,publisher:{profile:'smooth',videoBitrate:8000000},viewer:{profile:'smooth',videoBitrate:4000000}})`,
+    );
+    await publisher.js(`${f}.sourceMotion(false);true`);
+    await publisher.wait(`${f}.contentAnalysis()?.kind==='detail'`);
+    await publisher.wait(`${f}.videoQuality()?.applied?.plan?.content==='detail'`);
+    expect(
+      await publisher.js(
+        `${f}.parameterSnapshot().find(row=>row.kind==='video').degradationPreference`,
+      ),
+    ).toBe('maintain-resolution');
+    expect(await publisher.js(`${f}.videoQuality().applied.encoding.maxFramerate`)).toBe(20);
+    expect(await viewer.js(`${f}.snapshot().peerErrors`)).toEqual([]);
+    await publisher.js(`${f}.sourceMotion(true);true`);
+    await publisher.wait(`${f}.contentAnalysis()?.kind==='motion'`);
+    await publisher.wait(
+      `${f}.parameterSnapshot().find(row=>row.kind==='video').degradationPreference==='maintain-framerate'`,
+    );
+  });
+});
+
 it('round-trips native video ceilings without changing capture or source audio', async () => {
   await withPeers(
     async (publisher, viewer) => {
@@ -490,8 +539,10 @@ it.each(['before-send', 'after-ack'] as const)(
         });
         const next = (await viewer.js(`${f}.reselect()`)) as { linkId: string };
         expect(await viewer.js(`${f}.selectionStatus()`)).toEqual([next.linkId]);
-        expect(await viewer.js(`${f}.prepare().then(()=>false,()=>true)`)).toBe(true);
-        expect(await viewer.js(`${f}.snapshot().nativeCount`)).toBe(1);
+        // Multi-view admits a different link while retaining the old link's cleanup owner.
+        await viewer.js(`${f}.prepare()`);
+        expect(await viewer.js(`${f}.snapshot().nativeCount`)).toBe(2);
+        expect(await viewer.js(`${f}.snapshot().lane.activeCount`)).toBe(1);
         expect(await viewer.js(`${f}.snapshot().lane.pending.cleanup`)).toBe(true);
         await viewer.js(`${f}.releaseCleanup();true`);
         await viewer.js(`${f}.drain()`);
@@ -513,7 +564,6 @@ it.each(['before-send', 'after-ack'] as const)(
         );
         await publisher.js(`${f}.refreshPublisherGrant()`);
         await publisher.js(`${f}.prepare()`);
-        await viewer.js(`${f}.prepare()`);
         await publisher.js(`${f}.offer()`);
         await viewer.wait(
           `${f}.snapshot().connection==='connected' && ${f}.snapshot().receiver.phase==='ready' && ${f}.snapshot().frames>=3 && ${f}.snapshot().rms>0.001`,

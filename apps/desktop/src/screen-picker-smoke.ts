@@ -4,9 +4,16 @@ import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { DesktopCapturePolicy, type CaptureGrant } from './screen-capture-policy.js';
+import {
+  DesktopCapturePolicy,
+  type CaptureGrant,
+  type CaptureSource,
+} from './screen-capture-policy.js';
 import { openScreenPicker, screenPickerUrl } from './screen-picker.js';
 import { trustedPickerCaller } from './picker-ipc-policy.js';
+
+// Hidden Electron windows need the software compositor for capturePage in this smoke test.
+app.disableHardwareAcceleration();
 
 const profile = process.argv
   .find((arg) => arg.startsWith('--picker-profile='))
@@ -33,7 +40,7 @@ const server = createServer((_request, response) => {
   });
   response.end('<!doctype html><title>Synthetic Rajcord owner</title>Fixture owner');
 });
-type Source = { id: string; name: string };
+type Source = CaptureSource;
 const checks: string[] = [];
 const policies: DesktopCapturePolicy<Source>[] = [];
 const check = (value: unknown, label: string) => {
@@ -62,7 +69,7 @@ async function navigateFixture(f: Awaited<ReturnType<typeof fixture>>, script: s
   }
 }
 let target: string;
-async function fixture(qualified = false, pauseSelection = false) {
+async function fixture(qualified = false, pauseSelection = false, applicationAudio = false) {
   const owner = new BrowserWindow({
     show: false,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
@@ -70,9 +77,18 @@ async function fixture(qualified = false, pauseSelection = false) {
   await owner.loadURL(target);
   const grants: (CaptureGrant<Source> | null)[] = [];
   const errors: string[] = [];
-  const sources = [
+  const sources: Source[] = [
     { id: 'screen:1:0', name: 'Synthetic display · 1080p' },
-    { id: 'window:2:0', name: '<img src=x onerror="window.injected=true">' },
+    {
+      id: 'window:2:0',
+      name: '<img src=x onerror="window.injected=true">',
+      ...(applicationAudio
+        ? {
+            applicationAudioId: 'applicationLoopback:123' as const,
+            applicationIdentity: '123:1000',
+          }
+        : {}),
+    },
   ];
   let picker: BrowserWindow | undefined,
     calls = 0,
@@ -106,6 +122,7 @@ async function fixture(qualified = false, pauseSelection = false) {
       return port;
     },
     systemAudio: qualified ? 'qualified-windows-loopback' : 'unqualified',
+    applicationAudio,
     onError: (code) => errors.push(code),
     timeoutMs: 15000,
   });
@@ -117,6 +134,7 @@ async function fixture(qualified = false, pauseSelection = false) {
         securityOrigin: target,
         videoRequested: true,
         audioRequested: true,
+        ...(applicationAudio ? { sound: 'source' as const } : {}),
         userGesture: true,
       },
       (grant) => grants.push(grant),
@@ -150,6 +168,41 @@ async function run() {
   );
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   target = 'http://127.0.0.1:' + (server.address() as { port: number }).port;
+  const appAudio = await fixture(true, false, true);
+  try {
+    await appAudio.js("document.querySelector('#sources li:not([hidden]) .source').click()");
+    check(
+      await appAudio.js(
+        "getComputedStyle(document.getElementById('sound')).display==='none' && !document.getElementById('confirm').disabled && document.getElementById('audio-summary').textContent.includes('Selected app audio')",
+      ),
+      'application sound follows source without a second audio choice',
+    );
+    await appAudio.js(
+      "document.querySelector('[data-kind-tab=screen]').click();document.querySelector('#sources li:not([hidden]) .source').click()",
+    );
+    check(
+      await appAudio.js(
+        "!document.getElementById('confirm').disabled && document.getElementById('audio-summary').textContent.includes('System audio')",
+      ),
+      'entire display automatically uses system audio',
+    );
+    await appAudio.js(
+      "document.querySelector('[data-kind-tab=window]').click();document.querySelector('#sources li:not([hidden]) .source').click()",
+    );
+    await mkdir(path.join(root, 'artifacts'), { recursive: true });
+    await writeFile(
+      path.join(root, 'artifacts/screen-picker-application-audio.png'),
+      (await appAudio.win.webContents.capturePage()).toPNG(),
+    );
+    await appAudio.js("document.getElementById('confirm').click()");
+    await wait(() => appAudio.grants.length === 1, 'application audio grant');
+    check(
+      appAudio.grants[0]?.audio === 'applicationLoopback:123',
+      'application grant is bound to the chosen process without system loopback',
+    );
+  } finally {
+    appAudio.close();
+  }
   const f = await fixture();
   try {
     check(
@@ -194,11 +247,13 @@ async function run() {
       ),
       'CSP blocks network requests',
     );
-    await f.js("document.querySelector('.source').focus()");
+    await f.js(
+      "document.querySelector('[data-kind-tab=screen]').click();document.querySelector('#sources li:not([hidden]) .source').focus()",
+    );
     await key(f.win, 'Space');
     check(
       await f.js(
-        "document.querySelector('.source').getAttribute('aria-pressed')==='true' && document.getElementById('confirm').disabled && document.getElementById('system-sound').disabled",
+        "document.querySelector('#sources li:not([hidden]) .source').getAttribute('aria-pressed')==='true' && document.getElementById('confirm').disabled && document.getElementById('system-sound').disabled",
       ),
       'keyboard source choice and unqualified sound gating',
     );
@@ -231,7 +286,7 @@ async function run() {
   const sound = await fixture(true);
   try {
     await sound.js(
-      "document.querySelector('.source').click();document.getElementById('system-sound').click()",
+      "document.querySelector('[data-kind-tab=screen]').click();document.querySelector('#sources li:not([hidden]) .source').click();document.getElementById('system-sound').click()",
     );
     check(
       await sound.js(
@@ -239,7 +294,9 @@ async function run() {
       ),
       'qualified synthetic system sound warning and choice',
     );
-    await sound.js("document.querySelectorAll('.source')[1].click()");
+    await sound.js(
+      "document.querySelector('[data-kind-tab=window]').click();document.querySelector('#sources li:not([hidden]) .source').click()",
+    );
     check(
       await sound.js(
         "!document.querySelector('input:checked') && document.getElementById('system-sound').disabled && document.getElementById('confirm').disabled",
@@ -247,7 +304,7 @@ async function run() {
       'source switches reset sound consent and window loopback stays unavailable',
     );
     await sound.js(
-      "document.querySelector('.source').click();document.getElementById('system-sound').click()",
+      "document.querySelector('[data-kind-tab=screen]').click();document.querySelector('#sources li:not([hidden]) .source').click();document.getElementById('system-sound').click()",
     );
     await sound.js("document.getElementById('confirm').click()");
     await wait(() => sound.grants.length === 1, 'sound fixture grant');
@@ -278,7 +335,7 @@ async function run() {
   const cancelled = await fixture(false, true);
   try {
     await cancelled.js(
-      "document.querySelector('.source').click();document.querySelector('input[value=none]').click();document.getElementById('confirm').click()",
+      "document.querySelector('#sources li:not([hidden]) .source').click();document.querySelector('input[value=none]').click();document.getElementById('confirm').click()",
     );
     await wait(
       async () =>

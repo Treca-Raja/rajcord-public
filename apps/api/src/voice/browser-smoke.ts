@@ -44,6 +44,23 @@ try {
   );
   const a = await launch();
   browsers.push(a);
+  await a.call('Page.addScriptToEvaluateOnNewDocument', {
+    source: `window.__noiseGraphs=[];window.__microphoneCaptures=[];
+      const originalCapture=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia=async constraints=>{
+        const stream=await originalCapture(constraints);
+        if (constraints.audio?.deviceId?.exact) window.__microphoneCaptures.push({track:stream.getAudioTracks()[0],constraints});
+        return stream;
+      };
+      window.AudioWorkletNode=class extends AudioWorkletNode {
+        constructor(context,name,options){super(context,name,options);this.isRNNoise=name==='rajcord-rnnoise'}
+        connect(destination,...options){
+          if(this.isRNNoise)window.__noiseGraphs.push({node:this,output:destination.stream.getAudioTracks()[0]});
+          return super.connect(destination,...options);
+        }
+      };
+      window.__sending=track=>window.__peers.some(peer=>peer.getSenders().some(sender=>sender.track===track));`,
+  });
   const b = await launch();
   browsers.push(b);
   await setup(a, first.token, origin);
@@ -62,7 +79,7 @@ try {
   await a.wait('window.soundEvents.some(e=>e.kind==="leave")');
   await a.wait('Date.now()-window.soundEvents.at(-1).at>=300');
   await b.js(
-    `(()=>{const s=document.querySelector('select[aria-label="Join voice channel"]');s.value=s.options[1].value;s.dispatchEvent(new Event('change',{bubbles:true}))})()`,
+    `document.querySelector('[aria-label="Close settings"]')?.click();document.querySelector('[data-voice-channel-id]').click()`,
   );
   await a.wait('window.soundEvents.length===2');
   assert.deepEqual(await a.js('window.soundEvents.map(e=>e.kind)'), ['leave', 'join']);
@@ -72,14 +89,62 @@ try {
   }
   await a.wait('(' + received + ').then(bytes=>bytes>1000)');
   await b.wait('(' + received + ').then(bytes=>bytes>1000)');
+  await a.wait(
+    'window.__noiseGraphs.length===1 && window.__sending(window.__noiseGraphs[0].output)',
+  );
+  assert.equal(await a.js('window.__noiseGraphs[0].node.context.sampleRate'), 48000);
+  assert.equal(await a.js('window.__noiseGraphs[0].output.getSettings().channelCount'), 1);
+  assert.equal(
+    await a.js('window.__microphoneCaptures[0].track.getSettings().noiseSuppression'),
+    false,
+  );
+  await a.js("document.querySelector('.profile-settings').click()");
+  await a.click('Voice & audio');
+  await a.wait(
+    "document.querySelector('.voice-processing').textContent.includes('Applied: RNNoise')",
+  );
+  await a.js("window.__noiseGraphs[0].node.dispatchEvent(new Event('processorerror'))");
+  await a.wait(`window.__microphoneCaptures.length===2 && window.__sending(window.__microphoneCaptures[1].track) &&
+    window.__microphoneCaptures[0].track.readyState==='ended' && window.__noiseGraphs[0].output.readyState==='ended' &&
+    window.__noiseGraphs[0].node.context.state==='closed' && document.querySelector('.voice-processing').textContent.includes('Browser fallback')`);
+  assert.equal(
+    await a.js('window.__microphoneCaptures[1].track.getSettings().noiseSuppression'),
+    true,
+  );
+  assert.equal(await a.js('window.__microphoneCaptures[1].track.enabled'), true);
+  // This steady tone is only a stimulus for the independent playback-gain checks below.
+  await a.js(`Array.from(document.querySelectorAll('.voice-processing-option')).find(label=>
+    label.textContent.includes('Noise suppression')).querySelector('input').click()`);
+  await a.wait(
+    'window.__microphoneCaptures.length===3 && window.__sending(window.__microphoneCaptures[2].track)',
+  );
+  assert.equal(
+    await a.js('window.__microphoneCaptures[2].track.getSettings().noiseSuppression'),
+    false,
+  );
+  assert.equal(await a.js('window.__noiseGraphs.length'), 1);
+  assert.equal(
+    await a.js(
+      'new Set(window.__microphoneCaptures.map(c=>c.constraints.audio.deviceId.exact)).size',
+    ),
+    1,
+  );
+  await a.js('document.querySelector(\'[aria-label="Close settings"]\').click()');
   assert.ok(
     (await server.voice!.media.listParticipants([...server.voice!.leases.values()][0]!.room)).every(
       (p) => p.tracks.every((t) => t.source === 2),
     ),
   );
+  await b.js("document.querySelector('.voice-member:not([disabled])').click()");
+  await b.wait("!!document.querySelector('.voice-participant-popup input')");
   await b.js(
-    "(()=>{const slider=document.querySelector('.voice-members input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
+    "(()=>{const slider=document.querySelector('.voice-participant-popup input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
   );
+  await b.js(
+    "document.querySelector('[aria-label=\"Close user volume\"]')?.click();document.querySelector('.profile-settings').click()",
+  );
+  await b.click('Voice & audio');
+  await b.wait('!!document.querySelector(\'[aria-label="Voice output volume"]\')');
   const capturesBeforeBoost = await b.js('window.__captureCount');
   const selectedSpeaker = await b.js(
     'document.querySelector(\'select[aria-label="Voice speakers"]\').value',
@@ -153,7 +218,7 @@ try {
     capturesBeforeBoost,
     'Output volume must not open a microphone',
   );
-  await b.js("document.querySelector('button[aria-label=Deafen]').click()");
+  await b.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].every(e=>e.paused&&e.muted)",
   );
@@ -164,18 +229,18 @@ try {
     ),
     true,
   );
-  await b.js("document.querySelector('button[aria-label=Deafen]').click()");
+  await b.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].some(e=>!e.paused&&!e.muted)",
   );
 
   await a.js('document.querySelector(\'button[aria-label="Mute microphone"]\').click()');
   await b.wait(
-    "document.querySelector('.voice-members').innerText.includes('Voice owner · muted')",
+    "[...document.querySelectorAll('.voice-member')].some(button=>button.textContent.includes('Voice owner') && button.querySelector('[aria-label=Muted]'))",
   );
-  await a.js("document.querySelector('button[aria-label=Deafen]').click()");
+  await a.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
   await a.wait("[...document.querySelectorAll('audio[data-voice-audio]')].every(e=>e.paused)");
-  await a.js("document.querySelector('button[aria-label=Deafen]').click()");
+  await a.js('document.querySelector(\'button[title="Toggle audio"]\').click()');
   const opened = await a.js('window.__voiceOpens');
   const cuesBeforeReconnect = await a.js('window.soundEvents.length');
   const lease = server.voice!.leases.get(owner.id)!;
@@ -209,8 +274,10 @@ try {
   await a.wait("document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'");
   await b.wait("document.querySelector('[data-voice-status]')?.dataset.voiceStatus==='connected'");
   await b.wait("document.querySelectorAll('.voice-members li').length===2");
+  await b.js("(()=>{document.querySelector('.voice-member:not([disabled])').click();})()");
+  await b.wait("!!document.querySelector('.voice-participant-popup input')");
   await b.js(
-    "(()=>{const slider=document.querySelector('.voice-members input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
+    "(()=>{const slider=document.querySelector('.voice-participant-popup input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(slider,'0.25');slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new Event('change',{bubbles:true}));})()",
   );
   await b.wait(
     "[...document.querySelectorAll('audio[data-voice-audio]')].some(e=>e.volume===0.25)",
@@ -225,6 +292,9 @@ try {
     "window.__boostedBeforeRestart.readyState==='ended'&&window.__voiceProcessed.getTracks()[0].readyState==='live'&&window.__gainContext===window.__gainContextBeforeRestart",
   );
 
+  await a.js("document.querySelector('.profile-settings').click()");
+  await a.click('Voice & audio');
+  await a.wait('!!document.querySelector(\'[aria-label="Voice microphone"]\')');
   const selectedInput = await a.js(
     'document.querySelector(\'select[aria-label="Voice microphone"]\').value',
   );
@@ -309,7 +379,9 @@ try {
     'true',
   );
   assert.equal(
-    await a.js("document.querySelector('button[aria-label=Deafen]').getAttribute('aria-pressed')"),
+    await a.js(
+      "document.querySelector('button[title=\"Toggle audio\"]').getAttribute('aria-pressed')",
+    ),
     'false',
   );
 
@@ -346,6 +418,9 @@ try {
     'explicit input/output selection',
     'both join muted',
     'bidirectional received audio bytes',
+    'production RNNoise worklet sends a 48 kHz mono derived track with Chromium suppression disabled',
+    'processor failure falls back once to Chromium on the exact microphone and releases its graph',
+    'switching suppression off publishes the direct capture with browser suppression off',
     'microphone-only media grants',
     'remote mute state',
     'deafen stops playback',

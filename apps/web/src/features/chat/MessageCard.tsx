@@ -6,7 +6,6 @@ import { Avatar } from '@tricord/ui';
 import { MessageBody } from './MessageBody';
 import { GifPreviews } from './GifPreviews';
 import { MessageMenu, type MessageMenuAction } from './MessageMenu';
-import { authorAccent } from './chat-state';
 import { EmojiGlyph, EmojiText } from '../../shared/emoji/EmojiText';
 
 export function ReplyReference({
@@ -67,11 +66,19 @@ export const MessageCard = memo(function MessageCard({
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const updating = useRef(false);
   const article = useRef<HTMLElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const [error, setError] = useState('');
+  function cancelEdit() {
+    setEditing(false);
+    setError('');
+    article.current?.focus({ preventScroll: true });
+  }
   async function update(action: Parameters<typeof onUpdate>[1], value?: string) {
+    if (updating.current || (action === 'edit' && !value?.trim())) return;
+    updating.current = true;
     setBusy(true);
     setError('');
     try {
@@ -81,6 +88,7 @@ export const MessageCard = memo(function MessageCard({
     } catch (error) {
       setError((error as Error).message);
     } finally {
+      updating.current = false;
       setBusy(false);
     }
   }
@@ -150,11 +158,7 @@ export const MessageCard = memo(function MessageCard({
           setMenu({ x: bounds.right - 220, y: bounds.top + 28 });
         }}
       >
-        <span
-          className="chat-message-avatar"
-          style={{ borderColor: authorAccent(item.author.id) }}
-          aria-hidden="true"
-        >
+        <span className="chat-message-avatar" aria-hidden="true">
           <Avatar>{[...item.author.displayName][0] ?? '?'}</Avatar>
         </span>
         <div className="chat-message-author">
@@ -180,20 +184,21 @@ export const MessageCard = memo(function MessageCard({
                 aria-label="Edit message"
                 value={text}
                 onChange={(event) => setText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape' || event.nativeEvent.isComposing || busy) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  cancelEdit();
+                }}
                 maxLength={4000}
                 required
                 disabled={busy}
                 autoFocus
               />
-              <button className="primary" disabled={busy}>
+              <button className="primary" disabled={busy || !text.trim()}>
                 Save
               </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={busy}
-                onClick={() => setEditing(false)}
-              >
+              <button type="button" className="secondary" disabled={busy} onClick={cancelEdit}>
                 Cancel
               </button>
             </form>

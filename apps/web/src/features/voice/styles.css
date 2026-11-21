@@ -2,82 +2,165 @@
   margin-top: 20px;
   flex-shrink: 0;
 }
+.sidebar > .voice-panel {
+  display: contents;
+}
+.sidebar > .grow {
+  order: 1;
+}
+.sidebar > .profile {
+  order: 3;
+}
 .voice-panel .voice-label {
-  margin-top: 0;
+  margin-top: 20px;
 }
-.voice-settings-toggle {
-  margin: 8px 18px;
-  color: #c3dba4;
-  font-size: 12px;
-  text-align: left;
+.voice-members {
+  list-style: none;
+  padding: 2px 8px 6px 32px;
+  margin: 0;
 }
-.voice-controls {
-  margin: 8px 12px;
-  padding: 12px;
-  border: 1px solid #3b4540;
-  border-radius: 8px;
-  background: #181d21;
-  font-size: 12px;
-}
-.voice-controls label {
-  display: block;
-  margin-top: 12px;
-  color: #bfcbd6;
-}
-.voice-controls select {
+.channels .voice-member {
+  margin: 0;
   width: 100%;
-  padding: 7px;
-  margin-top: 4px;
-  background: #252c34;
-  color: #fff;
-  border: 1px solid #495462;
+  min-width: 0;
+  padding: 4px 8px;
+  height: 32px;
+  gap: 8px;
   border-radius: 5px;
+  color: #b5bac1;
+  font-size: 13px;
 }
-.voice-controls button {
-  background: #303a35;
-  color: #e5f4d4;
-  padding: 8px;
-  border-radius: 5px;
+.channels .voice-member:disabled {
+  opacity: 1;
+  cursor: default;
 }
-.voice-device-actions {
+.voice-member-avatar {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #41434a;
+  flex-shrink: 0;
+  color: #f2f3f5;
+}
+.voice-members [data-speaking='true'] .voice-member-avatar {
+  outline: 2px solid #43b581;
+}
+.voice-member > svg {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.voice-connection {
+  order: 2;
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 76px;
+  z-index: 2;
+  margin: auto 8px 8px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #232428;
+}
+.voice-connection-heading {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
 }
-.voice-controls button:disabled {
-  opacity: 0.5;
+.voice-connection-heading > span {
+  flex: 1;
+  min-width: 0;
 }
-.voice-help {
-  color: #a4b2c3;
-  line-height: 1.5;
-  margin: 0 0 12px;
+.voice-connection-heading strong {
+  display: block;
+  color: #43b581;
+  font-size: 13px;
+}
+.voice-connection-heading small {
+  display: block;
+  margin-top: 3px;
+  color: #b5bac1;
+  font-size: 11px;
+}
+.voice-connection button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  color: #b5bac1;
+  padding: 7px;
+  border-radius: 5px;
+}
+.voice-connection button:hover {
+  background: #404249;
+  color: #fff;
 }
 .voice-buttons {
   display: flex;
-  gap: 8px;
-  margin: 12px 0;
+  gap: 6px;
+  margin-top: 10px;
+}
+.voice-buttons button {
+  flex: 1;
+  background: #313338;
 }
 .voice-buttons [aria-pressed='true'] {
-  background: #70474a;
+  color: #f2b0b3;
 }
-.voice-members {
-  padding: 0;
-  list-style: none;
+.voice-preferences {
+  max-width: 540px;
+  min-width: 0;
 }
-.voice-members li {
-  padding: 7px 0;
-  display: grid;
-  gap: 4px;
+.voice-preferences :is(select, input) {
+  box-sizing: border-box;
+  max-width: 100%;
 }
-.voice-members [data-speaking='true'] {
-  color: #c2e69b;
+.voice-preferences > p {
+  color: #b5bac1;
+  font-size: 13px;
+  line-height: 1.5;
 }
-.voice-members input {
+.account-panel .voice-preferences label {
+  display: block;
+  margin: 20px 0;
+}
+.voice-preferences select {
+  display: block;
   width: 100%;
-  accent-color: #bddf91;
+  margin-top: 8px;
+  padding: 10px;
+  color: #f2f3f5;
+  background: #1e1f22;
+  border: 1px solid #4e5058;
+  border-radius: 5px;
+}
+.voice-preferences button {
+  padding: 9px 12px;
+  background: #404249;
+  color: #fff;
+  border-radius: 5px;
+}
+.voice-preferences button:disabled {
+  opacity: 0.5;
+}
+.voice-panel button,
+.voice-preferences button {
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.voice-panel button:focus-visible,
+.voice-preferences :is(button, select):focus-visible {
+  outline: 2px solid #8b80ff;
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-panel button,
+  .voice-preferences button {
+    transition: none;
+  }
 }
 .voice-error {
-  font-size: 11px;
+  font-size: 12px;
   color: #ffc5c5;
   line-height: 1.5;
   margin: 10px 16px;
@@ -98,7 +181,57 @@
   width: 100%;
   accent-color: var(--accent-mint);
 }
+.voice-preferences input[type='range'] {
+  margin-inline: 0;
+  padding: 0;
+  border: 0;
+}
 .voice-output-volume output {
   float: right;
   font-variant-numeric: tabular-nums;
+}
+.voice-processing {
+  min-width: 0;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+}
+.voice-processing p,
+.voice-processing small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.voice-processing-presets {
+  display: flex;
+  gap: 8px;
+  margin-block: 12px;
+}
+.voice-processing-presets button {
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+.voice-processing-presets button[aria-pressed='true'] {
+  border-color: var(--accent-mint);
+}
+.account-panel .voice-processing .voice-processing-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin-block: 12px;
+}
+.voice-processing-option span small {
+  display: block;
+}
+.voice-processing-option > small {
+  grid-column: 2;
+}
+.voice-processing-option input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin: 2px 0;
+  accent-color: var(--accent-mint);
 }

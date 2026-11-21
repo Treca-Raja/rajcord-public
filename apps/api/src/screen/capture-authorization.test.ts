@@ -221,6 +221,17 @@ it('invalidates synchronously on lease removal and cannot revive old requests af
   await expect(user.verify(next.id)).rejects.toBeInstanceOf(HttpError);
   expect(grant.id).not.toBe(next.id);
 });
+it('binds application sound to the authorized grant without allowing its consent to be changed', async () => {
+  const f = fixture(),
+    user = f.user();
+  const request = { ...user.request, sound: 'application' };
+  const grant = await user.prepare(request);
+  expect((await user.verify(grant.id)).id).toBe(grant.id);
+  await expect(user.prepare({ ...request, sound: 'system' })).rejects.toMatchObject({
+    statusCode: 400,
+  });
+  expect((await user.verify(grant.id)).id).toBe(grant.id);
+});
 it('does not evict a legitimate account grant for another session or invalid CSRF', async () => {
   const f = fixture(),
     user = f.user(),

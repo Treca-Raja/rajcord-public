@@ -21,7 +21,7 @@ export type TrustedCaptureIntent = Readonly<{
   frame: WebFrameMain;
   url: string;
   navigation: number;
-  sound: 'none' | 'system';
+  sound: 'none' | 'system' | 'application' | 'source';
 }>;
 export type CaptureIntentSource = {
   inspect: () => TrustedCaptureIntent | null;
@@ -38,6 +38,7 @@ type Options = {
   qualification?:
     'unqualified' | 'qualified-native-provider' | 'synthetic-webcontents' | 'native-provider';
   systemAudio?: 'unqualified' | 'qualified-windows-loopback' | 'consented-windows-loopback';
+  applicationAudio?: boolean;
   authority?: CaptureIntentSource;
   enumerate?: (signal: AbortSignal) => Promise<readonly NativeCaptureSource[]>;
   openPicker?: (
@@ -126,6 +127,11 @@ export function installNativeCapture(configuration: Options) {
       intent.navigation === doc.navigation &&
       doc.url.startsWith(targetOrigin + '/') &&
       (intent.sound === 'none' ||
+        (intent.sound === 'source' &&
+          ['qualified-windows-loopback', 'consented-windows-loopback'].includes(
+            options.systemAudio ?? 'unqualified',
+          )) ||
+        (intent.sound === 'application' && options.applicationAudio === true) ||
         (intent.sound === 'system' &&
           ['qualified-windows-loopback', 'consented-windows-loopback'].includes(
             options.systemAudio ?? 'unqualified',
@@ -177,6 +183,7 @@ export function installNativeCapture(configuration: Options) {
           ? options.openPicker(snapshot, signal, policy)
           : openScreenPicker({ owner, policy, signal }),
       systemAudio: options.systemAudio ?? 'unqualified',
+      applicationAudio: options.applicationAudio === true,
       onError,
       now,
     });
@@ -255,7 +262,7 @@ export function installNativeCapture(configuration: Options) {
       !sameOrigin(request.securityOrigin, targetOrigin) ||
       request.userGesture !== true ||
       request.videoRequested !== true ||
-      request.audioRequested !== (intent.sound === 'system')
+      request.audioRequested !== (intent.sound !== 'none')
     ) {
       respond(null);
       return;
@@ -267,12 +274,23 @@ export function installNativeCapture(configuration: Options) {
       timer: setTimeout(invalidate, Math.min(60000, Math.max(1, intent.expires - now()))),
     };
     try {
-      policy.begin(request, (grant) => {
+      policy.begin({ ...request, sound: intent.sound }, (grant) => {
         if (
           !grant ||
           !current() ||
           active?.respond !== respond ||
-          (intent.sound === 'system' && grant.audio !== 'loopback')
+          (intent.sound === 'system' && grant.audio !== 'loopback') ||
+          (intent.sound === 'application' &&
+            (!grant.video.id.startsWith('window:') ||
+              !grant.video.applicationAudioId ||
+              grant.audio !== grant.video.applicationAudioId)) ||
+          (intent.sound === 'source' &&
+            (grant.video.id.startsWith('screen:')
+              ? grant.audio !== 'loopback'
+              : !grant.video.id.startsWith('window:') ||
+                !grant.video.applicationAudioId ||
+                grant.audio !== grant.video.applicationAudioId)) ||
+          (intent.sound === 'none' && !!grant.audio)
         ) {
           respond(null);
           return;
@@ -296,7 +314,9 @@ export function installNativeCapture(configuration: Options) {
             respond(null);
             return;
           }
-          respond({ video, ...(grant.audio ? { audio: grant.audio } : {}) });
+          // The pinned runtime accepts Chromium application-loopback device IDs;
+          // Electron's public type only lists whole-system loopback strings.
+          respond({ video, ...(grant.audio ? { audio: grant.audio } : {}) } as Streams);
         })()
           .catch(() => {
             onError('native_authority_unavailable');

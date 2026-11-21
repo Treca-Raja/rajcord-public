@@ -99,7 +99,7 @@ it('upgrades existing chat data and keeps legacy ASCII writes and repeat startup
       await pool.query('SELECT * FROM drizzle.__drizzle_migrations ORDER BY id')
     ).rows;
     expect(upgradedJournal.slice(0, previousJournal.length)).toEqual(previousJournal);
-    expect(upgradedJournal).toHaveLength(8);
+    expect(upgradedJournal).toHaveLength(9);
     const legacy = (
       await pool.query(
         "INSERT INTO conversations(kind,name) VALUES('channel','legacy-write') RETURNING *",

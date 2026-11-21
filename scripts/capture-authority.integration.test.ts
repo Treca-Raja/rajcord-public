@@ -20,49 +20,52 @@ let fixture: Awaited<ReturnType<typeof testDatabase>>,
 type Person = { id: string; token: string; csrf: string };
 let owner: Person, member: Person, other: Person, pending: Person;
 const authorities: ServerCaptureAuthority[] = [];
-it('promotes only consumed capture for the exact live own publication and keeps old cancellation scoped', async () => {
-  await join();
-  const requestId = randomUUID(),
-    epoch = bindings.get(member.id)!;
-  const preview = (await post(member, 'prepare', { requestId, sound: 'none' })).json();
-  const published = await app.screen!.publish(callers.get(member.id)!, {
-    epoch,
-    requestId: randomUUID(),
-    sourceGeneration: 1,
-    profile: 'smooth',
-    resolution: 720,
-    frameRate: 60,
-    videoBitrate: 4000000,
-    sound: 'none',
-  });
-  const handoff = {
-    id: preview.id,
-    epoch,
-    shareId: published.share.id,
-    sourceGeneration: 1,
-    requestId: randomUUID(),
-  };
-  expect((await post(member, 'handoff', handoff)).statusCode).toBe(403);
-  expect((await post(member, 'consume', { id: preview.id })).statusCode).toBe(200);
-  expect((await post(other, 'handoff', handoff)).statusCode).toBe(403);
-  const response = await post(member, 'handoff', handoff);
-  expect(response.statusCode).toBe(200);
-  const publication = response.json();
-  expect(publication.id).not.toBe(preview.id);
-  expect((await post(member, 'handoff', handoff)).json().id).toBe(publication.id);
-  const check = { id: publication.id, requestId: randomUUID(), revision: 1 };
-  expect((await post(member, 'publication-check', check)).statusCode).toBe(200);
-  await post(member, 'cancel', { requestId });
-  expect(
-    (await post(member, 'publication-check', { ...check, requestId: randomUUID(), revision: 2 }))
-      .statusCode,
-  ).toBe(200);
-  await app.screen!.stop(callers.get(member.id)!, { epoch, shareId: published.share.id });
-  expect(
-    (await post(member, 'publication-check', { ...check, requestId: randomUUID(), revision: 3 }))
-      .statusCode,
-  ).toBe(403);
-});
+it.each(['none', 'application', 'source'] as const)(
+  'promotes only consumed %s capture for the exact live own publication and keeps old cancellation scoped',
+  async (sound) => {
+    await join();
+    const requestId = randomUUID(),
+      epoch = bindings.get(member.id)!;
+    const preview = (await post(member, 'prepare', { requestId, sound })).json();
+    const published = await app.screen!.publish(callers.get(member.id)!, {
+      epoch,
+      requestId: randomUUID(),
+      sourceGeneration: 1,
+      profile: 'smooth',
+      resolution: 720,
+      frameRate: 60,
+      videoBitrate: 4000000,
+      sound,
+    });
+    const handoff = {
+      id: preview.id,
+      epoch,
+      shareId: published.share.id,
+      sourceGeneration: 1,
+      requestId: randomUUID(),
+    };
+    expect((await post(member, 'handoff', handoff)).statusCode).toBe(403);
+    expect((await post(member, 'consume', { id: preview.id })).statusCode).toBe(200);
+    expect((await post(other, 'handoff', handoff)).statusCode).toBe(403);
+    const response = await post(member, 'handoff', handoff);
+    expect(response.statusCode).toBe(200);
+    const publication = response.json();
+    expect(publication.id).not.toBe(preview.id);
+    expect((await post(member, 'handoff', handoff)).json().id).toBe(publication.id);
+    const check = { id: publication.id, requestId: randomUUID(), revision: 1 };
+    expect((await post(member, 'publication-check', check)).statusCode).toBe(200);
+    await post(member, 'cancel', { requestId });
+    expect(
+      (await post(member, 'publication-check', { ...check, requestId: randomUUID(), revision: 2 }))
+        .statusCode,
+    ).toBe(200);
+    await app.screen!.stop(callers.get(member.id)!, { epoch, shareId: published.share.id });
+    expect(
+      (await post(member, 'publication-check', { ...check, requestId: randomUUID(), revision: 3 }))
+        .statusCode,
+    ).toBe(403);
+  },
+);
 const bindings = new Map<string, string>();
 const callers = new Map<string, ScreenCaller>();
 async function join(person = member) {
@@ -158,23 +161,26 @@ it('requires approved current sessions, origin, CSRF and the exact session-owned
   expect(grant.statusCode).toBe(200);
   expect(Object.keys(grant.json()).sort()).toEqual(['id', 'remainingMs']);
 });
-it('consumes once, denies foreign references and never extends voice or duplicate request deadlines', async () => {
-  const lease = await join();
-  const expires = app.voice!.leases.get(member.id)!.expires,
-    body = { requestId: randomUUID(), sound: 'none' };
-  const grant = (await post(member, 'prepare', body)).json();
-  expect((await post(member, 'prepare', body)).json().remainingMs).toBeLessThanOrEqual(
-    grant.remainingMs,
-  );
-  expect((await post(other, 'consume', { id: grant.id })).statusCode).toBe(403);
-  expect((await post(member, 'consume', { id: grant.id })).statusCode).toBe(200);
-  expect((await post(member, 'consume', { id: grant.id })).statusCode).toBe(409);
-  expect(app.voice!.leases.get(member.id)!.expires).toBe(expires);
-  expect(app.voice!.leases.get(member.id)!.id).toBe(lease.id);
-  expect((await post(member, 'prepare', { ...body, sourceTitle: 'Synthetic' })).statusCode).toBe(
-    400,
-  );
-});
+it.each(['none', 'system', 'application', 'source'] as const)(
+  'consumes %s sound once, denies foreign references and never extends voice or duplicate request deadlines',
+  async (sound) => {
+    const lease = await join();
+    const expires = app.voice!.leases.get(member.id)!.expires,
+      body = { requestId: randomUUID(), sound };
+    const grant = (await post(member, 'prepare', body)).json();
+    expect((await post(member, 'prepare', body)).json().remainingMs).toBeLessThanOrEqual(
+      grant.remainingMs,
+    );
+    expect((await post(other, 'consume', { id: grant.id })).statusCode).toBe(403);
+    expect((await post(member, 'consume', { id: grant.id })).statusCode).toBe(200);
+    expect((await post(member, 'consume', { id: grant.id })).statusCode).toBe(409);
+    expect(app.voice!.leases.get(member.id)!.expires).toBe(expires);
+    expect(app.voice!.leases.get(member.id)!.id).toBe(lease.id);
+    expect((await post(member, 'prepare', { ...body, sourceTitle: 'Synthetic' })).statusCode).toBe(
+      400,
+    );
+  },
+);
 it('recovers valid capture admission after an unverified-cookie burst and preserves voice heartbeat', async () => {
   const lease = await join();
   const requests = Array.from({ length: 1024 }, (_, index) => {

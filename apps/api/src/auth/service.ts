@@ -31,23 +31,34 @@ export function publicUser(row: Record<string, unknown>): AuthUser {
     isOwner: row.is_owner === true,
   };
 }
-export async function identity(db: Queryable, token: unknown): Promise<Identity | null> {
-  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return null;
+const tokenDigest = (token: unknown) =>
+  typeof token === 'string' && /^[a-f0-9]{64}$/.test(token) ? digest(token) : null;
+
+export async function identities(
+  db: Queryable,
+  tokens: readonly unknown[],
+): Promise<(Identity | null)[]> {
+  const hashes = tokens.map(tokenDigest);
+  const unique = [...new Set(hashes.filter((hash) => hash !== null))];
+  if (!unique.length) return hashes.map(() => null);
   const { rows } = await db.query(
-    `SELECT u.*,s.id session_id,s.csrf_token,s.expires_at,s.remember,s.token_hash,EXISTS(SELECT 1 FROM platform WHERE owner_id=u.id) is_owner FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now() AND u.status NOT IN ('suspended','removed')`,
-    [digest(token)],
+    `SELECT u.*,s.id session_id,s.csrf_token,s.expires_at,s.remember,s.token_hash,EXISTS(SELECT 1 FROM platform WHERE owner_id=u.id) is_owner FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=ANY($1::text[]) AND s.revoked_at IS NULL AND s.expires_at>now() AND u.status NOT IN ('suspended','removed')`,
+    [unique],
   );
-  const row = rows[0];
-  return row
-    ? {
-        user: publicUser(row),
-        sessionId: row.session_id,
-        csrfToken: row.csrf_token,
-        expiresAt: row.expires_at,
-        remember: row.remember,
-        tokenHash: row.token_hash,
-      }
-    : null;
+  const byHash = new Map<string, Identity>();
+  for (const row of rows)
+    byHash.set(row.token_hash, {
+      user: publicUser(row),
+      sessionId: row.session_id,
+      csrfToken: row.csrf_token,
+      expiresAt: row.expires_at,
+      remember: row.remember,
+      tokenHash: row.token_hash,
+    });
+  return hashes.map((hash) => (hash === null ? null : (byHash.get(hash) ?? null)));
+}
+export async function identity(db: Queryable, token: unknown): Promise<Identity | null> {
+  return (await identities(db, [token]))[0] ?? null;
 }
 export function approved(auth: Identity | null) {
   if (!auth) throw new HttpError(401, 'Sign in required.');
@@ -176,11 +187,13 @@ export class AuthService {
         auth.user.id,
         action,
       ]);
-      if (['suspended', 'removed'].includes(next))
+      if (['suspended', 'removed'].includes(next)) {
         await db.query(
           'UPDATE sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL',
           [targetId],
         );
+        await db.query('DELETE FROM password_recovery_codes WHERE user_id=$1', [targetId]);
+      }
       return next;
     });
   }
@@ -194,6 +207,7 @@ export class AuthService {
         .rows[0];
       if (target?.status !== 'approved') throw new HttpError(409, 'Choose an approved member.');
       await db.query('UPDATE platform SET owner_id=$1 WHERE id=1', [targetId]);
+      await db.query('DELETE FROM password_recovery_codes');
       await db.query(
         "INSERT INTO approval_history(target_id,actor_id,action) VALUES($1,$2,'transfer-owner')",
         [targetId, auth.user.id],

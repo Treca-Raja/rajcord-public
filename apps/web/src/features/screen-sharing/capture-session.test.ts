@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CaptureSession, ScreenLifetime } from './capture-session';
 import { WebScreenCapture } from './screen-capture';
 import { screenRenewalPermit } from './screen-renewal';
-import type { ScreenPublishGrant } from '@tricord/shared';
+import type { ScreenPublishGrant, ScreenQuality } from '@tricord/shared';
 
 const sessions: CaptureSession[] = [],
   adapters: WebScreenCapture[] = [],
@@ -26,6 +26,7 @@ async function fixture(failDisposal = false) {
     readyState: 'live',
     label: 'Owned synthetic source',
     getSettings: () => ({ displaySurface: 'browser', width: 1280, height: 720, frameRate: 60 }),
+    applyConstraints: vi.fn(async () => {}),
     stop: vi.fn(() => {
       video.readyState = 'ended';
     }),
@@ -73,6 +74,27 @@ async function fixture(failDisposal = false) {
   };
   return { session, adapter, video, ended, grant };
 }
+it('shares one codec check across viewers and checks again for a resized source before the next offer', async () => {
+  const encodingInfo = vi.fn(async () => ({ supported: true, smooth: true, powerEfficient: true }));
+  vi.stubGlobal('navigator', { mediaCapabilities: { encodingInfo } });
+  vi.stubGlobal('RTCRtpSender', {
+    getCapabilities: () => ({ codecs: [{ mimeType: 'video/H264' }] }),
+  });
+  try {
+    const { session, video } = await fixture();
+    await Promise.all([session.codecPreference(), session.codecPreference()]);
+    expect(encodingInfo).toHaveBeenCalledTimes(1);
+    const settings = video.getSettings();
+    vi.spyOn(video, 'getSettings').mockReturnValue({ ...settings, width: 1720 });
+    await Promise.all([session.codecPreference(), session.codecPreference()]);
+    expect(encodingInfo).toHaveBeenCalledTimes(2);
+    expect(encodingInfo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ video: expect.objectContaining({ width: 1720, height: 720 }) }),
+    );
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 it('atomically replaces preview supervision while retaining the same capture and adapter ownership', async () => {
   const f = await fixture(),
     capture = f.session.borrow(),
@@ -86,6 +108,22 @@ it('atomically replaces preview supervision while retaining the same capture and
   f.session.stop();
   expect(f.video.stop).toHaveBeenCalledTimes(1);
   expect(f.ended).toHaveBeenCalledTimes(1);
+});
+it('validates the published grant against the selected quality while retaining the prepared capture', async () => {
+  const f = await fixture(),
+    quality: ScreenQuality = {
+      profile: 'high',
+      resolution: 480,
+      frameRate: 30,
+      videoBitrate: 2000000,
+    },
+    grant: ScreenPublishGrant = {
+      ...f.grant,
+      share: { ...f.grant.share, ...quality },
+    };
+  f.session.commitPublication(f.session.previewKey, grant, Date.now() + 10000, 1, quality);
+  expect(f.session.borrow().video).toBe(f.video);
+  f.session.stop();
 });
 it('cannot promote expired preview, another source generation or different source-sound consent', async () => {
   const f = await fixture();

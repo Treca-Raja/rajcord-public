@@ -7,7 +7,7 @@ import {
 } from '@tricord/shared';
 
 export type WebCaptureDevices = Pick<MediaDevices, 'getDisplayMedia'>;
-export type CaptureSound = 'none' | 'tab' | 'system';
+export type CaptureSound = 'none' | 'tab' | 'system' | 'application' | 'source';
 export type CaptureEnd =
   'stopped' | 'cancelled' | 'disposed' | 'video-ended' | 'audio-ended' | 'stream-changed';
 export type CaptureErrorCode =
@@ -44,11 +44,31 @@ export type LocalScreenCapture = Readonly<{
 }>;
 type DisplayOptions = DisplayMediaStreamOptions & {
   systemAudio: 'exclude' | 'include';
-  windowAudio: 'exclude';
+  windowAudio: 'exclude' | 'window';
   selfBrowserSurface: 'exclude';
   surfaceSwitching: 'exclude';
 };
 type Attempt = { cancel: (reason: CaptureEnd) => void };
+
+export async function setScreenCaptureFormat(
+  video: MediaStreamTrack,
+  height: ScreenResolution,
+  frameRate: ScreenFrameRate,
+) {
+  const message = `The selected source cannot capture ${height}p at ${frameRate} fps. Choose another source or change the capture settings.`;
+  try {
+    // An explicit frame-rate constraint can discard early frames even on a native
+    // 60 Hz source. Keep its native cadence when it already matches the selection.
+    await video.applyConstraints({ height: { exact: height } });
+    if (video.getSettings().frameRate !== frameRate)
+      await video.applyConstraints({ height: { exact: height }, frameRate: { exact: frameRate } });
+  } catch (cause) {
+    throw new ScreenCaptureError('unsupported', message, { cause });
+  }
+  const settings = video.getSettings();
+  if (settings.height !== height || settings.frameRate !== frameRate)
+    throw new ScreenCaptureError('unsupported', message);
+}
 
 export class WebScreenCapture {
   private current?: Attempt;
@@ -85,7 +105,12 @@ export class WebScreenCapture {
   }): Promise<LocalScreenCapture> {
     if (this.disposed)
       return Promise.reject(new ScreenCaptureError('disposed', 'Screen capture was disposed.'));
-    if (!request || !(this.desktop ? ['none', 'system'] : ['none', 'tab']).includes(request.sound))
+    if (
+      !request ||
+      !(this.desktop ? ['none', 'system', 'application', 'source'] : ['none', 'tab']).includes(
+        request.sound,
+      )
+    )
       return Promise.reject(
         new ScreenCaptureError('invalid', 'Choose source sound or video only explicitly.'),
       );
@@ -184,8 +209,8 @@ export class WebScreenCapture {
         };
       })(),
       audio: sound !== 'none',
-      systemAudio: sound === 'system' ? 'include' : 'exclude',
-      windowAudio: 'exclude',
+      systemAudio: sound === 'system' || sound === 'source' ? 'include' : 'exclude',
+      windowAudio: sound === 'source' ? 'window' : 'exclude',
       selfBrowserSurface: 'exclude',
       surfaceSwitching: 'exclude',
     };
@@ -200,7 +225,7 @@ export class WebScreenCapture {
       return result;
     }
     void picker.then(
-      (received) => {
+      async (received) => {
         this.pickerPending = false;
         stream = received;
         if (terminal || this.current !== attempt) {
@@ -258,6 +283,16 @@ export class WebScreenCapture {
               'unsupported',
               'System sound requires a selected display.',
             );
+          if (sound === 'application' && displaySurface !== 'window')
+            throw new ScreenCaptureError(
+              'unsupported',
+              'Application sound requires a selected application window.',
+            );
+          if (sound === 'source' && displaySurface !== 'window' && displaySurface !== 'monitor')
+            throw new ScreenCaptureError(
+              'unsupported',
+              'Automatic audio requires a selected application window or display.',
+            );
           const listen = (target: EventTarget, event: string, handler: () => void) => {
             target.addEventListener(event, handler);
             listeners.push(() => target.removeEventListener(event, handler));
@@ -266,6 +301,8 @@ export class WebScreenCapture {
           if (audio) listen(audio, 'ended', () => cancel('audio-ended'));
           listen(stream, 'addtrack', () => cancel('stream-changed'));
           listen(stream, 'removetrack', () => cancel('stream-changed'));
+          if (explicit)
+            await setScreenCaptureFormat(video, request.resolution!, request.frameRate!);
           if (tracks.some((track) => track.readyState !== 'live'))
             throw new ScreenCaptureError(
               'source_ended',

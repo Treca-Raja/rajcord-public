@@ -4,6 +4,7 @@ import type { Server } from 'socket.io';
 import { AuthService, identity, approved, equal, SESSION_COOKIE, publicUser } from './service.js';
 import { HttpError, input, text, uuid, password } from './validation.js';
 import { hashPassword, checkPassword } from './password.js';
+import { PasswordRecoveryService } from './password-recovery.js';
 
 export function registerAuth(
   app: FastifyInstance,
@@ -13,6 +14,7 @@ export function registerAuth(
   limits: boolean,
 ) {
   const service = new AuthService(pool);
+  const recovery = new PasswordRecoveryService(pool);
   const token = (req: FastifyRequest) => req.cookies[SESSION_COOKIE] ?? '';
   const current = async (req: FastifyRequest) => {
     const auth = await identity(pool, token(req));
@@ -30,7 +32,9 @@ export function registerAuth(
     notify(id);
     io.in('user:' + id).disconnectSockets(true);
   };
-  const authLimit = (max: number) => ({ rateLimit: limits ? { max, timeWindow: 60000 } : false });
+  const authLimit = (max: number) => ({
+    rateLimit: limits ? { max, timeWindow: 60000 } : (false as const),
+  });
   app.post('/api/auth/register', { config: authLimit(5) }, async (req, reply) => {
     const user = await service.register(input(req.body, ['username', 'displayName', 'password']));
     return reply.code(201).send({ user });
@@ -53,6 +57,24 @@ export function registerAuth(
       remember: auth.remember,
     };
   });
+  app.post('/api/auth/password/reset', { config: authLimit(5) }, async (req, reply) => {
+    const body = input(req.body, ['username', 'code', 'newPassword']);
+    const id = await recovery.reset(body.username, body.code, body.newPassword);
+    disconnect(id);
+    reply.header('Cache-Control', 'no-store');
+    return { ok: true };
+  });
+  app.post<{ Params: { id: string } }>(
+    '/api/admin/password-recovery/:id',
+    { config: authLimit(3) },
+    async (req, reply) => {
+      await current(req);
+      const body = input(req.body, ['currentPassword']);
+      const issued = await recovery.issue(token(req), uuid(req.params.id), body.currentPassword);
+      reply.header('Cache-Control', 'no-store');
+      return issued;
+    },
+  );
   // Ten clients can exhaust the shared API burst while loading chat. Session
   // verification must keep its own bounded budget so call authorization survives.
   app.get('/api/auth/me', { config: authLimit(120) }, async (req) => {
@@ -117,6 +139,7 @@ export function registerAuth(
         [encoded, auth.user.id, row.password_hash],
       );
       if (!changed.rowCount) throw new HttpError(409, 'Password changed. Sign in again.');
+      await db.query('DELETE FROM password_recovery_codes WHERE user_id=$1', [auth.user.id]);
       await db.query('UPDATE sessions SET revoked_at=now() WHERE user_id=$1', [auth.user.id]);
     });
     disconnect(auth.user.id);

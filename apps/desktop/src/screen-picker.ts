@@ -37,18 +37,21 @@ export async function openScreenPicker({
   const assets = ['picker.html', 'picker.css', 'picker.js'].map(
     (name) => pathToFileURL(path.join(__dirname, 'picker', name)).href,
   );
-  isolated.webRequest.onBeforeRequest((details, callback) =>
-    callback({ cancel: !assets.includes(details.url) }),
-  );
+  isolated.webRequest.onBeforeRequest((details, callback) => {
+    const localPreview =
+      details.url.length <= 500_000 &&
+      /^data:image\/jpeg;base64,[A-Za-z0-9+/]*={0,2}$/.test(details.url);
+    callback({ cancel: !assets.includes(details.url) && !localPreview });
+  });
   const win = new BrowserWindow({
     parent: owner,
     modal: true,
     show: false,
-    width: 760,
-    height: 650,
-    minWidth: 540,
-    minHeight: 480,
-    title: 'Choose a source · Rajcord',
+    width: 1120,
+    height: 820,
+    minWidth: 640,
+    minHeight: 560,
+    title: 'Share your screen · Rajcord',
     autoHideMenuBar: true,
     backgroundColor: '#171a20',
     webPreferences: {

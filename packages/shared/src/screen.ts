@@ -1,4 +1,7 @@
 export const SCREEN_PROTOCOL_VERSION = 2;
+// With the bounded link fields below, a page fits the 64 KiB socket output window.
+export const SCREEN_RENEWAL_PAGE_SIZE = 128;
+export const SCREEN_DIRECTORY_PAGE_SIZE = 128;
 export const SCREEN_RESOLUTIONS = [480, 720, 1080] as const;
 export const SCREEN_FRAME_RATES = [15, 30, 60] as const;
 export type ScreenResolution = (typeof SCREEN_RESOLUTIONS)[number];
@@ -10,7 +13,7 @@ export const SCREEN_VIDEO_BITRATES = [
   2000000, 4000000, 6000000, 8000000, 12000000, 20000000,
 ] as const;
 export type ScreenVideoBitrate = (typeof SCREEN_VIDEO_BITRATES)[number] | null;
-export type ScreenSound = 'none' | 'tab' | 'system';
+export type ScreenSound = 'none' | 'tab' | 'system' | 'application' | 'source';
 export type ScreenQuality = {
   profile: ScreenProfile;
   videoBitrate: ScreenVideoBitrate;
@@ -62,7 +65,13 @@ export type ScreenShare = ScreenQuality & {
 export type ScreenPublishGrant = { share: ScreenShare; remainingMs: number };
 export type ScreenStopRequest = ScreenBoundRequest & { shareId: string };
 export type ScreenSelectRequest = ScreenBoundRequest &
-  ScreenQuality & { requestId: string; revision: number; shareId: string | null };
+  ScreenQuality & {
+    requestId: string;
+    revision: number;
+    shareId: string | null;
+    mode?: 'replace' | 'add' | 'remove' | 'clear';
+    removeShareId?: string;
+  };
 export type ScreenLink = {
   id: string;
   shareId: string;
@@ -74,8 +83,13 @@ export type ScreenLink = {
   videoBitrate: ScreenVideoBitrate;
 };
 export type ScreenLinkGrant = { link: ScreenLink; remainingMs: number };
-export type ScreenRenewRequest = ScreenBoundRequest & { requestId: string; revision: number };
+export type ScreenRenewRequest = ScreenBoundRequest & {
+  requestId: string;
+  revision: number;
+  offset?: number;
+};
 export type ScreenRenewal = {
+  nextOffset?: number;
   iceServers?: ScreenIceServer[];
   remainingMs: number;
   links: ScreenLinkGrant[];
@@ -101,6 +115,15 @@ export type ScreenDirectory = {
   revision: number;
   shares: ScreenShare[];
 };
+export type ScreenDirectoryChanges = {
+  epoch: string;
+  revision: number;
+  added: ScreenShare[];
+  removed: string[];
+  complete: boolean;
+};
+export type ScreenDirectoryReply =
+  ScreenDirectory | { epoch: string; revision: number; streamed: true };
 export type ScreenLinkNotice = { epoch: string; revision: number; grant: ScreenLinkGrant };
 export type ScreenClosed = {
   epoch: string;
@@ -129,7 +152,7 @@ export interface ScreenClientEvents {
   ) => void;
   'screen:directory': (
     data: ScreenBoundRequest,
-    ack: (result: ScreenAck<ScreenDirectory>) => void,
+    ack: (result: ScreenAck<ScreenDirectoryReply>) => void,
   ) => void;
   'screen:signal': (
     data: ScreenSignal,
@@ -137,6 +160,12 @@ export interface ScreenClientEvents {
   ) => void;
 }
 export interface ScreenServerEvents {
+  'screen:directoryChanges': (data: ScreenDirectoryChanges) => void;
+  'screen:snapshot': (data: {
+    directory: ScreenDirectory;
+    links: ScreenLinkGrant[];
+    closed: string[];
+  }) => void;
   'screen:directory': (data: ScreenDirectory) => void;
   'screen:link': (data: ScreenLinkNotice) => void;
   'screen:closed': (data: ScreenClosed) => void;

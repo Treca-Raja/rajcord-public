@@ -8,7 +8,16 @@ import { ConversationDialog, type ConversationDialogMode } from './ConversationD
 import { channelCategories, channelFields } from '../features/channels';
 import { ApplicationSounds } from '../features/sounds';
 import { CommunitySidebar } from './CommunitySidebar';
-import { useCallback, useMemo, useEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+} from 'react';
 import { Hash, Users, Settings, MessageCircle, Menu, X } from 'lucide-react';
 import type {
   Conversation,
@@ -20,14 +29,17 @@ import type {
   ChannelReference,
 } from '@tricord/shared';
 import { AuthRoot, useAuth } from './Auth';
-import type { VoiceChannel } from '../features/voice';
+import type { VoiceChannel, VoiceSessionDock } from '../features/voice';
 import { EmojiText } from '../shared/emoji/EmojiText';
-import { AppearanceBrand, AppearanceToggle } from '../features/appearance';
+import { AppearanceBrand } from '../features/appearance';
 import '../features/account/styles.css';
 import './shell.css';
 import type { ScreenApplication } from '../features/screen-sharing';
 import { ScreenFeature } from './ScreenFeature';
 import { FeatureBoundary } from '../shared/FeatureBoundary';
+import { useCall } from '../shared/call';
+const noScreenSubscription = () => () => {};
+const noScreenSnapshot = () => false;
 export function App({ screenApplication }: { screenApplication?: ScreenApplication } = {}) {
   return (
     <AuthRoot screenApplication={screenApplication}>
@@ -44,6 +56,12 @@ function AccountCommunity() {
   );
 }
 function Community() {
+  const call = useCall();
+  const screenOpen = useSyncExternalStore(
+    call?.screens?.subscribe ?? noScreenSubscription,
+    () => call?.screens?.inspect().open ?? false,
+    noScreenSnapshot,
+  );
   const { state, connected, socket, request, openSettings } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]),
     [invites, setInvites] = useState<Invitation[]>([]),
@@ -68,6 +86,11 @@ function Community() {
   const [membersOpen, setMembersOpen] = useState(false);
   const [rosterAvailable, setRosterAvailable] = useState(false);
   const presence = usePresence(socket);
+  const [workspaceView, setWorkspaceView] = useState<'channels' | 'direct'>('channels');
+  const workspaceViewRef = useRef<'channels' | 'direct'>('channels');
+  const lastChannelId = useRef<string | null>(null);
+  const lastDirectId = useRef<string | null>(null);
+  const [voiceSession, setVoiceSession] = useState<VoiceSessionDock | null>(null);
   const [selected, setSelected] = useState<string | null>(null),
     [mobile, setMobile] = useState(false),
     [error, setError] = useState(''),
@@ -76,11 +99,57 @@ function Community() {
   const requestRef = useRef(request);
   requestRef.current = request;
   const dialogTrigger = useRef<HTMLElement | null>(null);
-  function openDialog(mode: NonNullable<typeof modal>) {
+  const pendingCreatedConversationFocus = useRef<string | null>(null);
+  function openDialog(mode: NonNullable<typeof modal>, trigger?: HTMLElement) {
     dialogTrigger.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setError('');
     setModal(mode);
+  }
+  function rememberConversation(conversation: Conversation) {
+    if (conversation.kind === 'channel') lastChannelId.current = conversation.id;
+    else lastDirectId.current = conversation.id;
+  }
+  function selectConversation(conversation: Conversation) {
+    const view = conversation.kind === 'channel' ? 'channels' : 'direct';
+    workspaceViewRef.current = view;
+    setWorkspaceView(view);
+    rememberConversation(conversation);
+    setSelected(conversation.id);
+    setNavigation(null);
+    setMobile(false);
+    setError('');
+  }
+  function selectDirectConversationId(conversationId: string) {
+    workspaceViewRef.current = 'direct';
+    setWorkspaceView('direct');
+    lastDirectId.current = conversationId;
+    setSelected(conversationId);
+    setMobile(false);
+  }
+  function switchWorkspaceView(view: 'channels' | 'direct') {
+    if (view === workspaceViewRef.current) {
+      if (window.innerWidth <= 750) setMobile((open) => !open);
+      return;
+    }
+    workspaceViewRef.current = view;
+    setWorkspaceView(view);
+    const belongs = (conversation: Conversation) =>
+      view === 'channels' ? conversation.kind === 'channel' : conversation.kind !== 'channel';
+    const rememberedId = view === 'channels' ? lastChannelId.current : lastDirectId.current;
+    const target =
+      conversations.find((conversation) => conversation.id === selected && belongs(conversation)) ??
+      conversations.find(
+        (conversation) => conversation.id === rememberedId && belongs(conversation),
+      ) ??
+      conversations.find((conversation) => belongs(conversation) && !conversation.archived);
+    if (target) {
+      rememberConversation(target);
+      setSelected(target.id);
+    } else setSelected(null);
+    setNavigation(null);
+    setError('');
+    setMobile(window.innerWidth <= 750);
   }
   const reloadVersion = useRef(0);
   const reload = useCallback(async () => {
@@ -103,11 +172,23 @@ function Community() {
       for (const id of drafts.current.keys()) if (!allowed.has(id)) drafts.current.forget(id);
       for (const id of drafts.current.mediaAttempts.keys())
         if (!allowed.has(id)) drafts.current.mediaAttempts.delete(id);
-      setSelected((current) =>
-        data.conversations.some((c) => c.id === current)
-          ? current
-          : (data.conversations.find((c) => c.kind === 'channel' && !c.archived)?.id ?? null),
-      );
+      const view = workspaceViewRef.current;
+      const belongs = (conversation: Conversation) =>
+        view === 'channels' ? conversation.kind === 'channel' : conversation.kind !== 'channel';
+      const rememberedId = view === 'channels' ? lastChannelId.current : lastDirectId.current;
+      setSelected((current) => {
+        const target =
+          data.conversations.find(
+            (conversation) => conversation.id === current && belongs(conversation),
+          ) ??
+          data.conversations.find(
+            (conversation) => conversation.id === rememberedId && belongs(conversation),
+          ) ??
+          data.conversations.find(
+            (conversation) => belongs(conversation) && !conversation.archived,
+          );
+        return target?.id ?? null;
+      });
     } catch (e) {
       if (version !== reloadVersion.current) return;
       const status = (e as { status?: number }).status;
@@ -185,7 +266,13 @@ function Community() {
       document.title = 'Rajcord';
     };
   }, [unreadTotal]);
-  const current = conversations.find((c) => c.id === selected);
+  const current = conversations.find(
+    (conversation) =>
+      conversation.id === selected &&
+      (workspaceView === 'channels'
+        ? conversation.kind === 'channel'
+        : conversation.kind !== 'channel'),
+  );
   const channelReferences = useMemo<ChannelReference[]>(
     () => [
       ...conversations
@@ -213,10 +300,15 @@ function Community() {
       return;
     }
     if (channel.kind === 'channel') {
+      workspaceViewRef.current = 'channels';
+      setWorkspaceView('channels');
+      lastChannelId.current = channel.id;
       setSelected(channel.id);
       setNavigation(null);
       setMobile(false);
     } else {
+      workspaceViewRef.current = 'channels';
+      setWorkspaceView('channels');
       setVoiceNavigation((previous) => ({ id: channel.id, version: (previous?.version ?? 0) + 1 }));
       if (window.innerWidth <= 700) setMobile(true);
     }
@@ -241,7 +333,7 @@ function Community() {
       setCategoriesBusy(false);
     }
   }
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!modal) return;
     const previous = dialogTrigger.current;
     const dialog = document.querySelector<HTMLElement>('.chat-dialog');
@@ -278,9 +370,36 @@ function Community() {
     document.addEventListener('keydown', keydown);
     return () => {
       document.removeEventListener('keydown', keydown);
-      if (previous?.isConnected) previous.focus();
+      const bounds = previous?.getBoundingClientRect();
+      const sidebar = previous?.closest('.sidebar');
+      const mobileSidebarClosed = Boolean(
+        sidebar &&
+        innerWidth <= 750 &&
+        !sidebar.closest('.shell')?.classList.contains('mobile-open'),
+      );
+      if (
+        previous?.isConnected &&
+        !mobileSidebarClosed &&
+        bounds &&
+        bounds.width > 0 &&
+        bounds.height > 0 &&
+        bounds.bottom > 0 &&
+        bounds.right > 0 &&
+        bounds.top < innerHeight &&
+        bounds.left < innerWidth &&
+        getComputedStyle(previous).visibility === 'visible'
+      )
+        previous.focus();
+      else document.querySelector<HTMLTextAreaElement>('textarea[name=message]')?.focus();
     };
   }, [modal]);
+  useEffect(() => {
+    if (modal || !current || pendingCreatedConversationFocus.current !== current.id) return;
+    const composer = document.querySelector<HTMLTextAreaElement>('.chat textarea[name="message"]');
+    if (!composer || composer.disabled) return;
+    composer.focus({ preventScroll: true });
+    pendingCreatedConversationFocus.current = null;
+  }, [modal, current]);
   async function action(work: () => Promise<unknown>) {
     setBusy(true);
     setError('');
@@ -302,59 +421,78 @@ function Community() {
           ? { kind: 'channel', ...channelFields(data) }
           : newConversationFields(kind, data);
       const result = await request<{ conversation: Conversation }>('/conversations', 'POST', body);
-      setSelected(result.conversation.id);
+      pendingCreatedConversationFocus.current = result.conversation.id;
+      selectConversation(result.conversation);
       setModal(null);
     });
   }
   const choose = (id: string) => {
-    setSelected(id);
-    setNavigation(null);
-    setMobile(false);
-    setError('');
+    const conversation = conversations.find((item) => item.id === id);
+    if (conversation) selectConversation(conversation);
   };
   return (
-    <div className={'shell live-shell' + (mobile ? ' mobile-open' : '')}>
-      <nav className="rail" aria-label="Platform" inert={membersOpen}>
+    <div
+      className={
+        'shell live-shell' +
+        (mobile ? ' mobile-open' : '') +
+        (screenOpen ? ' screen-call-open' : '')
+      }
+    >
+      <nav className="rail" aria-label="Primary navigation" inert={membersOpen && !screenOpen}>
         <AppearanceBrand />
         <div className="rail-rule" />
         <button
-          className="rail-active"
-          aria-label="Conversations"
-          onClick={() => setMobile(!mobile)}
+          className={workspaceView === 'channels' ? 'rail-active' : ''}
+          aria-label="Channels"
+          aria-pressed={workspaceView === 'channels'}
+          title="Channels"
+          onClick={() => switchWorkspaceView('channels')}
+        >
+          <Hash />
+        </button>
+        <button
+          className={workspaceView === 'direct' ? 'rail-active' : ''}
+          aria-label="Direct Messages"
+          aria-pressed={workspaceView === 'direct'}
+          title="Direct Messages"
+          onClick={() => switchWorkspaceView('direct')}
         >
           <MessageCircle />
         </button>
-        <button aria-label="New direct message" onClick={() => openDialog('dm')}>
-          <Users />
-        </button>
-        <AppearanceToggle />
         <div className="grow" />
       </nav>
       <CommunitySidebar
-        membersOpen={membersOpen}
+        membersOpen={membersOpen && !screenOpen}
         categories={categories}
         conversations={conversations}
         selected={selected}
+        view={workspaceView}
         choose={choose}
         openDialog={openDialog}
         invites={invites}
         busy={busy}
         action={action}
-        setSelected={setSelected}
+        connected={connected}
+        onlineIds={presence.snapshot?.onlineIds ?? []}
+        voiceSession={voiceSession}
+        onInviteAccepted={selectDirectConversationId}
         setVoiceChannels={setVoiceChannels}
+        setVoiceSession={setVoiceSession}
         voiceNavigation={voiceNavigation}
       />
       <Notifications
         key={state.user.id}
         selected={selected}
         onOpen={(target) => {
-          setSelected(target.conversationId);
+          const conversation = conversations.find((item) => item.id === target.conversationId);
+          if (conversation) selectConversation(conversation);
+          else runInBackground(reload());
           setNavigation((previous) => ({ ...target, version: (previous?.version ?? 0) + 1 }));
           setMobile(false);
           setError('');
         }}
       />
-      <section className="chat" inert={membersOpen}>
+      <section className="chat" inert={membersOpen && !screenOpen}>
         <header className="channel-header">
           <button
             className="mobile-menu"
@@ -365,9 +503,13 @@ function Community() {
           >
             <Menu size={20} />
           </button>
-          {current?.kind === 'channel' ? <Hash size={23} /> : <MessageCircle size={23} />}
+          {workspaceView === 'channels' ? <Hash size={23} /> : <MessageCircle size={23} />}
           <strong className="truncate">
-            <EmojiText text={current?.name ?? 'Your conversations'} />
+            <EmojiText
+              text={
+                current?.name ?? (workspaceView === 'channels' ? 'Channels' : 'Direct Messages')
+              }
+            />
           </strong>
           <span className="header-divider" />
           <span className="channel-topic">
@@ -385,12 +527,15 @@ function Community() {
             <Users size={18} />
           </button>
           {current && (
-            <button aria-label="Manage conversation" onClick={() => openDialog('manage')}>
+            <button
+              aria-label="Manage conversation"
+              onClick={(event) => openDialog('manage', event.currentTarget)}
+            >
               <Settings size={18} />
             </button>
           )}
         </header>
-        <ScreenFeature />
+        <ScreenFeature voiceChannels={voiceChannels} />
         {error && (
           <div className="notice" role="alert">
             {error}
@@ -404,7 +549,7 @@ function Community() {
             <Messages
               key={current.id}
               conversation={current}
-              readingAllowed={!mobile && !modal && !membersOpen}
+              readingAllowed={!mobile && !modal && !membersOpen && !screenOpen}
               drafts={drafts.current}
               navigation={navigation?.conversationId === current.id ? navigation : null}
               onAccessLost={closeConversation}
@@ -414,12 +559,31 @@ function Community() {
           </FeatureBoundary>
         ) : (
           <div className="empty-channel">
-            <MessageCircle size={34} />
-            <h1>Your people are here.</h1>
-            <p>Create a channel, start a DM, or accept a group invitation.</p>
-            <button className="primary" onClick={() => openDialog('dm')}>
-              Start a conversation
+            {workspaceView === 'channels' ? <Hash size={34} /> : <MessageCircle size={34} />}
+            <h1>
+              {workspaceView === 'channels' ? 'Your channels are here.' : 'Your DMs are here.'}
+            </h1>
+            <p>
+              {workspaceView === 'channels'
+                ? 'Create a channel to start a conversation with your community.'
+                : 'Start a private conversation or create a group with your friends.'}
+            </p>
+            <button
+              className="primary"
+              onClick={(event) =>
+                openDialog(workspaceView === 'channels' ? 'channel' : 'dm', event.currentTarget)
+              }
+            >
+              {workspaceView === 'channels' ? 'Create a channel' : 'Start a direct message'}
             </button>
+            {workspaceView === 'direct' && (
+              <button
+                className="text-button"
+                onClick={(event) => openDialog('group', event.currentTarget)}
+              >
+                Create a group
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -431,7 +595,7 @@ function Community() {
         snapshot={presence.snapshot}
         connected={connected}
         userId={state.user.id}
-        drawer={membersOpen}
+        drawer={membersOpen && !screenOpen}
         close={() => setMembersOpen(false)}
         settings={() => openSettings('people')}
         retry={() => {
@@ -451,7 +615,7 @@ function Community() {
                     userId: id,
                   },
                 );
-                setSelected(data.conversation.id);
+                selectConversation(data.conversation);
               }),
             );
         }}

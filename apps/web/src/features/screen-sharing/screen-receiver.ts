@@ -31,6 +31,7 @@ type PeerOptions = ConstructorParameters<typeof ScreenPeer>[0];
 export type ScreenReceiveOptions = {
   // Already verified by the caller's authorization boundary; references are not grants.
   iceServers?: readonly RTCIceServer[];
+  currentIceServers?: () => readonly RTCIceServer[];
   endpoint: Endpoint;
   lifecycle: ScreenPeerLifecycle;
   send: PeerOptions['send'];
@@ -53,11 +54,11 @@ export type ScreenReceiveState = Readonly<{
     late?: 'succeeded' | 'failed';
   }>;
 }>;
-type Slot = 'rtc' | 'playback' | 'signal' | 'cleanup';
+type Slot = 'rtc' | 'statistics' | 'playback' | 'signal' | 'cleanup';
 type LaneOptions = {
   iceServers?: readonly RTCIceServer[];
   createRtc(configuration: RTCConfiguration): ScreenRtcPeer;
-  createElement(): ScreenPlaybackElement;
+  createElement(linkId: string): ScreenPlaybackElement;
   createStream(tracks: readonly MediaStreamTrack[]): MediaStream;
   onError(error: Error): void;
   now?: () => number;
@@ -104,7 +105,7 @@ class ReceiveLane {
     if (
       !endpoint ||
       endpoint.role !== 'viewer' ||
-      !['none', 'tab', 'system'].includes(endpoint.sound) ||
+      !['none', 'tab', 'system', 'application', 'source'].includes(endpoint.sound) ||
       Object.keys(endpoint).some((key) => !['epoch', 'linkId', 'role', 'sound'].includes(key))
     )
       throw error('invalid', 'Expected a fixed viewer endpoint.');
@@ -137,10 +138,11 @@ class ReceiveLane {
     this.active?.inspect();
     return Object.freeze({
       occupied: !!this.active,
+      retiring: this.ending,
       disposed: this.disposed,
       pending: Object.freeze(
         Object.fromEntries(
-          (['rtc', 'playback', 'signal', 'cleanup'] as const).map((slot) => [
+          (['rtc', 'statistics', 'playback', 'signal', 'cleanup'] as const).map((slot) => [
             slot,
             this.slots.has(slot),
           ]),
@@ -173,11 +175,14 @@ class ReceiveLane {
     const raw = this.options.createRtc(configuration);
     if (rawPeers.has(raw)) throw error('invalid', 'Receiver requires a fresh native peer.');
     rawPeers.add(raw);
+    const getStats = raw.getStats?.bind(raw);
     return {
       get connectionState() {
         return raw.connectionState;
       },
       getConfiguration: raw.getConfiguration.bind(raw),
+      ...(raw.setConfiguration && { setConfiguration: raw.setConfiguration.bind(raw) }),
+      ...(getStats && { getStats: () => this.run('statistics', getStats) }),
       getTransceivers: raw.getTransceivers.bind(raw),
       addTransceiver: raw.addTransceiver.bind(raw),
       addEventListener: raw.addEventListener.bind(raw),
@@ -190,8 +195,8 @@ class ReceiveLane {
       addIceCandidate: (...args) => this.run('rtc', () => raw.addIceCandidate(...args)),
     };
   }
-  createElement(): ScreenPlaybackElement {
-    const raw = this.options.createElement();
+  createElement(linkId: string): ScreenPlaybackElement {
+    const raw = this.options.createElement(linkId);
     if (rawElements.has(raw) || !raw.paused || raw.srcObject !== null)
       throw error('invalid', 'Receiver requires a fresh paused empty element.');
     rawElements.add(raw);
@@ -317,6 +322,7 @@ class ReceiveLink {
     this.trackTimer = setTimeout(() => this.end('tracks-timeout'), this.lane.trackTimeout);
     const peer = new ScreenPeer({
       iceServers: this.options.iceServers,
+      currentIceServers: this.options.currentIceServers,
       endpoint: this.options.endpoint,
       lifecycle: this.lifecycle,
       now: this.lane.now,
@@ -427,7 +433,7 @@ class ReceiveLink {
       lifecycle: this.lifecycle,
       video: this.video,
       audio: this.audio ?? null,
-      createElement: () => this.lane.createElement(),
+      createElement: () => this.lane.createElement(this.options.endpoint.linkId),
       createStream: (tracks) => this.lane.createStream(tracks),
       onStopIncoming: (reason) => this.end(reason),
       onError: (cause) => this.lane.report(cause),
@@ -452,6 +458,9 @@ class ReceiveLink {
       if (this.state.playback !== playback) this.update({ playback });
     }
     return this.state;
+  }
+  inspectMedia() {
+    return this.peer?.inspectMedia() ?? null;
   }
   subscribe(listener: (state: ScreenReceiveState) => void) {
     this.check();
@@ -583,6 +592,7 @@ class ReceiveLink {
 export type ScreenReceiveHandle = Pick<
   ReceiveLink,
   | 'inspect'
+  | 'inspectMedia'
   | 'subscribe'
   | 'receive'
   | 'setOutput'
@@ -596,12 +606,75 @@ export type ScreenReceiveHandle = Pick<
   | 'dispose'
   | 'adoptRenewal'
 >;
-export type ScreenReceiveLane = Readonly<Pick<ReceiveLane, 'open' | 'inspect' | 'dispose'>>;
+export type ScreenReceiveLane = Readonly<{
+  open(options: ScreenReceiveOptions): ScreenReceiveHandle;
+  inspect(): Readonly<{
+    occupied: boolean;
+    activeCount: number;
+    capacity: null;
+    disposed: boolean;
+    pending: Readonly<Record<Slot, boolean>>;
+  }>;
+  dispose(): void;
+}>;
 export function createScreenReceiveLane(options: LaneOptions): ScreenReceiveLane {
-  const lane = new ReceiveLane(options);
+  const lanes = new Map<string, ReceiveLane>();
+  const maxRetiredPending = 9;
+  let disposed = false;
+  const prune = () => {
+    let retiredPending = 0;
+    for (const [linkId, lane] of lanes) {
+      const state = lane.inspect();
+      // A close observer can reenter before the cleanup promise has registered its slot.
+      if (state.retiring) retiredPending++;
+      else if (state.occupied) continue;
+      else if (Object.values(state.pending).some(Boolean)) retiredPending++;
+      else {
+        lane.dispose();
+        lanes.delete(linkId);
+      }
+    }
+    return retiredPending;
+  };
   return Object.freeze({
-    open: lane.open.bind(lane),
-    inspect: lane.inspect.bind(lane),
-    dispose: lane.dispose.bind(lane),
+    open: (request: ScreenReceiveOptions) => {
+      if (disposed) throw error('closed', 'Receive lane was disposed.');
+      const retiredPending = prune();
+      const linkId = request.endpoint.linkId;
+      if (lanes.has(linkId)) throw error('busy', 'This screen link already has a receiver.');
+      if (retiredPending >= maxRetiredPending)
+        throw error('busy', 'Wait for outstanding work on stopped screen links to finish.');
+      const lane = new ReceiveLane(options);
+      lanes.set(linkId, lane);
+      try {
+        return lane.open(request);
+      } catch (cause) {
+        prune();
+        throw cause;
+      }
+    },
+    inspect: () => {
+      prune();
+      const states = [...lanes.values()].map((lane) => lane.inspect());
+      const pending = Object.freeze({
+        rtc: states.some((state) => state.pending.rtc),
+        statistics: states.some((state) => state.pending.statistics),
+        playback: states.some((state) => state.pending.playback),
+        signal: states.some((state) => state.pending.signal),
+        cleanup: states.some((state) => state.pending.cleanup),
+      });
+      return Object.freeze({
+        occupied: states.some((state) => state.occupied),
+        activeCount: states.filter((state) => state.occupied).length,
+        capacity: null,
+        disposed,
+        pending,
+      });
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      for (const lane of lanes.values()) lane.dispose();
+    },
   });
 }

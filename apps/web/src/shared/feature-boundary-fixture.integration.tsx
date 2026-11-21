@@ -23,12 +23,18 @@ const screenState = {
   error: '',
   shares: [],
   watching: null,
+  watchingShareIds: [],
+  selectingShareId: null,
+  layout: 'focus',
   playback: '',
+  playbackMuted: false,
+  playbackVolume: 1,
   hidden: false,
   label: '',
   viewers: 0,
   prepared: false,
   ownShareId: null,
+  setupRequested: false,
 };
 const call = {
   get voice() {

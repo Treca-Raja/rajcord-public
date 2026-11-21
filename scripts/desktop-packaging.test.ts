@@ -30,6 +30,7 @@ it.each([
   'dist/main.js',
   'dist/preload.js',
   'dist/picker-preload.js',
+  'dist/window-audio-process.ps1',
   'dist/screen-picker.js',
   'dist/native-capture.js',
   'dist/screen-ipc.js',
@@ -42,6 +43,11 @@ it.each([
   'node_modules/electron-updater/out/main.js',
 ])('preserves desktop runtime and production dependencies: %s', (file) => {
   expect(excluded(file)).toBe(false);
+});
+
+it('unpacks the Windows identity helper so PowerShell can read it', () => {
+  const config = require('./electron-builder.cjs') as { asarUnpack: string[] };
+  expect(config.asarUnpack).toContain('dist/window-audio-process.ps1');
 });
 
 it.each([
