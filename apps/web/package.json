@@ -16,7 +16,7 @@
     "@tricord/ui": "workspace:*",
     "emoji-regex": "10.6.0",
     "livekit-client": "^2.23.0",
-    "lucide-react": "^1.71.0",
+    "lucide-react": "^1.75.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "socket.io-client": "^4.8.1"
