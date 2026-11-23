@@ -2103,6 +2103,12 @@ The shared queue reached 250 ms. Screen and voice audio continued to deliver sam
 | Failed           | Consistent improvement in presented FPS under severe sustained loss. Two- and three-viewer recovery exceeded 30 seconds in the recorded saturated-host trials. The broader browser run ended without a result.                                                                                                            |
 | Not Yet Verified | Actual clean installation, physical AMD AMF, WAN playback and listening, and calibrated full-display playout and attended Opus on dedicated coturn transports with the final standalone build.                                                                                                                            |
 
+## PR #97 release review follow-up
+
+The published Windows v0.1.1 bridge supports authorized Chromium sharing. The review fix preserves its exact preparation payload, desktop handoff and cancellation alongside the OBS bridge. Tests cover successful v1 publication, rejected handoff, Stop preserving voice, and browser settings for both desktop bridge versions. The browser settings checks simulate the bridges. Clean installed-client playback remains a manual check.
+
+The original server image contained `ws` 8.22.2 on the direct voice gateway path and `ws` 8.21.3 through Socket.IO. [Dependabot #90](https://github.com/Treca-Raja/rajcord-public/pull/90) updates the direct dependency. The workspace override also updates the transitive copies for the [8.23.0 memory exhaustion fix](https://github.com/websockets/ws/releases/tag/8.23.0). The image regression rejected the original dependency inventory. The rebuilt server image contained only `ws` 8.23.0 and passed its disposable image and database backup/restore checks.
+
 ## OBS screen sender qualification history on Windows
 
 ### OBS audio startup and source provenance — 2026-11-22
