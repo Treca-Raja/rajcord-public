@@ -144,6 +144,7 @@ export class ObsPeer extends EventTarget implements ScreenRtcPeer {
       deadline: this.deadline(),
       video: this.video,
     });
+    if (!this.opening) throw new Error('The native screen viewer ended.');
     this.description = parseScreenDescription(sdp, 'offer');
     return { type: 'offer', sdp };
   }
@@ -172,7 +173,7 @@ export class ObsPeer extends EventTarget implements ScreenRtcPeer {
   }
 
   async renew(deadline: number) {
-    if (this.opening && this.connectionState !== 'closed')
+    if (this.description && this.connectionState !== 'closed')
       await this.command({ op: 'lease', deadline });
   }
 
@@ -180,8 +181,10 @@ export class ObsPeer extends EventTarget implements ScreenRtcPeer {
     if (this.connectionState === 'closed') return;
     this.connectionState = 'closed';
     this.removeEvents();
-    if (this.opening)
+    if (this.opening) {
+      this.opening = false;
       // The main process also expires the viewer independently of renderer execution.
       void this.command({ op: 'close' }).catch(() => {});
+    }
   }
 }

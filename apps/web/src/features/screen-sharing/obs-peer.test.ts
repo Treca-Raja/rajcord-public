@@ -3,6 +3,48 @@ import { expect, it, vi } from 'vitest';
 import { screenSdp } from '../../../../api/src/screen/signaling-fixture';
 import { ObsPeer } from './obs-peer';
 
+it('waits for native admission before renewing and cancels a pending restart on close', async () => {
+  let completeOffer!: (sdp: string) => void;
+  const invoke = vi.fn(async ({ op }: NativeScreenCommand) => {
+    if (op === 'open' || op === 'restart')
+      return new Promise<string>((resolve) => {
+        completeOffer = resolve;
+      });
+    return '';
+  });
+  const peer = new ObsPeer(
+    { nativeCommand: invoke, onNativeEvent: () => () => {} },
+    {},
+    'tag',
+    'link',
+    () => 45000,
+  );
+  const { sender } = peer.addTransceiver({ kind: 'video' } as MediaStreamTrack, {
+    direction: 'sendonly',
+  });
+  await sender.setParameters(sender.getParameters());
+  const opening = peer.createOffer();
+  await peer.renew(44000);
+  expect(invoke.mock.calls.map(([request]) => request.op)).toEqual(['open']);
+
+  completeOffer(screenSdp('offer', false));
+  await opening;
+  await peer.renew(44000);
+  const restarting = expect(peer.createOffer({ iceRestart: true })).rejects.toThrow(
+    'The native screen viewer ended.',
+  );
+  await peer.renew(45000);
+  peer.close();
+  completeOffer(screenSdp('offer', false));
+  await restarting;
+  expect(invoke.mock.calls.map(([request]) => request.op)).toEqual([
+    'open',
+    'lease',
+    'restart',
+    'close',
+  ]);
+});
+
 it('applies quality changed during negotiation using the native canvas instead of the preview', async () => {
   const closeEvents = vi.fn();
   const invoke = vi.fn(async (request: NativeScreenCommand) =>
