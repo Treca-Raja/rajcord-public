@@ -24,11 +24,7 @@ $locator = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer
 $vs = & $locator -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $tools = Get-ChildItem -LiteralPath (Join-Path $vs 'VC/Tools/MSVC') -Directory | Sort-Object Name -Descending | Select-Object -First 1
 $dumpbin = Join-Path $tools.FullName 'bin/Hostx64/x64/dumpbin.exe'
-$redistributable = Get-ChildItem -LiteralPath (Join-Path $vs 'VC/Redist/MSVC') -Directory |
-  Where-Object Name -Match '^14\.\d+\.\d+$' |
-  Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
-if (!$redistributable) { throw 'Install the Visual Studio x64 VC143 redistributable files.' }
-$crt = Join-Path $redistributable.FullName 'x64/Microsoft.VC143.CRT'
+$crt = & (Join-Path $PSScriptRoot 'vc-runtime.ps1') -VisualStudioPath $vs
 $imports = [Collections.Generic.Queue[string]]::new()
 function Copy-TransportFile([string]$Source, [string]$Relative) {
   if (!(Test-Path -LiteralPath $Source -PathType Leaf)) { throw "Missing OBS transport component: $Relative" }
@@ -39,8 +35,8 @@ function Copy-TransportFile([string]$Source, [string]$Relative) {
   $imports.Enqueue($Source)
 }
 Copy-TransportFile "$dist/rajcord-obs.exe" 'bin/rajcord-obs.exe'
-foreach ($dll in @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
-  Copy-TransportFile "$crt/$dll" "bin/$dll"
+foreach ($dll in $crt) {
+  Copy-TransportFile $dll "bin/$(Split-Path -Leaf $dll)"
 }
 while ($imports.Count) {
   $binary = $imports.Dequeue()

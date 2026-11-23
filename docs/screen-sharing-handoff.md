@@ -10,7 +10,7 @@ Viewers choose a stream and its playback controls. Every outgoing link uses the 
 
 ### Build and package the Windows sender
 
-Use Windows x64, PowerShell 7, Git, CMake, Visual Studio x64 C++ tools with MSVC v143 14.44 and the VC143 redistributable, and Windows SDK 26100. Use a CMake release that supports the installed Visual Studio generator.
+Use Windows x64, PowerShell 7, Git, CMake, Visual Studio x64 C++ tools with MSVC v143 14.44 and the x64 Visual C++ v14 redistributable, and Windows SDK 26100. Use a CMake release that supports the installed Visual Studio generator.
 
 ```powershell
 pnpm desktop:obs:setup

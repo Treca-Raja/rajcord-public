@@ -18,8 +18,9 @@ $locator = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer
 if (!(Test-Path -LiteralPath $locator)) { throw 'Install Visual Studio x64 C++ Build Tools and Windows SDK 26100.' }
 $vs = & $locator -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (!$vs -or !(Get-ChildItem -LiteralPath "$vs/VC/Tools/MSVC" -Directory -Filter '14.44.*')) {
-  throw 'Install the MSVC v143 14.44 toolset and the x64 VC143 redistributable.'
+  throw 'Install the MSVC v143 14.44 toolset and the x64 v14 redistributable.'
 }
+& (Join-Path $PSScriptRoot 'vc-runtime.ps1') -VisualStudioPath $vs | Out-Null
 if (!(Test-Path -LiteralPath "${env:ProgramFiles(x86)}/Windows Kits/10/Include/10.0.26100.0/um/audioclientactivationparams.h")) {
   throw 'Install Windows SDK 10.0.26100.0 with the Windows desktop headers.'
 }

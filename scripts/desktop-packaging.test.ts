@@ -82,6 +82,32 @@ it('unpacks the Windows identity helper so PowerShell can read it', () => {
   expect(config.asarUnpack).toContain('dist/window-audio-process.ps1');
 });
 
+it.skipIf(process.platform !== 'win32').each([
+  ['14.44.35112', 'Microsoft.VC143.CRT'],
+  ['14.52.37025', 'Microsoft.VC145.CRT'],
+])('locates the complete x64 runtime in Visual Studio layout %s', (version, folder) => {
+  const fixture = mkdtempSync(path.join(tmpdir(), 'rajcord-vc-runtime-'));
+  const selector = fileURLToPath(
+    new URL('../apps/desktop/native/obs/vc-runtime.ps1', import.meta.url),
+  );
+  const names = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'];
+  try {
+    const crt = path.join(fixture, 'VC', 'Redist', 'MSVC', version, 'x64', folder);
+    mkdirSync(crt, { recursive: true });
+    const files = names.map((name) => path.join(crt, name));
+    for (const file of files) writeFileSync(file, '');
+    const args = ['-NoProfile', '-File', selector, '-VisualStudioPath', fixture];
+    const resolved = execFileSync('pwsh', args, { encoding: 'utf8' }).trim().split(/\r?\n/);
+    expect(resolved.map((file) => path.normalize(file))).toEqual(files);
+    rmSync(files[0]!);
+    expect(() => execFileSync('pwsh', args, { stdio: 'pipe' })).toThrow(
+      'Install the complete Visual Studio x64 v14 redistributable files.',
+    );
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 it.each([
   'dist/picker/picker.html',
   'dist/picker/picker.css',
