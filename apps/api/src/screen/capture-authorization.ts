@@ -71,7 +71,7 @@ export class CaptureAuthorizationService {
       approved(await identity(voice.pool, token)),
     private matchBinding: CaptureBindingMatcher = () => null,
     private matchPublication: CapturePublicationMatcher = () => null,
-    private nativeViewers?: (share: object, userId: string) => NativeViewerSnapshot,
+    private nativeViewers?: (share: object, userId: string) => Promise<NativeViewerSnapshot>,
   ) {
     this.time = now();
     this.unsubscribe = voice.onLeaseInvalidated((lease) => {
@@ -407,6 +407,18 @@ export class CaptureAuthorizationService {
         (revision === publication.revision && fingerprint !== publication.fingerprint)
       )
         throw denied();
+      let native: NativeViewerSnapshot | undefined;
+      if (body.nativeViewers === 1) {
+        if (!this.nativeViewers) throw denied();
+        native = await this.nativeViewers(own.identity, auth.user.id);
+        current();
+        if (
+          this.publications.get(auth.user.id) !== publication ||
+          this.ownPublication(publication)?.identity !== own.identity ||
+          !this.current(publication)
+        )
+          throw denied();
+      }
       if (revision !== publication.revision) {
         publication.expires = Math.min(own.expires, auth.expiresAt.getTime());
         publication.checkedExpires = publication.expires;
@@ -421,15 +433,7 @@ export class CaptureAuthorizationService {
           auth.expiresAt.getTime(),
         ) - this.now();
       if (remainingMs <= 0) throw denied();
-      if (body.nativeViewers === 1) {
-        if (!this.nativeViewers) throw denied();
-        return {
-          id: publication.id,
-          remainingMs,
-          native: this.nativeViewers(own.identity, auth.user.id),
-        };
-      }
-      return { id: publication.id, remainingMs };
+      return { id: publication.id, remainingMs, ...(native ? { native } : {}) };
     });
   }
   cancelPublication(token: string, value: unknown, csrf: unknown) {

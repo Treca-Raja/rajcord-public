@@ -174,16 +174,25 @@ export class ScreenService {
     const iceServers = screenRelayServers(this.voice.config, binding.userId, this.now());
     return iceServers ? { iceServers } : {};
   }
-  nativeViewers(shareIdentity: object, userId: string) {
+  async nativeViewers(shareIdentity: object, userId: string) {
     const publisher = this.bindings.get(userId);
     if (!publisher || publisher.share !== shareIdentity || !this.current(publisher)) throw denied();
+    const links = [...this.links.values()]
+      .filter(
+        ({ share, viewer, expires }) =>
+          share === shareIdentity && expires > this.now() && this.current(viewer),
+      )
+      .slice(0, SCREEN_NATIVE_VIEWER_LIMIT);
+    if (links.length)
+      await this.endpoints(publisher, new Set(links.map(({ viewer }) => viewer)), true);
+    if (publisher.share !== shareIdentity || !this.current(publisher)) throw denied();
     const viewers = [];
-    for (const { value, viewer, share, expires, negotiation } of this.links.values()) {
-      if (share !== shareIdentity || !this.current(viewer)) continue;
+    for (const link of links) {
+      const { value, viewer, share, expires, negotiation } = link;
+      if (this.links.get(value.id) !== link || !this.current(viewer)) continue;
       const remainingMs = Math.min(expires, viewer.lease.expires, share.expires) - this.now();
       if (remainingMs > 0)
         viewers.push({ id: value.id, remainingMs, answerHash: negotiation?.answerHash ?? null });
-      if (viewers.length === SCREEN_NATIVE_VIEWER_LIMIT) break;
     }
     return {
       viewers,

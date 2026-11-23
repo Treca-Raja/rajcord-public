@@ -339,7 +339,7 @@ async function signalingFixture() {
   return { ...f, publisher, viewer, p, v, share, grant, offer, answer, candidate };
 }
 describe('authorized signaling and private delivery fences', () => {
-  it('binds native DTLS answers to a selected viewer and removes them after disconnect', async () => {
+  it('binds native DTLS answers to an authorized viewer and removes a revoked session', async () => {
     const f = await signalingFixture();
     const publisher = f.publisher.lease;
     const own = f.screen.capturePublication(
@@ -352,17 +352,19 @@ describe('authorized signaling and private delivery fences', () => {
       f.share.sound,
     )!;
     const snapshot = () => f.screen.nativeViewers(own.identity, publisher.userId);
-    expect(snapshot().viewers).toMatchObject([{ id: f.grant.link.id, answerHash: null }]);
-    expect(() => f.screen.nativeViewers(own.identity, f.viewer.lease.userId)).toThrow();
+    expect((await snapshot()).viewers).toMatchObject([{ id: f.grant.link.id, answerHash: null }]);
+    await expect(f.screen.nativeViewers(own.identity, f.viewer.lease.userId)).rejects.toThrow();
     await f.screen.relay(f.publisher.caller, f.offer, () => true);
     await expect(f.screen.relay(f.viewer.caller, f.answer, () => false)).rejects.toThrow();
-    expect(snapshot().viewers[0]?.answerHash).toBeNull();
+    expect((await snapshot()).viewers[0]?.answerHash).toBeNull();
     await f.screen.relay(f.viewer.caller, f.answer, () => true);
-    expect(snapshot().viewers[0]?.answerHash).toBe(
+    expect((await snapshot()).viewers[0]?.answerHash).toBe(
       createHash('sha256').update(f.answer.payload.sdp).digest('hex'),
     );
-    f.viewer.connected = false;
-    expect(snapshot().viewers).toEqual([]);
+    f.viewer.auth.revoked = true;
+    expect(f.viewer.lease.revoked).toBe(false);
+    expect((await snapshot()).viewers).toEqual([]);
+    await expect(f.screen.relay(f.viewer.caller, f.answer, () => true)).rejects.toThrow();
   });
   it('delivers private lifecycle replies before releasing the lease-sensitive commit', async () => {
     const f = await signalingFixture(),
