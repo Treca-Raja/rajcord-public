@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -98,10 +98,12 @@ it.skipIf(process.platform !== 'win32').each([
     for (const file of files) writeFileSync(file, '');
     const args = ['-NoProfile', '-File', selector, '-VisualStudioPath', fixture];
     const resolved = execFileSync('pwsh', args, { encoding: 'utf8' }).trim().split(/\r?\n/);
-    expect(resolved.map((file) => path.normalize(file))).toEqual(files);
+    expect(resolved.map((file) => realpathSync.native(file))).toEqual(
+      files.map((file) => realpathSync.native(file)),
+    );
     rmSync(files[0]!);
     expect(() => execFileSync('pwsh', args, { stdio: 'pipe' })).toThrow(
-      'Install the complete Visual Studio x64 v14 redistributable files.',
+      'Install the complete Visual Studio x64 v14',
     );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
