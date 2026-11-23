@@ -1,0 +1,105 @@
+--- a/plugins/win-capture/plugin-main.c
++++ b/plugins/win-capture/plugin-main.c
+@@ -146,7 +146,7 @@
+ 
+ 	char *config_path = obs_module_config_path(NULL);
+ 
+-	init_hook_files();
++	/* Load the private runtime hook without global Vulkan registration. */
+ 	init_hooks_thread = CreateThread(NULL, 0, init_hooks, config_path, 0, NULL);
+ 	obs_register_source(&game_capture_info);
+ 
+--- a/plugins/win-capture/game-capture.c
++++ b/plugins/win-capture/game-capture.c
+@@ -119,6 +119,9 @@
+ typedef DPI_AWARENESS_CONTEXT(WINAPI *PFN_GetWindowDpiAwarenessContext)(HWND);
+ 
+ struct game_capture {
++	HWND fixed_window;
++	HANDLE fixed_process;
++	DWORD fixed_thread;
+ 	obs_source_t *source;
+ 	obs_source_t *audio_source;
+ 
+@@ -537,6 +540,10 @@
+ 	bool reset_capture = false;
+ 	const char *window = obs_data_get_string(settings, SETTING_CAPTURE_WINDOW);
+ 
++	gc->fixed_window = (HWND)(uintptr_t)obs_data_get_int(settings, "rajcord_window");
++	gc->fixed_process = (HANDLE)(uintptr_t)obs_data_get_int(settings, "rajcord_process");
++	gc->fixed_thread = (DWORD)obs_data_get_int(settings, "rajcord_thread");
++
+ 	get_config(&cfg, settings, window);
+ 	reset_capture = capture_needs_reset(&cfg, &gc->config);
+ 
+@@ -545,7 +552,7 @@
+ 	if (cfg.mode == CAPTURE_MODE_HOTKEY && gc->config.mode != CAPTURE_MODE_HOTKEY) {
+ 		gc->activate_hook = false;
+ 	} else {
+-		gc->activate_hook = !!window && !!*window;
++		gc->activate_hook = gc->fixed_window || (window && *window);
+ 	}
+ 
+ 	free_config(&gc->config);
+@@ -1154,11 +1161,21 @@
+ 	}
+ }
+ 
++static bool fixed_window_valid(const struct game_capture *gc)
++{
++	DWORD pid = 0;
++	return gc->fixed_process && WaitForSingleObject(gc->fixed_process, 0) == WAIT_TIMEOUT &&
++	       GetWindowThreadProcessId(gc->fixed_window, &pid) == gc->fixed_thread &&
++	       pid && pid == GetProcessId(gc->fixed_process);
++}
++
+ static void get_selected_window(struct game_capture *gc)
+ {
+ 	HWND window;
+ 
+-	if (dstr_cmpi(&gc->class, "dwm") == 0) {
++	if (gc->fixed_window) {
++		window = fixed_window_valid(gc) ? gc->fixed_window : NULL;
++	} else if (dstr_cmpi(&gc->class, "dwm") == 0) {
+ 		wchar_t class_w[512];
+ 		os_utf8_to_wcs(gc->class.array, 0, class_w, 512);
+ 		window = FindWindowW(class_w, NULL);
+@@ -1199,7 +1216,7 @@
+ 			return;
+ 		}
+ 
+-		if (!init_hook(gc)) {
++		if ((gc->fixed_window && !fixed_window_valid(gc)) || !init_hook(gc)) {
+ 			stop_capture(gc);
+ 		}
+ 	} else {
+@@ -1267,6 +1284,10 @@
+ 
+ static inline enum capture_result init_capture_data(struct game_capture *gc)
+ {
++	if (gc->fixed_window &&
++	    (!fixed_window_valid(gc) || (HWND)(uintptr_t)gc->global_hook_info->window != gc->fixed_window))
++		return CAPTURE_FAIL;
++
+ 	gc->cx = gc->global_hook_info->cx;
+ 	gc->cy = gc->global_hook_info->cy;
+ 	gc->pitch = gc->global_hook_info->pitch;
+@@ -1285,7 +1306,7 @@
+ 
+ 		/* if there's an error, just override.  some windows don't play
+ 		 * nice. */
+-		if (init_data_map(gc, retry_hwnd)) {
++		if (!gc->fixed_window && init_data_map(gc, retry_hwnd)) {
+ 			error = 0;
+ 		}
+ 	}
+@@ -1883,6 +1904,9 @@
+ 	struct game_capture *gc = data;
+ 	if (!gc->texture || !gc->active)
+ 		return;
++	if (gc->fixed_window &&
++	    (!fixed_window_valid(gc) || (HWND)(uintptr_t)gc->global_hook_info->window != gc->fixed_window))
++		return;
+ 
+ 	const bool allow_transparency = gc->config.allow_transparency;
+ 	gs_effect_t *const effect = obs_get_base_effect(allow_transparency ? OBS_EFFECT_DEFAULT : OBS_EFFECT_OPAQUE);

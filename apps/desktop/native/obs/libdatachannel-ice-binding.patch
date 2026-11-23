@@ -1,0 +1,17 @@
+--- a/src/impl/icetransport.cpp
++++ b/src/impl/icetransport.cpp
+@@ -519,6 +519,14 @@
+ 
+ 	if (config.enableIceUdpMux) {
+ 		PLOG_WARNING << "ICE UDP mux is not available with libnice";
++	}
++
++	if (config.bindAddress) {
++		NiceAddress address;
++		nice_address_init(&address);
++		if (!nice_address_set_from_string(&address, config.bindAddress->c_str()) ||
++		    !nice_agent_add_local_address(mNiceAgent.get(), &address))
++			throw std::invalid_argument("Could not bind the ICE agent to the configured address");
+ 	}
+ 
+ 	// Randomize order

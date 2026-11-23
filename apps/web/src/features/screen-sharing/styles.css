@@ -594,19 +594,6 @@
 .screen-watch-heading strong {
   margin: 0;
 }
-.screen-watch-quality {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
-}
-.screen-watch-quality label {
-  gap: 5px;
-}
-.screen-watch-quality select {
-  min-height: 34px;
-  padding-inline: 7px;
-  font-size: 12px;
-}
 .screen-share-list {
   display: flex;
   min-width: 0;
@@ -1278,9 +1265,6 @@
   }
   .screen-quality label:last-child {
     grid-column: auto;
-  }
-  .screen-watch-quality {
-    grid-template-columns: minmax(0, 1fr);
   }
   .screen-watch-heading {
     align-items: flex-start;

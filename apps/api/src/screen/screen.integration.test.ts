@@ -281,7 +281,7 @@ it('binds real approved sessions and rejects pending, other-account and other-se
 
 it('authorizes both real leases without extending voice and rejects cross-channel selection', async () => {
   const peers = await linked();
-  expect(peers.link.link.videoBitrate).toBe(4000000);
+  expect(peers.link.link.videoBitrate).toBe(peers.share.videoBitrate);
   expect(JSON.stringify(peers.link)).not.toMatch(/token|credential|sessionId|leaseId|sourceName/);
   const stranger = await bind(owner, otherChannel);
   await expect(

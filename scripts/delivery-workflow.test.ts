@@ -122,6 +122,7 @@ describe('verification and main-only delivery boundary', () => {
       'pnpm typecheck',
       'pnpm test',
       'pnpm build',
+      'pnpm desktop:obs:setup',
       'pnpm desktop:package',
     ]) {
       const step = build.steps?.find((step) => step.run === command);
@@ -129,6 +130,10 @@ describe('verification and main-only delivery boundary', () => {
       expect(step?.if, command).toBeUndefined();
       expect(step?.['continue-on-error'], command).not.toBe(true);
     }
+    expect(build.steps?.some((step) => step.uses?.startsWith('actions/upload-artifact'))).toBe(
+      false,
+    );
+    expect(job(desktop, 'release-policy').steps?.[0]?.run).toContain('OBS redistribution review');
   });
 
   it('verifies current main even when production delivery is disabled', () => {

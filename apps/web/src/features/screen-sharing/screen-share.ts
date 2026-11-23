@@ -41,7 +41,6 @@ export function share(value: unknown): ScreenShare {
         ? { resolution: data.resolution, frameRate: data.frameRate }
         : {}),
     },
-    viewer: { profile: 'smooth', videoBitrate: 8000000 },
   }).publisher;
   return Object.freeze({
     ...quality,

@@ -67,6 +67,7 @@ export function installNativeCapture(configuration: Options) {
   const contents = owner.webContents,
     now = options.now ?? Date.now;
   const used = new WeakSet<object>();
+  let picked: { intent: object; source: NativeCaptureSource } | undefined;
   let navigation = 0,
     disposed = false,
     authorityBroken = false;
@@ -188,6 +189,7 @@ export function installNativeCapture(configuration: Options) {
       now,
     });
   const invalidate = () => {
+    picked = undefined;
     policy.invalidate();
     if (active) active.respond(null);
   };
@@ -316,6 +318,7 @@ export function installNativeCapture(configuration: Options) {
           }
           // The pinned runtime accepts Chromium application-loopback device IDs;
           // Electron's public type only lists whole-system loopback strings.
+          picked = { intent: intent.intent, source: grant.video };
           respond({ video, ...(grant.audio ? { audio: grant.audio } : {}) } as Streams);
         })()
           .catch(() => {
@@ -374,5 +377,13 @@ export function installNativeCapture(configuration: Options) {
   owner.once('closed', dispose);
   options.shutdown?.on('before-quit', invalidate);
   options.shutdown?.on('will-quit', dispose);
-  return { invalidate, dispose, context: document };
+  return {
+    invalidate,
+    dispose,
+    context: document,
+    hasNativeMonitor: () =>
+      !!picked?.source.nativeCaptureIdentity && picked.source.id.startsWith('screen:'),
+    selectedSource: (intent: TrustedCaptureIntent) =>
+      picked?.intent === intent.intent ? picked.source : undefined,
+  };
 }

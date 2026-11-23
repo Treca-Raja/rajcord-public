@@ -29,11 +29,34 @@ export interface DesktopCapturePickerBridge {
   select(choice: DesktopCaptureChoice): Promise<DesktopPickerAck<{ selected: true }>>;
   cancel(request: DesktopCaptureCancel): Promise<DesktopPickerAck<{ cancelled: true }>>;
 }
+export const DESKTOP_SCREEN_PROTOCOL_VERSION = 2;
+export const OBS_ENCODERS = ['nvenc', 'amf', 'x264'] as const;
+export type ObsEncoder = (typeof OBS_ENCODERS)[number];
+export type ObsEncoderChoice = 'auto' | ObsEncoder;
 export type DesktopScreenPreparation = {
   clientIntentRef: string;
   epoch: string;
   sound: DesktopCaptureSound;
+  encoder: ObsEncoderChoice;
 };
+export type NativeScreenVideo = { width: number; height: number; fps: number; bitrate: number };
+export type NativeScreenOperation =
+  | {
+      op: 'open' | 'restart';
+      video: NativeScreenVideo;
+      deadline: number;
+    }
+  | { op: 'local' | 'answer'; sdp: string }
+  | { op: 'ice'; candidate: import('./screen.js').ScreenIce }
+  | { op: 'quality'; video: NativeScreenVideo }
+  | { op: 'lease'; deadline: number }
+  | { op: 'close' };
+export type NativeScreenCommand = { tag: string; linkId: string } & NativeScreenOperation;
+export type NativeScreenEvent = { tag: string; linkId: string } & (
+  | { encoder: ObsEncoder }
+  | { state: 'connecting' | 'connected' | 'disconnected' | 'failed' }
+  | { ice: string; index: number }
+);
 export type DesktopScreenStatus = {
   clientIntentRef: string;
   ready: boolean;
@@ -42,10 +65,11 @@ export type DesktopScreenStatus = {
 };
 export interface DesktopScreenBridge {
   capabilities(): Promise<{
-    version: 1;
+    version: typeof DESKTOP_SCREEN_PROTOCOL_VERSION;
     systemSound: boolean;
     applicationSound?: boolean;
     sourceSound?: boolean;
+    obs: { available: boolean; encoders: ObsEncoder[]; reason?: string };
   }>;
   prepare(request: DesktopScreenPreparation): Promise<DesktopScreenStatus>;
   handoff(request: {
@@ -54,6 +78,8 @@ export interface DesktopScreenBridge {
     sourceGeneration: number;
   }): Promise<DesktopScreenStatus>;
   cancel(request: { clientIntentRef: string }): Promise<void>;
-  onStop(listener: (clientIntentRef: string) => void): () => void;
+  onStop(listener: (clientIntentRef: string, reason?: string) => void): () => void;
   onVisibility(listener: (visible: boolean) => void): () => void;
+  nativeCommand(request: NativeScreenCommand): Promise<string>;
+  onNativeEvent(listener: (event: NativeScreenEvent) => void): () => void;
 }

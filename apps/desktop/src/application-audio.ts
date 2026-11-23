@@ -25,6 +25,14 @@ export async function applicationAudioSources(
   signal: AbortSignal,
 ): Promise<Map<string, ApplicationAudioSource>> {
   if (!applicationAudioSupported()) return new Map();
+  return windowProcessSources(ids, signal);
+}
+
+export async function windowProcessSources(
+  ids: readonly string[],
+  signal: AbortSignal,
+): Promise<Map<string, ApplicationAudioSource>> {
+  if (process.platform !== 'win32') return new Map();
   const windows = ids.filter((id) => /^window:[1-9]\d*:[01]$/.test(id));
   if (!windows.length) return new Map();
   const { stdout } = await execute(

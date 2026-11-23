@@ -3,29 +3,23 @@ import { applyScreenVideoPlan, screenVideoPlan, screenVideoRequest } from './scr
 
 const settings = { width: 1920, height: 1080, frameRate: 60 };
 const fixedChoice = { profile: 'smooth', resolution: 1080, frameRate: 60, videoBitrate: 8000000 };
-const fixedRequest = { revision: 1, publisher: fixedChoice, viewer: fixedChoice };
-it('uses actual legacy capture settings when a viewer requests an explicit format', () => {
+const fixedRequest = { revision: 1, publisher: fixedChoice };
+it('uses actual legacy capture settings when the broadcaster uses a preset', () => {
   const publisher = { profile: 'smooth', videoBitrate: 8000000 };
   expect(
-    screenVideoPlan(
-      { revision: 1, publisher, viewer: fixedChoice },
-      { width: 1600, height: 900, frameRate: 30 },
-    ),
+    screenVideoPlan({ revision: 1, publisher }, { width: 1600, height: 900, frameRate: 30 }),
   ).toMatchObject({
     qualification: 'experimental-ceilings',
     encoding: { maxBitrate: 8000000, maxFramerate: 30, scaleResolutionDownBy: 1 },
   });
 });
-it('preserves height and aspect ratio for explicit ultrawide shares and rejects a weaker source', () => {
+it('preserves explicit ultrawide height and caps delivery at the current source format', () => {
   expect(
     screenVideoPlan(fixedRequest, { ...settings, width: 2560 }).encoding.scaleResolutionDownBy,
   ).toBe(1);
-  expect(() => screenVideoPlan(fixedRequest, { ...settings, height: 720 })).toThrow(
-    'requires 1080p at 60 fps',
-  );
-  expect(() => screenVideoPlan(fixedRequest, { ...settings, frameRate: 50 })).toThrow(
-    'requires 1080p at 60 fps',
-  );
+  expect(
+    screenVideoPlan(fixedRequest, { width: 1280, height: 720, frameRate: 30 }).encoding,
+  ).toEqual({ scaleResolutionDownBy: 1, maxFramerate: 30, maxBitrate: 8000000 });
 });
 it.each(
   [480, 720, 1080].flatMap((resolution) =>
@@ -35,26 +29,13 @@ it.each(
   'selects $resolution p at $frameRate fps independently from bitrate and legacy profile',
   (choice) => {
     const quality = { profile: 'smooth', videoBitrate: 8000000, ...choice };
-    const plan = screenVideoPlan({ revision: 1, publisher: quality, viewer: quality }, settings);
+    const plan = screenVideoPlan({ revision: 1, publisher: quality }, settings);
     expect(plan.ceiling.height).toBe(choice.resolution);
     expect(plan.encoding.maxFramerate).toBe(choice.frameRate);
     expect(plan.encoding.maxBitrate).toBe(8000000);
     expect(plan.encoding.scaleResolutionDownBy).toBeCloseTo(1080 / choice.resolution);
   },
 );
-it('clamps independently to both endpoints and keeps selected dimensions on the immutable request', () => {
-  const publisher = { profile: 'smooth', videoBitrate: 8000000, resolution: 1080, frameRate: 30 };
-  const viewer = { profile: 'smooth', videoBitrate: 2000000, resolution: 720, frameRate: 60 };
-  const plan = screenVideoPlan({ revision: 1, publisher, viewer }, settings);
-  viewer.resolution = 480;
-  expect(plan.ceiling).toEqual({ width: 1280, height: 720, frameRate: 30 });
-  expect(plan.encoding).toEqual({
-    maxBitrate: 2000000,
-    maxFramerate: 30,
-    scaleResolutionDownBy: 1.5,
-  });
-  expect(plan.request.viewer.resolution).toBe(720);
-});
 it.each([
   { resolution: 720 },
   { frameRate: 60 },
@@ -65,39 +46,28 @@ it.each([
   { resolution: 720, frameRate: NaN },
 ])('rejects incomplete or unsupported explicit video controls %j', (choice) => {
   const quality = { profile: 'smooth', videoBitrate: 8000000, ...choice };
-  expect(() =>
-    screenVideoPlan({ revision: 1, publisher: quality, viewer: quality }, settings),
-  ).toThrow();
+  expect(() => screenVideoPlan({ revision: 1, publisher: quality }, settings)).toThrow();
 });
-const request = (
-  revision = 1,
-  publisher = 'smooth',
-  viewer = 'smooth',
-  pub = 8000000,
-  view = 4000000,
-) => ({
+const request = (revision = 1, profile = 'smooth', videoBitrate = 8000000) => ({
   revision,
-  publisher: { profile: publisher, videoBitrate: pub },
-  viewer: { profile: viewer, videoBitrate: view },
+  publisher: { profile, videoBitrate },
 });
-it('manual bitrate is independent of profile/frame ceilings and clamps both accounts', () => {
-  const low = screenVideoPlan(request(1, 'smooth', 'low', 8000000, 4000000), settings);
-  expect(low.encoding).toEqual({
-    maxBitrate: 4000000,
-    maxFramerate: 15,
-    scaleResolutionDownBy: 2.25,
-  });
-  expect(screenVideoPlan(request(1, 'smooth', 'low', 2000000, 8000000), settings).encoding).toEqual(
-    { ...low.encoding, maxBitrate: 2000000 },
-  );
-  expect(screenVideoPlan(request(1, 'high', 'smooth'), settings).encoding.maxFramerate).toBe(30);
-});
+it.each([2000000, 4000000, 6000000, 8000000, 12000000, 20000000])(
+  'uses the broadcaster bitrate %i independently of the selected format',
+  (bitrate) => {
+    expect(screenVideoPlan(request(1, 'low', bitrate), settings).encoding).toEqual({
+      maxBitrate: bitrate,
+      maxFramerate: 15,
+      scaleResolutionDownBy: 2.25,
+    });
+  },
+);
 it.each([
   { width: 320, height: 180, frameRate: 20 },
   { width: 640, height: 480, frameRate: 29.97 },
 ])('never upscales smaller source %j or invents temporal cadence', (source) => {
   expect(screenVideoPlan(request(), source).encoding).toEqual({
-    maxBitrate: 4000000,
+    maxBitrate: 8000000,
     maxFramerate: source.frameRate,
     scaleResolutionDownBy: 1,
   });
@@ -127,9 +97,9 @@ it.each([
   { ...request(), revision: 0 },
   { ...request(), revision: Number.MAX_SAFE_INTEGER + 1 },
   request(1, 'fake'),
-  request(1, 'smooth', 'smooth', 3000000),
+  request(1, 'smooth', 3000000),
   { ...request(), authorized: true },
-  { ...request(), viewer: { ...request().viewer, leaseId: 'fake' } },
+  { ...request(), viewer: { profile: 'low', videoBitrate: 2000000 } },
 ])('rejects malformed controls %#', (value) => {
   expect(() => screenVideoRequest(value)).toThrow();
 });
@@ -147,21 +117,15 @@ it('copies and freezes only numeric source data and explicit manual choices', ()
   const value = request(),
     source = { ...settings, deviceId: 'private-device' };
   const plan = screenVideoPlan(value, source);
-  value.viewer.videoBitrate = 2000000;
+  value.publisher.videoBitrate = 2000000;
   source.width = 1;
-  expect(plan.request.viewer.videoBitrate).toBe(4000000);
+  expect(plan.request.publisher.videoBitrate).toBe(8000000);
   expect(plan.source.width).toBe(1920);
   expect(Object.keys(plan.source).sort()).toEqual(['frameRate', 'height', 'width']);
   expect(
-    [
-      plan,
-      plan.encoding,
-      plan.source,
-      plan.request,
-      plan.request.publisher,
-      plan.request.viewer,
-      plan.ceiling,
-    ].every(Object.isFrozen),
+    [plan, plan.encoding, plan.source, plan.request, plan.request.publisher, plan.ceiling].every(
+      Object.isFrozen,
+    ),
   ).toBe(true);
 });
 function sender() {
@@ -199,16 +163,14 @@ it('confirms the fixed encoder policy and rejects a sender that silently substit
       () => {},
     );
   await expect(apply()).resolves.toMatchObject({ encoding: plan.encoding });
-  expect(native.getParameters().degradationPreference).toBe('maintain-framerate-and-resolution');
+  expect(native.getParameters().degradationPreference).toBe('maintain-framerate');
   for (const override of [
     { maxFramerate: 50 },
     { scaleResolutionDownBy: 1.5 },
     { maxBitrate: 4000000 },
-    {},
   ]) {
     const observed = native.getParameters();
     Object.assign(observed.encodings[0]!, override);
-    if (!Object.keys(override).length) observed.degradationPreference = 'balanced';
     native.getParameters.mockReturnValueOnce(native.getParameters()).mockReturnValueOnce(observed);
     await expect(apply()).rejects.toThrow('did not retain');
   }

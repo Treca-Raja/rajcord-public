@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0">
+  <Profiles>
+    <SystemCollector Id="SystemCollector" Name="Rajcord Audio Hang Kernel">
+      <BufferSize Value="256" />
+      <Buffers Value="128" />
+    </SystemCollector>
+    <EventCollector Id="AudioCollector" Name="Rajcord Audio Hang Events">
+      <BufferSize Value="256" />
+      <Buffers Value="64" />
+    </EventCollector>
+    <SystemProvider Id="AudioKernel">
+      <Keywords>
+        <Keyword Value="ProcessThread" />
+        <Keyword Value="Loader" />
+        <Keyword Value="CSwitch" />
+        <Keyword Value="ReadyThread" />
+      </Keywords>
+      <Stacks>
+        <Stack Value="CSwitch" />
+        <Stack Value="ReadyThread" />
+      </Stacks>
+    </SystemProvider>
+    <EventProvider Id="WindowsAudio" Name="AE4BD3BE-F36F-45B6-8D21-BDD6FB832853" Level="4" />
+    <EventProvider Id="AudioEngine" Name="AudioEngine" Level="3">
+      <Keywords>
+        <Keyword Value="0xffff" />
+      </Keywords>
+    </EventProvider>
+    <EventProvider Id="ServiceControlManager" Name="555908D1-A6D7-4695-8E1E-26931D2012F4" Level="4" />
+    <Profile Id="RajcordAudioHang.Light.Memory" Name="RajcordAudioHang" Description="Audio service events and scheduler stacks" DetailLevel="Light" LoggingMode="Memory">
+      <Collectors>
+        <SystemCollectorId Value="SystemCollector">
+          <SystemProviderId Value="AudioKernel" />
+        </SystemCollectorId>
+        <EventCollectorId Value="AudioCollector">
+          <EventProviders>
+            <EventProviderId Value="WindowsAudio" />
+            <EventProviderId Value="AudioEngine" />
+            <EventProviderId Value="ServiceControlManager" />
+          </EventProviders>
+        </EventCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

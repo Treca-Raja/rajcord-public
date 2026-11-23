@@ -33,6 +33,7 @@ export type CaptureSource = {
   previewDataUrl?: string;
   applicationAudioId?: `applicationLoopback:${number}`;
   applicationIdentity?: string;
+  nativeCaptureIdentity?: string;
 };
 export type CaptureGrant<T extends CaptureSource> = {
   video: T;
@@ -406,6 +407,7 @@ export class DesktopCapturePolicy<T extends CaptureSource> {
       const fresh = sources.find((s) => s.id === source.id && s.name === source.name);
       if (
         !fresh ||
+        fresh.nativeCaptureIdentity !== source.nativeCaptureIdentity ||
         (sound === 'application' &&
           (fresh.applicationAudioId !== source.applicationAudioId ||
             fresh.applicationIdentity !== source.applicationIdentity))

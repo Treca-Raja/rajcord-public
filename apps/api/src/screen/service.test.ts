@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { ScreenSelectRequest } from '@tricord/shared';
 import { SCREEN_RENEWAL_PAGE_SIZE } from '@tricord/shared';
 import { ScreenOutput } from './budget.js';
@@ -111,7 +111,7 @@ it('skips the voice lock on the second poll after a change in another channel', 
     deliver = vi.fn();
   const first = await f.screen.snapshot(f.viewer.caller, { epoch: f.v.epoch }, deliver);
   const known = {
-    shares: new Set(first.shares.map(({ id }) => id)),
+    shares: new Map(first.shares.map((share) => [share.id, share])),
     links: new Set([f.grant.link.id]),
   };
   const outsider = f.user(randomUUID()),
@@ -242,7 +242,7 @@ it('correlates main capture to the exact current S1 binding under the existing l
   expect(match()).toBeNull();
 });
 
-it('preserves independent resolution/fps choices and enforces each publisher ceiling', async () => {
+it('uses the publisher resolution and frame rate even for older select requests', async () => {
   const f = fixture(),
     publisher = f.user(),
     viewer = f.user();
@@ -265,7 +265,7 @@ it('preserves independent resolution/fps choices and enforces each publisher cei
     frameRate: 60,
   };
   const grant = await f.screen.select(viewer.caller, request);
-  expect(grant?.link.quality).toMatchObject({ resolution: 480, frameRate: 60 });
+  expect(grant?.link.quality).toMatchObject({ resolution: 720, frameRate: 60 });
   await expect(
     f.screen.select(viewer.caller, {
       ...request,
@@ -273,12 +273,7 @@ it('preserves independent resolution/fps choices and enforces each publisher cei
       revision: 2,
       resolution: 1080,
     }),
-  ).rejects.toMatchObject({ code: 'invalid' });
-  const snapshot = await f.screen.authorizeLink(viewer.caller, {
-    epoch: v.epoch,
-    linkId: grant!.link.id,
-  });
-  expect(snapshot.link.id).toBe(grant!.link.id);
+  ).resolves.toMatchObject({ link: { quality: { resolution: 720, frameRate: 60 } } });
 });
 it('rejects the old screen protocol explicitly', async () => {
   const f = fixture(),
@@ -344,6 +339,33 @@ async function signalingFixture() {
   return { ...f, publisher, viewer, p, v, share, grant, offer, answer, candidate };
 }
 describe('authorized signaling and private delivery fences', () => {
+  it('binds native DTLS answers to an authorized viewer and removes a revoked session', async () => {
+    const f = await signalingFixture();
+    const publisher = f.publisher.lease;
+    const own = f.screen.capturePublication(
+      publisher.userId,
+      publisher.sessionId,
+      publisher,
+      f.p.epoch,
+      f.share.id,
+      f.share.sourceGeneration,
+      f.share.sound,
+    )!;
+    const snapshot = () => f.screen.nativeViewers(own.identity, publisher.userId);
+    expect((await snapshot()).viewers).toMatchObject([{ id: f.grant.link.id, answerHash: null }]);
+    await expect(f.screen.nativeViewers(own.identity, f.viewer.lease.userId)).rejects.toThrow();
+    await f.screen.relay(f.publisher.caller, f.offer, () => true);
+    await expect(f.screen.relay(f.viewer.caller, f.answer, () => false)).rejects.toThrow();
+    expect((await snapshot()).viewers[0]?.answerHash).toBeNull();
+    await f.screen.relay(f.viewer.caller, f.answer, () => true);
+    expect((await snapshot()).viewers[0]?.answerHash).toBe(
+      createHash('sha256').update(f.answer.payload.sdp).digest('hex'),
+    );
+    f.viewer.auth.revoked = true;
+    expect(f.viewer.lease.revoked).toBe(false);
+    expect((await snapshot()).viewers).toEqual([]);
+    await expect(f.screen.relay(f.viewer.caller, f.answer, () => true)).rejects.toThrow();
+  });
   it('delivers private lifecycle replies before releasing the lease-sensitive commit', async () => {
     const f = await signalingFixture(),
       started = deferred(),
@@ -857,27 +879,86 @@ describe('ephemeral screen authorization', () => {
     peers.publisher.lease.expires += 45000;
     expect((await f.screen.authorizeLink(peers.viewer.caller, request)).remainingMs).toBe(10000);
   });
-  it('caps a viewer bitrate at the publisher ceiling and rejects a higher profile without replacing the live selection', async () => {
+  it('uses the current broadcaster maximum for requests with or without legacy fields', async () => {
     const f = fixture(),
       peers = await linked(f);
-    const request = selection(peers.v.epoch, peers.share.id, 2, 20000000);
-    const capped = (await f.screen.select(peers.viewer.caller, request))!;
-    expect(capped.link.quality.videoBitrate).toBe(20000000);
-    expect(capped.link.videoBitrate).toBe(8000000);
+    const { epoch, requestId, revision, shareId } = selection(peers.v.epoch, peers.share.id, 2);
+    for (const [index, legacy] of [
+      {},
+      { profile: 'low', videoBitrate: 2000000 },
+      { profile: 'ultra', videoBitrate: 20000000 },
+    ].entries()) {
+      const grant = await f.screen.select(peers.viewer.caller, {
+        epoch,
+        requestId: index ? randomUUID() : requestId,
+        revision: revision + index,
+        shareId,
+        ...legacy,
+      });
+      expect(grant?.link).toMatchObject({
+        quality: { profile: 'smooth', videoBitrate: 8000000 },
+        videoBitrate: 8000000,
+      });
+    }
+  });
+
+  it('applies live publisher quality without replacing the authorized link and fences stale updates', async () => {
+    const f = fixture(),
+      peers = await linked(f);
+    const update = {
+      epoch: peers.p.epoch,
+      shareId: peers.share.id,
+      requestId: randomUUID(),
+      revision: 1,
+      profile: 'smooth',
+      resolution: 480,
+      frameRate: 15,
+      videoBitrate: 2000000,
+    };
     await expect(
-      f.screen.select(peers.viewer.caller, {
-        ...selection(peers.v.epoch, peers.share.id, 3),
-        profile: 'ultra',
-      }),
-    ).rejects.toMatchObject({ code: 'invalid' });
+      f.screen.updateQuality(peers.viewer.caller, { ...update, epoch: peers.v.epoch }),
+    ).rejects.toMatchObject({ code: 'not_authorized' });
+    const changed = await f.screen.updateQuality(peers.publisher.caller, update);
+    expect(changed).toMatchObject({
+      id: peers.share.id,
+      sourceGeneration: peers.share.sourceGeneration,
+      resolution: 480,
+      frameRate: 15,
+      videoBitrate: 2000000,
+    });
+    expect(await f.screen.updateQuality(peers.publisher.caller, update)).toEqual(changed);
     expect(
-      (
-        await f.screen.authorizeLink(peers.viewer.caller, {
-          epoch: peers.v.epoch,
-          linkId: capped.link.id,
-        })
-      ).link.id,
-    ).toBe(capped.link.id);
+      await f.screen.authorizeLink(peers.viewer.caller, {
+        epoch: peers.v.epoch,
+        linkId: peers.link.link.id,
+      }),
+    ).toMatchObject({
+      link: {
+        id: peers.link.link.id,
+        quality: { resolution: 480, frameRate: 15, videoBitrate: 2000000 },
+      },
+    });
+    const deliver = vi.fn();
+    await f.screen.snapshot(peers.viewer.caller, { epoch: peers.v.epoch }, deliver, 0, {
+      shares: new Map([[peers.share.id, peers.share]]),
+      links: new Set([peers.link.link.id]),
+    });
+    expect(deliver.mock.calls[0]?.[0].directory.shares).toContainEqual(changed);
+    const second = {
+      ...update,
+      requestId: randomUUID(),
+      revision: 2,
+      resolution: 1080,
+      frameRate: 60,
+      videoBitrate: 12000000,
+    };
+    await f.screen.updateQuality(peers.publisher.caller, second);
+    await expect(f.screen.updateQuality(peers.publisher.caller, update)).rejects.toMatchObject({
+      code: 'stale',
+    });
+    await expect(
+      f.screen.updateQuality(peers.publisher.caller, { ...second, videoBitrate: 4000000 }),
+    ).rejects.toMatchObject({ code: 'invalid' });
   });
 
   it.each([true, false])('keeps renewals within the output window (paging: %s)', async (paged) => {
@@ -976,6 +1057,36 @@ describe('ephemeral screen authorization', () => {
     expect((await renew(1)).links).toHaveLength(19);
     await f.screen.select(viewers[0]!.caller, selection(bindings[0]!.epoch, null, 2));
     expect((await renew(2)).links).toHaveLength(18);
+  });
+
+  it('admits a fourth native viewer only after one of the three authorized viewers leaves', async () => {
+    const f = fixture(),
+      publisher = f.user(undefined, true),
+      binding = await f.bind(publisher);
+    const request = {
+      epoch: binding.epoch,
+      requestId: randomUUID(),
+      sourceGeneration: 1,
+      profile: 'smooth',
+      videoBitrate: 8000000,
+      sound: 'none',
+      native: true,
+    };
+    const { share } = await f.screen.publish(publisher.caller, request);
+    await expect(
+      f.screen.publish(publisher.caller, { ...request, native: undefined }),
+    ).rejects.toMatchObject({ code: 'invalid' });
+
+    const viewers = Array.from({ length: 4 }, () => f.user(undefined, true));
+    const bindings = await Promise.all(viewers.map((viewer) => f.bind(viewer)));
+    const select = (index: number, shareId: string | null, revision = 1) =>
+      f.screen.select(viewers[index]!.caller, selection(bindings[index]!.epoch, shareId, revision));
+    await Promise.all(viewers.slice(0, 3).map((_, index) => select(index, share.id)));
+    await expect(select(3, share.id)).rejects.toMatchObject({ code: 'capacity' });
+    await select(0, null, 2);
+    await expect(select(3, share.id)).resolves.toMatchObject({
+      link: { viewerId: viewers[3]!.lease.userId },
+    });
   });
 
   it('protects a legacy publisher from a tenth viewer while allowing viewers to reselect and leave', async () => {
@@ -1147,7 +1258,7 @@ describe('ephemeral screen authorization', () => {
     ).rejects.toMatchObject({ code: 'not_authorized' });
   });
 
-  it('keeps publisher/viewer quality independent and copies returned DTOs', async () => {
+  it('copies the publisher limits in each grant and preserves self-watch authorization', async () => {
     const f = fixture(),
       { publisher, p, share } = await linked(f);
     const other = f.user(),
@@ -1156,12 +1267,12 @@ describe('ephemeral screen authorization', () => {
       ...selection(binding.epoch, share.id, 1, 2000000),
       profile: 'low',
     }))!;
-    expect(low.link.videoBitrate).toBe(2000000);
+    expect(low.link.videoBitrate).toBe(8000000);
     low.link.quality.profile = 'ultra';
     expect(
       (await f.screen.authorizeLink(publisher.caller, { epoch: p.epoch, linkId: low.link.id })).link
         .quality.profile,
-    ).toBe('low');
+    ).toBe('smooth');
     const own = await f.publish(other.caller, binding.epoch);
     expect(own.publisherId).toBe(other.lease.userId);
     await expect(
@@ -1472,26 +1583,41 @@ describe('ephemeral screen authorization', () => {
   });
 });
 
-it('issues screen-only relay credentials only to an authorized current binding and refreshes them on renewal', async () => {
-  const f = fixture();
-  f.voice.config.screenTurnHost = 'turn.rajcord.com';
-  const user = f.user(),
-    binding = await f.bind(user);
-  expect(binding.iceServers?.[1]).toMatchObject({
-    urls: ['turn:turn.rajcord.com:3478?transport=udp', 'turns:turn.rajcord.com:5349?transport=tcp'],
-  });
-  const initial = binding.iceServers![1]!.credential;
-  expect(initial).not.toContain(f.voice.config.secret);
-  f.setTime(f.time() + 1000);
-  user.lease.expires += 1000;
-  const renewed = await f.screen.renew(user.caller, {
-    epoch: binding.epoch,
-    requestId: randomUUID(),
-    revision: 1,
-  });
-  expect(renewed.iceServers![1]!.credential).not.toBe(initial);
-  user.lease.revoked = true;
-  await expect(
-    f.screen.renew(user.caller, { epoch: binding.epoch, requestId: randomUUID(), revision: 2 }),
-  ).rejects.toMatchObject({ code: 'stale' });
-});
+it.each(['legacy', 'coturn'])(
+  'issues %s credentials only to an authorized current binding and refreshes them on renewal',
+  async (kind) => {
+    const f = fixture();
+    f.voice.config.screenTurnHost = 'turn.rajcord.com';
+    if (kind === 'coturn')
+      f.voice.config.screenCoturn = { host: 'screen.example.com', secret: '4a'.repeat(32) };
+    const user = f.user(),
+      binding = await f.bind(user);
+    expect(binding.iceServers?.[1]).toMatchObject({
+      urls:
+        kind === 'coturn'
+          ? [
+              'turn:screen.example.com:3479?transport=udp',
+              'turn:screen.example.com:3479?transport=tcp',
+              'turns:screen.example.com:5350?transport=tcp',
+            ]
+          : [
+              'turn:turn.rajcord.com:3478?transport=udp',
+              'turns:turn.rajcord.com:5349?transport=tcp',
+            ],
+    });
+    const initial = binding.iceServers![1]!.credential;
+    expect(initial).not.toContain(f.voice.config.secret);
+    f.setTime(f.time() + 1000);
+    user.lease.expires += 1000;
+    const renewed = await f.screen.renew(user.caller, {
+      epoch: binding.epoch,
+      requestId: randomUUID(),
+      revision: 1,
+    });
+    expect(renewed.iceServers![1]!.credential).not.toBe(initial);
+    user.lease.revoked = true;
+    await expect(
+      f.screen.renew(user.caller, { epoch: binding.epoch, requestId: randomUUID(), revision: 2 }),
+    ).rejects.toMatchObject({ code: 'stale' });
+  },
+);

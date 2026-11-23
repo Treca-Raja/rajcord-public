@@ -1,0 +1,78 @@
+--- a/plugins/win-capture/plugin-main.c
++++ b/plugins/win-capture/plugin-main.c
+@@ -28,7 +28,9 @@
+ extern struct obs_source_info game_capture_info;
+ 
+ static HANDLE init_hooks_thread = NULL;
++#ifdef ENABLE_COMPAT_UPDATES
+ static update_info_t *update_info = NULL;
++#endif
+ 
+ extern bool cached_versions_match(void);
+ extern bool load_cached_graphics_offsets(bool is32bit, const char *config_path);
+@@ -75,6 +77,7 @@
+ 	}
+ }
+ 
++#ifdef ENABLE_COMPAT_UPDATES
+ static bool confirm_compat_file(void *param, struct file_download_data *file)
+ {
+ 	if (astrcmpi(file->name, "compatibility.json") == 0) {
+@@ -95,6 +98,7 @@
+ 	UNUSED_PARAMETER(param);
+ 	return true;
+ }
++#endif
+ 
+ void init_hook_files(void);
+ 
+@@ -105,13 +109,14 @@
+ {
+ 	struct win_version_info ver;
+ 	bool win8_or_above = false;
++	struct win_version_info win1903 = {.major = 10, .minor = 0, .build = 18362, .revis = 0};
++
++#ifdef ENABLE_COMPAT_UPDATES
+ 	char *local_dir;
+ 	char *config_dir;
+ 
+ 	char update_url[128];
+ 	snprintf(update_url, sizeof(update_url), "%s/v%d", COMPAT_URL, COMPAT_FORMAT_VERSION);
+-
+-	struct win_version_info win1903 = {.major = 10, .minor = 0, .build = 18362, .revis = 0};
+ 
+ 	local_dir = obs_module_file(NULL);
+ 	config_dir = obs_module_config_path(NULL);
+@@ -125,6 +130,7 @@
+ 	}
+ 	bfree(config_dir);
+ 	bfree(local_dir);
++#endif
+ 
+ 	get_win_ver(&ver);
+ 
+@@ -156,6 +162,8 @@
+ void obs_module_unload(void)
+ {
+ 	wait_for_hook_initialization();
++#ifdef ENABLE_COMPAT_UPDATES
+ 	update_info_destroy(update_info);
++#endif
+ 	compat_json_free();
+ }
+--- a/plugins/win-capture/compat-helpers.c
++++ b/plugins/win-capture/compat-helpers.c
+@@ -93,11 +93,13 @@
+ 	char *file;
+ 	json_t *root = NULL;
+ 
++#ifdef ENABLE_COMPAT_UPDATES
+ 	file = obs_module_config_path("compatibility.json");
+ 	if (file) {
+ 		root = open_json_file(file);
+ 		bfree(file);
+ 	}
++#endif
+ 
+ 	if (!root) {
+ 		file = obs_module_file("compatibility.json");

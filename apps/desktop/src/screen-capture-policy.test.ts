@@ -433,6 +433,23 @@ describe('desktop capture request lifetime', () => {
     expect((await f.policy.select(f.caller, choice)).ok).toBe(true);
     expect(f.respond.mock.calls[0]![0].video).toBe(fresh);
   });
+  it.each([0, 1])(
+    'rejects native source %i when its private identity changed before consent',
+    async (index) => {
+      const f = fixture();
+      const source = f.sources[index]!;
+      source.nativeCaptureIdentity = 'original-private-identity';
+      const { choice, snapshot } = await f.ready({ audioRequested: false });
+      expect(JSON.stringify(snapshot)).not.toContain(source.nativeCaptureIdentity);
+      source.nativeCaptureIdentity = 'changed-private-identity';
+      const result = await f.policy.select(f.caller, {
+        ...choice,
+        handle: snapshot.sources[index]!.handle,
+      });
+      expect(result).toMatchObject({ ok: false, code: 'stale' });
+      expect(f.respond).toHaveBeenCalledExactlyOnceWith(null);
+    },
+  );
   it('freezes offered source identity even if the enumerator mutates its original objects', async () => {
     const f = fixture(),
       { choice } = await f.ready();

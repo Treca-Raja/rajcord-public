@@ -360,9 +360,6 @@ async function run() {
       console.log('Publishing owned ' + profile + ' source ' + (index + 1) + '/' + publishers.size);
     }
     if (!watchers.has(index)) continue;
-    await choose(browser, 'Watch resolution', '1080');
-    await choose(browser, 'Watch frame rate', String(frameRate));
-    await choose(browser, 'Watch video bitrate', String(videoBudget));
     await browser.js(
       "(()=>{const input=document.querySelector('.screen-watch input[type=checkbox]');if(!input.checked)input.click()})()",
     );

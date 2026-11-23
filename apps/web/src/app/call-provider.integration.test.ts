@@ -560,6 +560,7 @@ async function mountedFixture(
   work: (browser: Awaited<ReturnType<typeof launch>>) => Promise<void>,
   initialStatus: 'approved' | 'pending' | 'rejected' = 'approved',
   source = fixture,
+  viewportWidth?: number,
 ) {
   const server = await createServer({
     configFile: false,
@@ -589,6 +590,13 @@ async function mountedFixture(
   try {
     await server.listen();
     browser = await launch();
+    if (viewportWidth !== undefined)
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: viewportWidth,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: viewportWidth <= 750,
+      });
     await browser.call('Page.navigate', { url: server.resolvedUrls!.local[0] });
     await work(browser);
   } finally {
@@ -2040,7 +2048,7 @@ it('opens mobile voice navigation from a channel link while a stream is playing'
   );
 });
 
-it('keeps focus in account settings opened from Activity and restores it on close', async () => {
+it.each([390, 1440])('keeps and restores Activity settings focus at %i px', async (width) => {
   await mountedFixture(
     async (browser) => {
       const press = async (
@@ -2062,36 +2070,29 @@ it('keeps focus in account settings opened from Activity and restores it on clos
           windowsVirtualKeyCode,
         });
       };
-      for (const width of [390, 1440]) {
-        await browser.call('Emulation.setDeviceMetricsOverride', {
-          width,
-          height: 844,
-          deviceScaleFactor: 1,
-          mobile: width === 390,
-        });
-        await browser.wait(
-          'innerWidth===' + width + " && !!document.querySelector('.members-action')",
-        );
-        await browser.js("document.querySelector('.members-action').focus()");
-        await press('Enter', 13, '\r');
-        await browser.wait("!!document.querySelector('.activity-footer button')");
-        await browser.js("document.querySelector('.activity-footer button').focus()");
-        await press('Enter', 13, '\r');
-        await browser.wait("!!document.querySelector('.account-panel')");
-        await browser.js(
-          'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
-        );
-        expect(await browser.js("document.activeElement.getAttribute('aria-label')")).toBe(
-          'Close settings',
-        );
-        expect(await browser.js("!!document.querySelector('#workspace-activity')")).toBe(false);
-        await press('Escape', 27);
-        await browser.wait("!document.querySelector('.account-panel')");
-        expect(await browser.js("document.activeElement.matches('.members-action')")).toBe(true);
-      }
+      await browser.wait(
+        'innerWidth===' + width + " && !!document.querySelector('.members-action')",
+      );
+      await browser.js("document.querySelector('.members-action').focus()");
+      await press('Enter', 13, '\r');
+      await browser.wait("!!document.querySelector('.activity-footer button')");
+      await browser.js("document.querySelector('.activity-footer button').focus()");
+      await press('Enter', 13, '\r');
+      await browser.wait("!!document.querySelector('.account-panel')");
+      await browser.js(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      expect(await browser.js("document.activeElement.getAttribute('aria-label')")).toBe(
+        'Close settings',
+      );
+      expect(await browser.js("!!document.querySelector('#workspace-activity')")).toBe(false);
+      await press('Escape', 27);
+      await browser.wait("!document.querySelector('.account-panel')");
+      expect(await browser.js("document.activeElement.matches('.members-action')")).toBe(true);
     },
     'approved',
     workspaceScreenFixture,
+    width,
   );
 });
 
@@ -2632,80 +2633,80 @@ it.each([
   { open: false, entry: 'sidebar' },
   { open: true, entry: 'sidebar' },
   { open: true, entry: 'toolbar' },
-])(
-  'automatically follows the selected Windows source audio from $entry with the call view open=$open',
-  async ({ open, entry }) => {
-    await mountedFixture(
-      async (browser) => {
-        await browser.wait('!!window.fixture?.call?.screens');
-        await browser.js(`fixture.call.controls.join('lounge');
+])('offers OBS source audio from $entry with the call view open=$open', async ({ open, entry }) => {
+  await mountedFixture(
+    async (browser) => {
+      await browser.wait('!!window.fixture?.call?.screens');
+      await browser.js(`fixture.call.controls.join('lounge');
         window.tricordDesktop={platform:'win32'};
         fixture.preparations=[];fixture.choices=0;
         fixture.screens.prepare=async options=>{fixture.preparations.push(options);fixture.screenSet({prepared:true})};
         fixture.screens.choose=async()=>{fixture.choices++};
         fixture.screenSet({open:${open},watching:null,watchingShareIds:[],prepared:false,setupRequested:false});`);
-        await browser.wait(
-          '!!document.querySelector(".sidebar .screen-launcher button:not(:disabled)")',
-        );
-        const shareSelector =
-          entry === 'sidebar'
-            ? '.sidebar .screen-launcher > button'
-            : '.screen-call-toolbar [aria-label="Share Your Screen"]';
-        const clickShare = () =>
-          browser.js(`document.querySelector(${JSON.stringify(shareSelector)}).click()`);
-        await clickShare();
-        await browser.wait('document.querySelector("#screen-settings")?.hidden===false');
-        expect(await browser.js('fixture.preparations.length===0 && fixture.choices===0')).toBe(
-          true,
-        );
-        expect(
-          await browser.js('!document.querySelector(\'[aria-label="Screen source sound"]\')'),
-        ).toBe(true);
-        expect(
-          await browser.js(
-            "document.querySelector('#screen-settings').textContent.includes('Audio follows your source')",
-          ),
-        ).toBe(true);
+      await browser.wait(
+        '!!document.querySelector(".sidebar .screen-launcher button:not(:disabled)")',
+      );
+      const shareSelector =
+        entry === 'sidebar'
+          ? '.sidebar .screen-launcher > button'
+          : '.screen-call-toolbar [aria-label="Share Your Screen"]';
+      const clickShare = () =>
+        browser.js(`document.querySelector(${JSON.stringify(shareSelector)}).click()`);
+      await clickShare();
+      await browser.wait('document.querySelector("#screen-settings")?.hidden===false');
+      expect(await browser.js('fixture.preparations.length===0 && fixture.choices===0')).toBe(true);
+      expect(await browser.js(`!!document.querySelector('[aria-label="Screen sender"]')`)).toBe(
+        false,
+      );
+      expect(
+        await browser.js(`document.querySelector('[aria-label="Screen encoder"]').value`),
+      ).toBe('auto');
+      expect(
+        await browser.js(`document.querySelector('[aria-label="Screen source sound"]').value`),
+      ).toBe('none');
+      await browser.js(`(()=>{
+          const sound=document.querySelector('[aria-label="Screen source sound"]');
+          sound.value='source';
+          sound.dispatchEvent(new Event('change',{bubbles:true}));
+        })()`);
+      await browser.js(
+        "[...document.querySelectorAll('button')].find(b=>b.textContent==='Prepare source').click()",
+      );
+      await browser.wait('fixture.preparations.length===1');
+      expect(await browser.js('fixture.preparations[0].sound')).toBe('source');
+      expect(await browser.js('fixture.preparations[0].encoder')).toBe('auto');
+      expect(await browser.js('fixture.choices')).toBe(0);
+      if (open)
         await browser.js(
-          "[...document.querySelectorAll('button')].find(b=>b.textContent==='Prepare source').click()",
+          'document.querySelector(\'[aria-label="Close stream settings"]\').click()',
         );
-        await browser.wait('fixture.preparations.length===1');
-        expect(await browser.js('fixture.preparations[0].sound')).toBe('source');
-        expect(await browser.js('fixture.choices')).toBe(0);
-        if (open)
-          await browser.js(
-            'document.querySelector(\'[aria-label="Close stream settings"]\').click()',
-          );
-        await browser.js(`fixture.screenSet({open:${open},setupRequested:false})`);
-        await browser.wait(
-          open
-            ? 'document.querySelector("#screen-settings")?.hidden===true'
-            : '!document.querySelector("#screen-settings")',
-        );
-        await clickShare();
-        await browser.wait('document.querySelector("#screen-settings")?.hidden===false');
-        expect(await browser.js('fixture.preparations.length===1 && fixture.choices===0')).toBe(
-          true,
-        );
-        await browser.wait(
-          "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Choose source')",
-        );
-        await browser.js(
-          "[...document.querySelectorAll('button')].find(b=>b.textContent==='Choose source').click()",
-        );
-        await browser.wait('fixture.choices===1');
-        expect(await browser.js('fixture.errors')).toEqual([]);
-      },
-      'approved',
-      screenUiFixture
-        .replace('import { ScreenPanel }', 'import { ScreenPanel, ScreenLauncher }')
-        .replace(
-          "h('aside',{className:'sidebar'},h(VoicePanel))",
-          "h('aside',{className:'sidebar'},h(VoicePanel),h(ScreenLauncher))",
-        ),
-    );
-  },
-);
+      await browser.js(`fixture.screenSet({open:${open},setupRequested:false})`);
+      await browser.wait(
+        open
+          ? 'document.querySelector("#screen-settings")?.hidden===true'
+          : '!document.querySelector("#screen-settings")',
+      );
+      await clickShare();
+      await browser.wait('document.querySelector("#screen-settings")?.hidden===false');
+      expect(await browser.js('fixture.preparations.length===1 && fixture.choices===0')).toBe(true);
+      await browser.wait(
+        "!![...document.querySelectorAll('button')].find(b=>b.textContent==='Choose source')",
+      );
+      await browser.js(
+        "[...document.querySelectorAll('button')].find(b=>b.textContent==='Choose source').click()",
+      );
+      await browser.wait('fixture.choices===1');
+      expect(await browser.js('fixture.errors')).toEqual([]);
+    },
+    'approved',
+    screenUiFixture
+      .replace('import { ScreenPanel }', 'import { ScreenPanel, ScreenLauncher }')
+      .replace(
+        "h('aside',{className:'sidebar'},h(VoicePanel))",
+        "h('aside',{className:'sidebar'},h(VoicePanel),h(ScreenLauncher))",
+      ),
+  );
+});
 
 it('opens the call grid on a voice-channel click and opens source setup only on Share Your Screen', async () => {
   await mountedFixture(

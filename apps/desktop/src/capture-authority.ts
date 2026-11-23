@@ -4,6 +4,7 @@ import type {
   CaptureAuthorization,
   CaptureAuthorityOperation,
   CaptureSoundChoice,
+  NativeViewerSnapshot,
 } from '@tricord/shared' with { 'resolution-mode': 'import' };
 import type { CaptureIntentSource, TrustedCaptureIntent } from './native-capture.js';
 
@@ -50,6 +51,11 @@ function grant(value: unknown): CaptureAuthorization {
   return body as CaptureAuthorization;
 }
 export class ServerCaptureAuthority implements CaptureIntentSource {
+  private nativeViewers?: (snapshot: NativeViewerSnapshot, started: number) => void;
+  observeNativeViewers(listener: (snapshot: NativeViewerSnapshot, started: number) => void) {
+    if (!this.inspectPublication()) throw new Error('Screen publication ended.');
+    this.nativeViewers = listener;
+  }
   private record?: RecordState;
   private publication?: PublicationState;
   private cancelPublicationId?: string;
@@ -353,18 +359,27 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
     }
     const started = this.now();
     try {
-      const value = grant(
-        await this.operation('publication-check', {
-          id: publication.id,
-          requestId: randomUUID(),
-          revision: ++publication.revision,
-        }),
-      );
+      const observer = this.nativeViewers;
+      const result = await this.operation('publication-check', {
+        id: publication.id,
+        requestId: randomUUID(),
+        revision: ++publication.revision,
+        ...(observer ? { nativeViewers: 1 } : {}),
+      });
       if (this.publication !== publication) return;
+      const response = result as CaptureAuthorization & { native?: NativeViewerSnapshot };
+      const value = observer
+        ? grant({ id: response.id, remainingMs: response.remainingMs })
+        : grant(result);
       if (!this.inspectPublication() || value.id !== publication.id)
         throw new Error('Publication changed.');
       publication.deadline = started + value.remainingMs;
       if (publication.deadline <= this.now()) throw new Error('Publication expired.');
+      if (observer) {
+        if (!response.native)
+          throw new Error('This server cannot authorize native screen viewers.');
+        observer(response.native, started);
+      }
       this.schedulePublication(publication);
     } catch {
       if (this.publication === publication) {
@@ -431,6 +446,7 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
     }
   }
   invalidate() {
+    this.nativeViewers = undefined;
     this.generation++;
     const requestId = this.record?.requestId ?? this.preparing ?? this.publication?.previewRequest;
     this.record = undefined;

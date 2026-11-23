@@ -28,8 +28,7 @@ describe('screen feasibility evidence', () => {
     ).toThrow();
   });
   it('bounds measurement duration and rejects unknown or unsupported options', () => {
-    expect(options(['--runtime=edge', '--codec=H264', '--phase-ms=5000'])).toEqual({
-      runtime: 'edge',
+    expect(options(['--codec=H264', '--phase-ms=5000'])).toEqual({
       codec: 'H264',
       content: 'motion',
       hint: 'auto',
@@ -37,7 +36,7 @@ describe('screen feasibility evidence', () => {
       bitrates: [2000000, 8000000],
     });
     for (const arg of [
-      '--runtime=chrome',
+      '--runtime=electron',
       '--codec=HEVC',
       '--content=private-desktop',
       '--hint=unsupported',

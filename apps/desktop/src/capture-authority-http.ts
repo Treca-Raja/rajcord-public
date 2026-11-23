@@ -175,6 +175,7 @@ export function createSessionCaptureAuthority(options: {
     prepare: authority.prepare.bind(authority),
     handoff: authority.handoff.bind(authority),
     inspectPublication: authority.inspectPublication.bind(authority),
+    observeNativeViewers: authority.observeNativeViewers.bind(authority),
     inspect: authority.inspect.bind(authority),
     verify: authority.verify.bind(authority),
     onInvalidated: authority.onInvalidated.bind(authority),

@@ -1,0 +1,25 @@
+name: rajcord-screen-turn
+
+services:
+  coturn:
+    image: rajcord-screen-coturn:4.19.2
+    build: .
+    network_mode: host
+    user: '61628:61628'
+    command: ['-c', '/run/screen-turn/turnserver.conf']
+    volumes:
+      - ${SCREEN_TURN_RUNTIME:?Set the private screen relay runtime directory}:/run/screen-turn:ro
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 256m
+    cpus: 1
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

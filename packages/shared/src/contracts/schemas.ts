@@ -128,6 +128,25 @@ export const errorResponse = object({ error: text });
 export const ok = object({ ok: literal(true) });
 export const cancelled = object({ cancelled: literal(true) });
 export const capture = object({ id: nonempty, remainingMs: Type.Number({ minimum: 0 }) });
+export const publicationCheck = object({
+  ...capture.properties,
+  native: optional(
+    object({
+      viewers: Type.Array(
+        object({
+          id: uuid,
+          remainingMs: count,
+          answerHash: nullable(Type.String({ pattern: '^[0-9a-f]{64}$' })),
+        }),
+        { maxItems: 3 },
+      ),
+      iceServers: Type.Array(
+        object({ urls: array(nonempty), username: optional(text), credential: optional(text) }),
+        { maxItems: 4 },
+      ),
+    }),
+  ),
+});
 export const voiceJoin = object({
   id: nonempty,
   channelId: nonempty,
@@ -214,6 +233,7 @@ export const request = {
     requestId: uuid,
   }),
   publicationCheck: requestObject({
+    nativeViewers: optional(literal(1)),
     id: uuid,
     requestId: uuid,
     revision: Type.Integer({ minimum: 1 }),

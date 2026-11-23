@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { NativeScreenEvent } from '@tricord/shared' with { 'resolution-mode': 'import' };
 import type {
   NativeNotificationNotice,
   NativeNotificationResult,
@@ -29,8 +30,8 @@ contextBridge.exposeInMainWorld(
       prepare: (request: unknown) => ipcRenderer.invoke('screen:prepare', request),
       handoff: (request: unknown) => ipcRenderer.invoke('screen:handoff', request),
       cancel: (request: unknown) => ipcRenderer.invoke('screen:cancel', request),
-      onStop: (listener: (tag: string) => void) => {
-        const callback = (_event: unknown, tag: string) => listener(tag);
+      onStop: (listener: (tag: string, reason?: string) => void) => {
+        const callback = (_event: unknown, tag: string, reason?: string) => listener(tag, reason);
         ipcRenderer.on('screen:stop', callback);
         return () => ipcRenderer.removeListener('screen:stop', callback);
       },
@@ -38,6 +39,12 @@ contextBridge.exposeInMainWorld(
         const callback = (_event: unknown, visible: boolean) => listener(visible);
         ipcRenderer.on('screen:visibility', callback);
         return () => ipcRenderer.removeListener('screen:visibility', callback);
+      },
+      nativeCommand: (request: unknown) => ipcRenderer.invoke('screen:native-command', request),
+      onNativeEvent: (listener: (event: NativeScreenEvent) => void) => {
+        const callback = (_event: unknown, event: NativeScreenEvent) => listener(event);
+        ipcRenderer.on('screen:native-event', callback);
+        return () => ipcRenderer.removeListener('screen:native-event', callback);
       },
     }),
     platform: process.platform,

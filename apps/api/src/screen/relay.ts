@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type { ScreenIceServer } from '@tricord/shared';
 import type { VoiceConfig } from '../voice/config.js';
 
@@ -26,16 +26,38 @@ export function screenRelayServers(
   accountId: string,
   now: number,
 ): ScreenIceServer[] | undefined {
+  const expiry = Math.floor(now / 1000) + 60;
+  const stun = { urls: ['stun:stun.cloudflare.com:3478'] };
+  if (config.screenCoturn) {
+    const { host, secret } = config.screenCoturn;
+    // Coturn counts the suffix after the REST timestamp as a stable quota key.
+    const participant = createHmac('sha256', secret)
+      .update('rajcord/screen-turn/account\0' + accountId)
+      .digest('hex')
+      .slice(0, 32);
+    const username = `${expiry}.${participant}`;
+    return [
+      stun,
+      {
+        urls: [
+          `turn:${host}:3479?transport=udp`,
+          `turn:${host}:3479?transport=tcp`,
+          `turns:${host}:5350?transport=tcp`,
+        ],
+        username,
+        credential: createHmac('sha1', secret).update(username).digest('base64'),
+      },
+    ];
+  }
   if (!config.screenTurnHost) return;
   // Stable account identity shares the relay's per-user quota across bindings.
   const participant = 'SC_' + accountId;
-  const expiry = Math.floor(now / 1000) + 60;
   const username = livekitBase62(Buffer.from(`${config.key}|${participant}|${expiry}`));
   const credential = livekitBase62(
     createHash('sha256').update(`${config.secret}|${participant}|${expiry}`).digest(),
   );
   return [
-    { urls: ['stun:stun.cloudflare.com:3478'] },
+    stun,
     {
       urls: [
         `turn:${config.screenTurnHost}:3478?transport=udp`,

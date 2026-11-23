@@ -1,10 +1,15 @@
 import { runInBackground } from '../../shared/background';
-import { SCREEN_RENEWAL_PAGE_SIZE } from '@tricord/shared';
+import {
+  DESKTOP_SCREEN_PROTOCOL_VERSION,
+  SCREEN_RENEWAL_PAGE_SIZE,
+  sameScreenQuality,
+} from '@tricord/shared';
 import type {
   ScreenQuality,
   ScreenSound,
   ScreenShare,
   ScreenPublishGrant,
+  ScreenPublishRequest,
   ScreenDirectory,
   ScreenLinkGrant,
   ScreenRenewal,
@@ -13,6 +18,7 @@ import type {
   ScreenSignalNotice,
   ScreenSelectRequest,
   DesktopScreenStatus,
+  DesktopScreenBridge,
 } from '@tricord/shared';
 import { CaptureSession, ScreenLifetime } from './capture-session';
 import { screenSocket, type ScreenSocket } from './screen-socket';
@@ -21,14 +27,19 @@ import type { ScreenRuntimeAttachment } from './screen-runtime';
 import type { VoiceScreenSession, VoiceState } from '../voice/contracts';
 import { setScreenCaptureFormat, type WebScreenCapture } from './screen-capture';
 import { ScreenPeer } from './screen-peer';
+import type { ObsEncoder, ObsEncoderChoice } from '@tricord/shared';
+import { ObsPeer, obsVideoSource } from './obs-peer';
 import type { ScreenReceiveHandle } from './screen-receiver';
 import { ScreenPlaybackError } from './screen-playback';
 import { publicScreenIceServers, screenIceServers } from './screen-ice';
-import { requireFixedScreenFormat, screenVideoRequest } from './screen-quality';
+import { screenVideoRequest } from './screen-quality';
 import { screenRenewalPermit } from './screen-renewal';
 import { record, share, uuid } from './screen-share';
 
-export type ScreenSettings = ScreenQuality & { sound: ScreenSound };
+export type ScreenSettings = ScreenQuality & {
+  sound: ScreenSound;
+  encoder?: ObsEncoderChoice;
+};
 export type ScreenCallState = Readonly<{
   phase:
     | 'idle'
@@ -52,6 +63,7 @@ export type ScreenCallState = Readonly<{
   hidden: boolean;
   label: string;
   viewers: number;
+  obsEncoder?: ObsEncoder;
   open: boolean;
   setupRequested: boolean;
   prepared: boolean;
@@ -63,6 +75,7 @@ export type ScreenControls = Pick<
   | 'prepare'
   | 'choose'
   | 'publish'
+  | 'updateQuality'
   | 'stopSource'
   | 'watch'
   | 'watchMultiple'
@@ -101,11 +114,11 @@ type Incoming = {
   shareId: string;
   life: ScreenLifetime;
   handle: ScreenReceiveHandle;
-  selection: ScreenSelectRequest;
   playbackTimeout: string;
 };
-type Outgoing = { peer: ScreenPeer; life: ScreenLifetime; shareId: string };
-type PublisherOffer = { link: ScreenLinkGrant['link']; deadline: number };
+type Outgoing = { peer: ScreenPeer; life: ScreenLifetime; shareId: string; native?: ObsPeer };
+type ScreenLink = Omit<ScreenLinkGrant['link'], 'quality' | 'videoBitrate'>;
+type PublisherOffer = { link: ScreenLink; deadline: number };
 type WatchRecovery = { attempts: number; readyAt: number; timer?: ReturnType<typeof setTimeout> };
 // The account budget refills one initial renewal every five seconds. Keep one
 // burst slot in reserve for a transient failure or network timing variance.
@@ -145,7 +158,7 @@ export class ScreenCall {
   private source?: CaptureSession;
   private settings?: ScreenSettings;
   private ownShare?: ScreenShare;
-  private prepared?: { tag: string; deadline: number };
+  private prepared?: { tag: string; deadline: number; desktop?: DesktopScreenBridge };
   private sourceGeneration = 0;
   private revision = 0;
   private renewalRevision = 0;
@@ -158,6 +171,8 @@ export class ScreenCall {
   private renewalFailures = 0;
   private renewalRefilledAt = 0;
   private publishing = false;
+  private changingQuality = false;
+  private qualityRevision = 0;
   private preparing = false;
   private sourceCleanup?: Promise<unknown>;
   private renewalTimer?: ReturnType<typeof setTimeout>;
@@ -178,7 +193,6 @@ export class ScreenCall {
   private offeringLinkId?: string;
   private watchRecoveries = new Map<string, WatchRecovery>();
   private preferredWatch?: string;
-  private publisherLinks = new Map<string, ScreenLinkGrant['link']>();
   private removals: (() => void)[] = [];
   private bindingRemovals: (() => void)[] = [];
   private previewElements = new Set<HTMLVideoElement>();
@@ -186,7 +200,7 @@ export class ScreenCall {
   private elements = new Map<string, HTMLElement>();
   private resumeInProgress?: object;
   private resume?: {
-    selections: { shareId: string; quality: ScreenQuality }[];
+    shareIds: string[];
     focused: string;
     layout: 'focus' | 'grid';
     epoch: string;
@@ -209,8 +223,11 @@ export class ScreenCall {
     const bridge = window.tricordDesktop?.screens;
     if (bridge) {
       this.removals.push(
-        bridge.onStop((tag) => {
-          if (this.prepared?.tag === tag) this.stopSource();
+        bridge.onStop((tag, reason) => {
+          if (this.prepared?.tag === tag) {
+            this.stopSource();
+            if (reason) this.error(new Error(reason));
+          }
         }),
       );
       this.removals.push(bridge.onVisibility((visible) => this.visibility(visible)));
@@ -265,6 +282,7 @@ export class ScreenCall {
       prepare: this.prepare,
       choose: this.choose,
       publish: this.publish,
+      updateQuality: this.updateQuality,
       stopSource: this.stopSource,
       watch: this.watch,
       watchMultiple: this.watchMultiple,
@@ -452,15 +470,9 @@ export class ScreenCall {
           .then(async () => {
             if (!currentTarget()) return;
             const outgoing = this.outgoing.get(signal.linkId);
-            if (outgoing && signal.payload.type === 'answer' && this.ownShare) {
-              const link = this.publisherLinks.get(signal.linkId);
-              if (link)
-                await outgoing.peer.setVideoQuality({
-                  revision: (outgoing.peer.inspectVideoQuality().requested?.revision ?? 0) + 1,
-                  publisher: qualityOnly(this.ownShare),
-                  viewer: qualityOnly(link.quality),
-                });
-            }
+            const own = this.ownShare;
+            if (outgoing && own && outgoing.shareId === own.id && signal.payload.type === 'answer')
+              await outgoing.peer.updatePublisherQuality(qualityOnly(own));
           })
           .catch((cause) => {
             if (!currentTarget()) return;
@@ -476,7 +488,6 @@ export class ScreenCall {
     const quality = screenVideoRequest({
       revision: 1,
       publisher: qualityOnly(settings),
-      viewer: qualityOnly(settings),
     }).publisher;
     // Only quality fields enter quality validation; source sound is a separate consent.
     this.settings = Object.freeze({ ...quality, sound: settings.sound });
@@ -494,21 +505,27 @@ export class ScreenCall {
       this.preparing = false;
       throw new Error('Screen connection ended.');
     }
-    this.prepared = { tag, deadline: initial.deadline };
+    const desktop = window.tricordDesktop;
+    const bridge = desktop?.screens;
+    this.prepared = { tag, deadline: initial.deadline, desktop: bridge };
     this.update({ phase: 'preparing', error: '' });
     try {
-      if (quality.resolution !== undefined) await requireFixedScreenFormat();
       if (!this.current(binding) || this.prepared?.tag !== tag)
         throw new Error('Screen preparation ended.');
-      const bridge = window.tricordDesktop?.screens;
-      if (window.tricordDesktop && !bridge)
-        throw new Error('Update the desktop app to enable screen capture.');
+      if (desktop && (!bridge?.nativeCommand || !bridge.onNativeEvent))
+        throw new Error('Update Rajcord Desktop to share your screen with OBS.');
       if (bridge) {
         if (settings.sound === 'tab')
           throw new Error('Choose system sound or video only in the desktop app.');
         const capabilities = await bridge.capabilities();
+        if (capabilities.version !== DESKTOP_SCREEN_PROTOCOL_VERSION)
+          throw new Error('Update Rajcord Desktop to share your screen with OBS.');
+        if (!capabilities.obs?.available)
+          throw new Error(
+            capabilities.obs?.reason ??
+              'OBS screen sharing is unavailable. Reinstall Rajcord Desktop.',
+          );
         if (
-          capabilities.version !== 1 ||
           (settings.sound === 'system' && !capabilities.systemSound) ||
           (settings.sound === 'application' && !capabilities.applicationSound) ||
           (settings.sound === 'source' && (!capabilities.sourceSound || !capabilities.systemSound))
@@ -521,6 +538,7 @@ export class ScreenCall {
           clientIntentRef: tag,
           epoch: binding.binding.epoch,
           sound: settings.sound,
+          encoder: settings.encoder ?? 'auto',
         });
         this.status(result, tag);
         this.prepared!.deadline = Math.min(initial.deadline, lifetime(result.remainingMs, started));
@@ -583,7 +601,6 @@ export class ScreenCall {
         ? screenVideoRequest({
             revision: 1,
             publisher: qualityOnly(qualityOverride),
-            viewer: qualityOnly(qualityOverride),
           }).publisher
         : null,
       settings =
@@ -609,11 +626,6 @@ export class ScreenCall {
     let issued: ScreenPublishGrant | undefined;
     let publishDispatched = false;
     try {
-      if (settings.resolution !== undefined && preparedSettings?.resolution === undefined) {
-        await requireFixedScreenFormat();
-        if (this.source !== source || !this.current(binding) || this.prepared !== prepared)
-          throw new Error('Screen source ended.');
-      }
       if (
         settings.resolution &&
         settings.frameRate &&
@@ -637,14 +649,15 @@ export class ScreenCall {
           requestId: crypto.randomUUID(),
           sourceGeneration: generation,
           ...settings,
-        }),
+          ...(prepared.desktop ? { native: true } : {}),
+        } satisfies ScreenPublishRequest),
         started,
       );
       issued = proof.grant;
       if (this.source !== source || !this.current(binding) || this.prepared !== prepared)
         throw new Error('Screen source ended.');
       let deadline = Math.min(proof.deadline, binding!.inspect()!.deadline);
-      const bridge = window.tricordDesktop?.screens;
+      const bridge = prepared.desktop;
       if (bridge) {
         const began = Date.now();
         const status = await bridge.handoff({
@@ -669,6 +682,97 @@ export class ScreenCall {
       throw cause;
     } finally {
       this.publishing = false;
+    }
+  };
+  updateQuality = async (choice: ScreenQuality) => {
+    const source = this.source;
+    const binding = this.binding;
+    const own = this.ownShare;
+    if (!own || !source || !binding || !this.current(binding))
+      throw new Error('Start screen sharing before changing stream quality.');
+    if (this.changingQuality) throw new Error('Finish applying the current stream quality first.');
+    const { publisher } = screenVideoRequest({ revision: 1, publisher: qualityOnly(choice) });
+    if (sameScreenQuality(own, publisher)) return;
+    const check = () => {
+      if (!this.current(binding) || this.source !== source || this.ownShare !== own)
+        throw new Error('Screen source ended.');
+    };
+    this.changingQuality = true;
+    let previousFormat: { video: MediaStreamTrack; constraints: MediaTrackConstraints } | undefined;
+    let dispatched = false;
+    try {
+      if (
+        !this.prepared?.desktop &&
+        publisher.resolution !== undefined &&
+        publisher.frameRate !== undefined &&
+        (publisher.resolution !== own.resolution || publisher.frameRate !== own.frameRate)
+      ) {
+        const capture = source.borrow();
+        previousFormat = { video: capture.video, constraints: capture.video.getConstraints() };
+        await Promise.race([
+          setScreenCaptureFormat(capture.video, publisher.resolution, publisher.frameRate),
+          capture.ended.then(() => {
+            throw new Error('Screen source ended.');
+          }),
+        ]);
+      }
+      check();
+      dispatched = true;
+      const updated = share(
+        await this.send<unknown>('screen:quality', {
+          ...publisher,
+          epoch: binding.binding.epoch,
+          shareId: own.id,
+          requestId: crypto.randomUUID(),
+          revision: ++this.qualityRevision,
+        }),
+      );
+      check();
+      if (
+        updated.id !== own.id ||
+        updated.publisherId !== own.publisherId ||
+        updated.sourceGeneration !== own.sourceGeneration ||
+        updated.sound !== own.sound ||
+        !sameScreenQuality(updated, publisher)
+      )
+        throw new Error('Screen publication changed.');
+      this.ownShare = updated;
+      this.update({
+        shares: Object.freeze(
+          this.state.shares.map((item) => (item.id === updated.id ? updated : item)),
+        ),
+      });
+      await Promise.all(
+        [...this.outgoing.entries()].map(async ([id, outgoing]) => {
+          try {
+            await outgoing.peer.updatePublisherQuality(publisher);
+          } catch (cause) {
+            if (this.outgoing.get(id) !== outgoing) return;
+            this.closeOutgoing(id);
+            this.error(cause);
+          }
+        }),
+      );
+      this.requestRenewal();
+    } catch (cause) {
+      if (this.source === source && this.ownShare === own) {
+        if (dispatched) this.stopSource();
+        else if (previousFormat) {
+          try {
+            await previousFormat.video.applyConstraints(previousFormat.constraints);
+          } catch (restoreError) {
+            if (this.source === source && this.ownShare === own) this.stopSource();
+            throw new AggregateError(
+              [cause, restoreError],
+              'The previous screen format could not be restored.',
+              { cause: restoreError },
+            );
+          }
+        }
+      }
+      throw cause;
+    } finally {
+      this.changingQuality = false;
     }
   };
   private retireShare(socket: ScreenSocket, binding: OwnedScreenBinding, shareId: string) {
@@ -705,8 +809,8 @@ export class ScreenCall {
       element.pause();
       element.srcObject = null;
     }
-    if (prepared && window.tricordDesktop?.screens)
-      void window.tricordDesktop.screens
+    if (prepared?.desktop)
+      void prepared.desktop
         .cancel({ clientIntentRef: prepared.tag })
         .catch((cause) => this.error(cause));
     if (own && socket && epoch && this.binding) this.retireShare(socket, this.binding, own.id);
@@ -714,6 +818,7 @@ export class ScreenCall {
       phase: this.current() ? 'ready' : 'idle',
       label: '',
       viewers: 0,
+      obsEncoder: undefined,
       prepared: false,
       ownShareId: null,
     });
@@ -883,6 +988,12 @@ export class ScreenCall {
             const permit = screenRenewalPermit(existing.life.generation, peerDeadline, revision);
             existing.life.renew(permit);
             existing.peer.adoptRenewal(permit);
+            if (existing.native)
+              void existing.native.renew(peerDeadline).catch((cause) => {
+                if (this.outgoing.get(grant.link.id) !== existing) return;
+                this.closeOutgoing(grant.link.id);
+                this.error(cause);
+              });
           } else if (grant.link.id !== this.offeringLinkId) {
             newPublishers.set(grant.link.id, { link: grant.link, deadline: peerDeadline });
           }
@@ -953,8 +1064,11 @@ export class ScreenCall {
       (link.selectionRevision as number) < 1
     )
       throw new Error('Invalid screen link.');
-    screenVideoRequest({ revision: 1, publisher: link.quality, viewer: link.quality });
-    return { link: link as ScreenLinkGrant['link'], deadline: lifetime(data.remainingMs, started) };
+    const { id, shareId, publisherId, viewerId, selectionRevision } = link as ScreenLink;
+    return {
+      link: { id, shareId, publisherId, viewerId, selectionRevision },
+      deadline: lifetime(data.remainingMs, started),
+    };
   }
   private async drainPublisherOffers() {
     if (this.offeringLinkId) return;
@@ -974,7 +1088,7 @@ export class ScreenCall {
     }
   }
   private async openPublisher(
-    link: ScreenLinkGrant['link'],
+    link: ScreenLink,
     deadline: number,
     source: CaptureSession,
     own: ScreenShare,
@@ -984,21 +1098,37 @@ export class ScreenCall {
       binding = this.binding!,
       epoch = binding.binding.epoch;
     let peer: ScreenPeer | undefined;
+    let native: ObsPeer | undefined;
     try {
       const capture = source.borrow();
+      const prepared = this.prepared;
+      const desktop = prepared?.desktop;
       peer = new ScreenPeer({
         endpoint: { epoch, linkId: link.id, role: 'publisher', sound: own.sound },
         lifecycle: life,
         source: { video: capture.video, audio: capture.audio, sound: capture.sound },
         iceServers: this.iceServers,
         currentIceServers: () => this.iceServers,
+        videoSource: desktop ? obsVideoSource : undefined,
         content: () => source.content().kind,
-        codecPreference: () => source.codecPreference(),
-        createPeer: (config) => new RTCPeerConnection(config),
+        codecPreference: desktop ? undefined : () => source.codecPreference(),
+        createPeer: (config) => {
+          if (!desktop) return new RTCPeerConnection(config);
+          native = new ObsPeer(
+            desktop,
+            config,
+            prepared.tag,
+            link.id,
+            () => life.inspect()?.deadline ?? 0,
+            (obsEncoder) => {
+              if (this.prepared === prepared) this.update({ obsEncoder });
+            },
+          );
+          return native;
+        },
         initialVideoQuality: {
           revision: 1,
           publisher: qualityOnly(own),
-          viewer: qualityOnly(link.quality),
         },
         send: async (signal, abort) => ({
           ok: true,
@@ -1012,8 +1142,7 @@ export class ScreenCall {
           }
         },
       });
-      this.publisherLinks.set(link.id, link);
-      this.outgoing.set(link.id, { peer, life, shareId: own.id });
+      this.outgoing.set(link.id, { peer, life, shareId: own.id, native });
       await peer.offer();
     } catch (cause) {
       if (!peer) {
@@ -1031,52 +1160,29 @@ export class ScreenCall {
     const owned = this.outgoing.get(id);
     if (!owned) return;
     this.outgoing.delete(id);
-    this.publisherLinks.delete(id);
     owned.peer.dispose();
     owned.life.stop();
     this.update({ viewers: this.outgoing.size });
   }
-  watch = (shareId: string, quality: ScreenQuality) => {
+  watch = (shareId: string) => {
     this.cancelWatchRecovery(shareId);
-    return this.selectShare(shareId, quality, 'replace');
+    return this.selectShare(shareId, 'replace');
   };
-  watchMultiple = (shareId: string, quality: ScreenQuality) => {
+  watchMultiple = (shareId: string) => {
     this.cancelWatchRecovery(shareId);
     if (this.selecting)
       return Promise.reject(new Error('Finish the current screen selection first.'));
-    const existing = this.receiving.get(shareId);
-    if (existing) {
-      if (
-        JSON.stringify(qualityOnly(existing.selection)) === JSON.stringify(qualityOnly(quality))
-      ) {
-        this.focusWatch(shareId);
-        return Promise.resolve();
-      }
-      this.stopWatchingShare(shareId);
-    }
-    return this.selectShare(shareId, quality, 'add');
+    return this.selectShare(shareId, 'add');
   };
-  private async selectShare(
-    shareId: string,
-    quality: ScreenQuality,
-    mode: 'replace' | 'add',
-    recovery?: WatchRecovery,
-  ) {
+  private async selectShare(shareId: string, mode: 'replace' | 'add', recovery?: WatchRecovery) {
     await this.connect();
     if (this.selecting) throw new Error('Finish the current screen selection first.');
     const selected = this.state.shares.find((item) => item.id === shareId);
     if (!selected || selected.id === this.ownShare?.id || this.state.hidden)
       throw new Error('That screen share is unavailable.');
     if (this.receiving.has(shareId)) {
-      if (mode === 'replace' && this.receiving.size > 1) {
-        // Re-selecting the focused stream as the primary view is a local layout action.
-        this.focusWatch(shareId);
-        return;
-      }
-      if (mode === 'add') {
-        this.focusWatch(shareId);
-        return;
-      }
+      this.focusWatch(shareId);
+      return;
     }
     if (mode === 'replace') this.stopWatching(false);
     const binding = this.binding!,
@@ -1100,7 +1206,6 @@ export class ScreenCall {
       )
         throw new Error('Screen selection ended.');
       const selection: ScreenSelectRequest = {
-        ...quality,
         epoch,
         shareId,
         mode,
@@ -1109,7 +1214,6 @@ export class ScreenCall {
       };
       // Reserved only for cancellation before a receive handle owns exact-link cleanup.
       const cancelledCleanup: ScreenSelectRequest = {
-        ...quality,
         epoch,
         shareId: null,
         mode: 'remove',
@@ -1140,7 +1244,6 @@ export class ScreenCall {
         shareId,
         life,
         handle: undefined as unknown as ScreenReceiveHandle,
-        selection,
         playbackTimeout: '',
       };
       const handle = this.options.attachment.openIncoming({
@@ -1154,7 +1257,6 @@ export class ScreenCall {
         }),
         cleanup: async () => {
           await this.cleanupSelection(socket, {
-            ...qualityOnly(selection),
             epoch,
             shareId: null,
             mode: 'remove',
@@ -1278,13 +1380,11 @@ export class ScreenCall {
           )
             return;
           recovery.attempts++;
-          await this.selectShare(shareId, qualityOnly(incoming.selection), 'add', recovery).catch(
-            (cause: unknown) => {
-              if ((cause as { code?: string } | undefined)?.code !== 'throttled') throw cause;
-              if (this.watchRecoveries.get(shareId) === recovery && this.current(binding))
-                this.recoverWatching(incoming, binding);
-            },
-          );
+          await this.selectShare(shareId, 'add', recovery).catch((cause: unknown) => {
+            if ((cause as { code?: string } | undefined)?.code !== 'throttled') throw cause;
+            if (this.watchRecoveries.get(shareId) === recovery && this.current(binding))
+              this.recoverWatching(incoming, binding);
+          });
         } catch (cause) {
           if (this.watchRecoveries.get(shareId) === recovery && this.current(binding))
             this.error(cause);
@@ -1377,15 +1477,13 @@ export class ScreenCall {
     this.update({ hidden: !visible });
     if (!visible) {
       const incoming = [...this.receiving.values()];
-      if (incoming.length && !this.resumeInProgress)
+      const epoch = this.binding?.binding.epoch;
+      if (epoch && incoming.length && !this.resumeInProgress)
         this.resume = {
-          selections: incoming.map(({ selection, shareId }) => ({
-            shareId,
-            quality: qualityOnly(selection),
-          })),
+          shareIds: incoming.map(({ shareId }) => shareId),
           focused: this.state.watching ?? incoming[0]!.shareId,
           layout: this.state.layout,
-          epoch: incoming[0]!.selection.epoch,
+          epoch,
         };
       this.stopWatching(false);
     } else if (this.resume) {
@@ -1401,12 +1499,11 @@ export class ScreenCall {
       await this.cleanupRaw;
       if (this.resume !== previous || this.state.hidden || !this.current(binding)) return;
       if (previous.epoch !== binding?.binding.epoch) return;
-      for (const previousSelection of previous.selections) {
+      for (const shareId of previous.shareIds) {
         if (this.resume !== previous || this.state.hidden) return;
-        if (!this.state.shares.some((item) => item.id === previousSelection.shareId)) continue;
-        if (this.receiving.size)
-          await this.watchMultiple(previousSelection.shareId, previousSelection.quality);
-        else await this.watch(previousSelection.shareId, previousSelection.quality);
+        if (!this.state.shares.some((item) => item.id === shareId)) continue;
+        if (this.receiving.size) await this.watchMultiple(shareId);
+        else await this.watch(shareId);
       }
       if (this.receiving.has(previous.focused)) {
         this.preferredWatch = previous.focused;

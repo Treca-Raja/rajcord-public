@@ -3,6 +3,8 @@ import { ScreenCall } from './screen-call';
 import { WebScreenCapture } from './screen-capture';
 import type { OwnedScreenBinding } from './screen-binding';
 import type { ScreenSocket } from './screen-socket';
+import { DESKTOP_SCREEN_PROTOCOL_VERSION } from '@tricord/shared';
+import type { DesktopScreenPreparation } from '@tricord/shared';
 
 const wire = vi.hoisted(() => ({ current: undefined as unknown as ScreenSocket }));
 vi.mock('./screen-socket', () => ({ screenSocket: () => wire.current }));
@@ -18,13 +20,11 @@ const calls: ScreenCall[] = [],
   adapters: WebScreenCapture[] = [],
   drains: (() => void)[] = [];
 const closeProbe = vi.fn();
-let supportsFixedFormat: boolean;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(100000);
   vi.stubGlobal('document', Object.assign(new EventTarget(), { hidden: false }));
   vi.stubGlobal('window', {});
-  supportsFixedFormat = true;
   closeProbe.mockClear();
   vi.stubGlobal(
     'RTCPeerConnection',
@@ -35,7 +35,6 @@ beforeEach(() => {
           sender: {
             getParameters: () => ({ ...parameters }),
             setParameters: async (next: RTCRtpSendParameters) => {
-              if (!supportsFixedFormat) throw new TypeError('Unknown degradation preference');
               parameters = next;
             },
           },
@@ -59,6 +58,7 @@ async function fixture(failDisposal = false, chooseSource = true) {
     channelId = crypto.randomUUID(),
     shareId = crypto.randomUUID();
   const published = deferred<unknown>(),
+    qualityChanged = deferred<unknown>(),
     stopped = deferred<unknown>();
   const generation = {},
     invalidations = new Set<() => void>();
@@ -82,6 +82,7 @@ async function fixture(failDisposal = false, chooseSource = true) {
   const command = vi.fn(async (event: string) => {
     if (event === 'screen:directory') return { epoch, revision: 1, shares: [] };
     if (event === 'screen:publish') return published.promise;
+    if (event === 'screen:quality') return qualityChanged.promise;
     if (event === 'screen:stop') return stopped.promise;
     throw new Error('Unexpected fixture command.');
   });
@@ -93,6 +94,10 @@ async function fixture(failDisposal = false, chooseSource = true) {
     enabled: true,
     label: 'Owned',
     getSettings: () => trackSettings,
+    getConstraints: () => ({
+      height: { exact: trackSettings.height },
+      frameRate: { exact: trackSettings.frameRate },
+    }),
     applyConstraints: vi.fn(
       async (constraints: { height: { exact: number }; frameRate?: { exact: number } }) => {
         trackSettings.height = constraints.height.exact;
@@ -141,6 +146,7 @@ async function fixture(failDisposal = false, chooseSource = true) {
   };
   drains.push(() => {
     published.resolve(grant);
+    qualityChanged.resolve(grant.share);
     stopped.resolve({ stopped: true });
   });
   if (chooseSource) {
@@ -151,6 +157,7 @@ async function fixture(failDisposal = false, chooseSource = true) {
     call,
     command,
     published,
+    qualityChanged,
     stopped,
     grant,
     track,
@@ -160,22 +167,63 @@ async function fixture(failDisposal = false, chooseSource = true) {
     getDisplayMedia,
   };
 }
-it('explains unsupported fixed-format publishing before opening the source picker', async () => {
+
+function desktopBridge(version: number, available: boolean, reason?: string) {
+  const screens = {
+    capabilities: vi.fn(async () => ({ version, obs: { available, reason }, systemSound: true })),
+    prepare: vi.fn(async (request: DesktopScreenPreparation) => ({
+      clientIntentRef: request.clientIntentRef,
+      remainingMs: 45000,
+      ready: true,
+    })),
+    cancel: vi.fn(async () => {}),
+    onStop: () => () => {},
+    onVisibility: () => () => {},
+    nativeCommand: vi.fn(),
+    onNativeEvent: () => () => {},
+  };
+  vi.stubGlobal('window', { tricordDesktop: { platform: 'win32', screens } });
+  return screens;
+}
+
+it('starts desktop preparation with OBS Automatic even when old settings contain a sender', async () => {
+  const screens = desktopBridge(DESKTOP_SCREEN_PROTOCOL_VERSION, true);
   const f = await fixture(false, false);
-  supportsFixedFormat = false;
-  await expect(f.call.prepare(f.settings)).rejects.toMatchObject({ code: 'unsupported' });
-  expect(f.call.inspect()).toMatchObject({
-    phase: 'ready',
-    prepared: false,
-    error: expect.stringContaining(
-      'This browser cannot publish screen shares at a fixed resolution and frame rate.',
-    ),
+  const settings = { ...f.settings, sender: 'chromium' };
+  await f.call.prepare(settings);
+  expect(screens.prepare).toHaveBeenCalledExactlyOnceWith({
+    clientIntentRef: expect.any(String),
+    epoch: f.binding.binding.epoch,
+    sound: 'none',
+    encoder: 'auto',
   });
-  await expect(f.call.choose()).rejects.toThrow('Prepare screen sharing first.');
+  expect(RTCPeerConnection).not.toHaveBeenCalled();
+  expect(f.getDisplayMedia).not.toHaveBeenCalled();
+});
+
+it.each([
+  [1, true, 'Update Rajcord Desktop to share your screen with OBS.'],
+  [DESKTOP_SCREEN_PROTOCOL_VERSION, false, 'Reinstall Rajcord Desktop to restore screen sharing.'],
+])(
+  'blocks desktop capture and reports an actionable error for capability %s',
+  async (version, available, message) => {
+    const screens = desktopBridge(version, available, message);
+    const f = await fixture(false, false);
+    await expect(f.call.prepare(f.settings)).rejects.toThrow(message);
+    expect(f.call.inspect().error).toBe(message);
+    expect(f.getDisplayMedia).not.toHaveBeenCalled();
+    expect(screens.prepare).not.toHaveBeenCalled();
+    expect(RTCPeerConnection).not.toHaveBeenCalled();
+  },
+);
+
+it('prepares explicit capture without creating a peer before source consent', async () => {
+  const f = await fixture(false, false);
+  await f.call.prepare(f.settings);
+  expect(f.call.inspect()).toMatchObject({ phase: 'ready', prepared: true, error: '' });
   expect(f.getDisplayMedia).not.toHaveBeenCalled();
   expect(f.command.mock.calls.map(([event]) => event)).not.toContain('screen:publish');
-  expect(closeProbe).toHaveBeenCalledOnce();
-  expect(f.binding.release).not.toHaveBeenCalled();
+  expect(RTCPeerConnection).not.toHaveBeenCalled();
 });
 it('stops locally while a publish is unresolved and retains publication/cleanup admission through late settlement', async () => {
   const f = await fixture();
@@ -204,7 +252,7 @@ it('retires only the screen binding after a lost publish acknowledgement instead
   expect(f.binding.release).toHaveBeenCalledTimes(1);
   expect(f.call.inspect().phase).toBe('idle');
   expect(f.voice.leave).not.toHaveBeenCalled();
-  expect(RTCPeerConnection).toHaveBeenCalledTimes(1);
+  expect(RTCPeerConnection).not.toHaveBeenCalled();
 });
 it('rejects a bare share acknowledgement and never creates peers before a publication proof', async () => {
   const f = await fixture(),
@@ -212,7 +260,7 @@ it('rejects a bare share acknowledgement and never creates peers before a public
   f.published.resolve(f.grant.share);
   expect(await work).toBeInstanceOf(Error);
   expect(f.binding.release).toHaveBeenCalledTimes(1);
-  expect(RTCPeerConnection).toHaveBeenCalledTimes(1);
+  expect(RTCPeerConnection).not.toHaveBeenCalled();
   expect(f.voice.leave).not.toHaveBeenCalled();
   expect(Object.isFrozen(f.call.inspect())).toBe(true);
   expect(Object.isFrozen(f.call.inspect().shares)).toBe(true);
@@ -250,6 +298,50 @@ it('can stop a pending preview format change without publishing or dropping the 
   await expect(result).rejects.toThrow('Screen source ended.');
   expect(f.command.mock.calls.some(([event]) => event === 'screen:publish')).toBe(false);
   expect(f.voice.leave).not.toHaveBeenCalled();
+});
+it('changes the live broadcaster ceiling on the same source and fences overlapping edits', async () => {
+  const f = await fixture();
+  f.published.resolve(f.grant);
+  await f.call.publish();
+  const quality = {
+    profile: 'smooth' as const,
+    resolution: 480 as const,
+    frameRate: 15 as const,
+    videoBitrate: 2000000 as const,
+  };
+  const pending = f.call.updateQuality(quality);
+  await expect(f.call.updateQuality(f.settings)).rejects.toThrow('Finish applying');
+  f.qualityChanged.resolve({ ...f.grant.share, ...quality });
+  await pending;
+  expect(f.command).toHaveBeenCalledWith(
+    'screen:quality',
+    expect.objectContaining({
+      ...quality,
+      shareId: f.grant.share.id,
+      revision: 1,
+    }),
+    undefined,
+  );
+  expect(f.getDisplayMedia).toHaveBeenCalledTimes(1);
+  expect(f.call.inspect()).toMatchObject({ phase: 'sharing', ownShareId: f.grant.share.id });
+  expect(f.track.getSettings()).toMatchObject({ height: 480, frameRate: 15 });
+  expect(f.voice.leave).not.toHaveBeenCalled();
+});
+it('restores the previous capture format if a live edit fails before signaling', async () => {
+  const f = await fixture();
+  f.published.resolve(f.grant);
+  await f.call.publish();
+  const apply = f.track.applyConstraints.getMockImplementation()!;
+  f.track.applyConstraints.mockImplementationOnce(async (constraints) => {
+    await apply(constraints);
+    throw new Error('Owned format failure.');
+  });
+  await expect(f.call.updateQuality({ ...f.settings, resolution: 480 })).rejects.toThrow(
+    'cannot capture',
+  );
+  expect(f.track.getSettings()).toMatchObject({ height: 720, frameRate: 60 });
+  expect(f.command.mock.calls.some(([event]) => event === 'screen:quality')).toBe(false);
+  expect(f.call.inspect()).toMatchObject({ phase: 'sharing', ownShareId: f.grant.share.id });
 });
 it('retires the published share and keeps voice connected when capture disposal throws', async () => {
   const f = await fixture(true),
