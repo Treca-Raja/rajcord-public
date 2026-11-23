@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld(
   'tricordDesktop',
   Object.freeze({
     screens: Object.freeze({
+      renewsNativeViewerGrants: true,
       capabilities: () => ipcRenderer.invoke('screen:capabilities'),
       prepare: (request: unknown) => ipcRenderer.invoke('screen:prepare', request),
       handoff: (request: unknown) => ipcRenderer.invoke('screen:handoff', request),

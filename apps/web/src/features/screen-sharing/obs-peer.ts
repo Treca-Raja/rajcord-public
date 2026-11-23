@@ -22,9 +22,13 @@ export class ObsPeer extends EventTarget implements ScreenRtcPeer {
   private remote = false;
   private removeEvents;
   private readonly invoke: DesktopScreenBridge['nativeCommand'];
+  private readonly renewsNativeViewerGrants;
 
   constructor(
-    bridge: Pick<DesktopScreenBridge, 'nativeCommand' | 'onNativeEvent'>,
+    bridge: Pick<
+      DesktopScreenBridge,
+      'nativeCommand' | 'onNativeEvent' | 'renewsNativeViewerGrants'
+    >,
     private configuration: RTCConfiguration,
     private tag: string,
     private linkId: string,
@@ -35,6 +39,7 @@ export class ObsPeer extends EventTarget implements ScreenRtcPeer {
     if (!bridge.nativeCommand || !bridge.onNativeEvent)
       throw new Error('Update Rajcord Desktop to share your screen with OBS.');
     this.invoke = bridge.nativeCommand;
+    this.renewsNativeViewerGrants = bridge.renewsNativeViewerGrants;
     this.removeEvents = bridge.onNativeEvent((message) => {
       if (message.tag !== tag || message.linkId !== linkId || this.connectionState === 'closed')
         return;
@@ -173,7 +178,7 @@ export class ObsPeer extends EventTarget implements ScreenRtcPeer {
   }
 
   async renew(deadline: number) {
-    if (this.description && this.connectionState !== 'closed')
+    if (!this.renewsNativeViewerGrants && this.description && this.connectionState !== 'closed')
       await this.command({ op: 'lease', deadline });
   }
 

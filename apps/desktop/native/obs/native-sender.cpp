@@ -48,7 +48,6 @@
 
 namespace {
 constexpr size_t max_line = 20000;
-constexpr size_t max_peers = 3;
 std::mutex output_mutex;
 bool diagnostics = false;
 
@@ -73,6 +72,7 @@ class Sender {
   ObsCapture obs_capture;
   uint64_t clock_epoch = 0;
   uint64_t bitrate_check = 0;
+  EncoderCadence encoder_cadence;
   std::string starting;
   uint64_t source_check = 0;
   uint64_t sample_time = 0;
@@ -98,11 +98,10 @@ class Sender {
 
   void open(const std::vector<std::string>& command) {
     const auto& id = command.at(2);
-    if (command.at(1) == "restart") close(id);
-    require(peers.size() < max_peers && !peers.count(id), "Native viewer limit reached.");
-    auto peer = std::make_unique<Peer>(command, audio.enabled(), clock_epoch);
+    auto peer = std::make_unique<Peer>(command, audio.enabled(), clock_epoch, encoder_cadence.limit());
     auto initial = peer->limits;
     initial.bitrate = static_cast<int>(VideoCongestion::initial(initial.bitrate));
+    initial.fps = std::min(initial.fps, encoder_cadence.limit());
     peer->start_obs(initial);
     peers.emplace(id, std::move(peer));
   }
@@ -141,10 +140,25 @@ class Sender {
         for (auto& [id, peer] : peers) peer->send_audio(packet, timestamp);
     }
     const bool bandwidth_tick = now >= bitrate_check;
-    if (bandwidth_tick) bitrate_check = now + 1000;
+    if (bandwidth_tick) {
+      bitrate_check = now + 1000;
+      uint64_t fresh = 0, late = 0, work = 0;
+      for (const auto& [id, peer] : peers) {
+        const auto [current, stale] = peer->take_encode_freshness();
+        fresh += current;
+        late += stale;
+        work += peer->encoder_work();
+      }
+      encoder_cadence.observe(now, fresh, late, work);
+      if (diagnostics)
+        std::fprintf(stderr, "encoder_cadence_ms=%llu fps_limit=%d fresh=%llu stale=%llu\n",
+                     static_cast<unsigned long long>(now), encoder_cadence.limit(),
+                     static_cast<unsigned long long>(fresh), static_cast<unsigned long long>(late));
+    }
     for (auto viewer = peers.begin(); viewer != peers.end();) {
       try {
         if (viewer->second->failed()) throw std::runtime_error("Media transport failed.");
+        viewer->second->limit_encoder_fps(encoder_cadence.limit());
         viewer->second->tick(now, bandwidth_tick);
         ++viewer;
       } catch (const std::exception& error) {
@@ -156,6 +170,20 @@ class Sender {
     }
     if (source && diagnostics && now >= sample_time) {
       sample_time = now + 1000;
+      PROCESS_MEMORY_COUNTERS memory{};
+      DWORD handles = 0;
+      FILETIME created{}, exited{}, kernel{}, user{};
+      const auto process = GetCurrentProcess();
+      if (K32GetProcessMemoryInfo(process, &memory, sizeof(memory)) &&
+          GetProcessHandleCount(process, &handles) &&
+          GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+        const auto ticks = [](FILETIME time) {
+          return (uint64_t{time.dwHighDateTime} << 32) | time.dwLowDateTime;
+        };
+        std::fprintf(stderr, "resources_ms=%llu peers=%zu working_set_bytes=%zu handles=%lu cpu_us=%llu\n",
+                     static_cast<unsigned long long>(now), peers.size(), memory.WorkingSetSize, handles,
+                     static_cast<unsigned long long>((ticks(kernel) + ticks(user)) / 10));
+      }
       const auto capture = capture_gaps.interval();
       std::fprintf(stderr, "capture_ms=%llu captured=%llu capture_p95_ms=%.2f capture_p99_ms=%.2f\n",
                    static_cast<unsigned long long>(now), static_cast<unsigned long long>(captured.load()),
@@ -189,6 +217,8 @@ class Sender {
     const auto& id = command.at(2);
     std::string value;
     if (op == "open" || op == "restart") {
+      if (op == "restart") close(id);
+      else require(!peers.count(id), "Native viewer already exists.");
       try {
         open(command);
         value = peers.at(id)->offer();

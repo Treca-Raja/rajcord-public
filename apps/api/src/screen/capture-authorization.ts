@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { NATIVE_VIEWER_GRANT_VERSION } from '@tricord/shared';
 import type {
   CaptureAuthorization,
   CaptureSoundChoice,
@@ -26,7 +27,7 @@ export type CapturePublicationMatcher = (
   shareId: string,
   sourceGeneration: number,
   sound: string,
-) => { identity: object; expires: number } | null;
+) => { identity: object; expires: number; enableNativeViewerBatch?: () => void } | null;
 type Grant = {
   id: string;
   requestId: string;
@@ -45,6 +46,7 @@ type Publication = Omit<Grant, 'consumed' | 'promoted'> & {
   previewId: string;
   shareId: string;
   sourceGeneration: number;
+  nativeViewers?: number;
   share: object;
   issuedExpires: number;
   revision: number;
@@ -299,7 +301,17 @@ export class CaptureAuthorizationService {
     return own?.identity === publication.share ? own : null;
   }
   handoff(token: string, value: unknown, csrf: unknown) {
-    const body = input(value, ['id', 'epoch', 'shareId', 'sourceGeneration', 'requestId']);
+    const body = input(value, [
+      'id',
+      'epoch',
+      'shareId',
+      'sourceGeneration',
+      'requestId',
+      'nativeViewers',
+    ]);
+    const nativeViewers = body.nativeViewers;
+    if (nativeViewers !== undefined && nativeViewers !== NATIVE_VIEWER_GRANT_VERSION)
+      throw new HttpError(400, 'Invalid native viewer grant version.');
     const id = uuid(body.id),
       epoch = uuid(body.epoch),
       shareId = uuid(body.shareId),
@@ -338,6 +350,7 @@ export class CaptureAuthorizationService {
           previous.previewId !== id ||
           previous.shareId !== shareId ||
           previous.sourceGeneration !== sourceGeneration ||
+          previous.nativeViewers !== nativeViewers ||
           !this.current(previous) ||
           this.ownPublication(previous)?.identity !== own.identity
         )
@@ -356,6 +369,10 @@ export class CaptureAuthorizationService {
         };
       }
       if (preview.promoted) throw denied();
+      if (nativeViewers !== undefined) {
+        if (!own.enableNativeViewerBatch) throw denied();
+        own.enableNativeViewerBatch();
+      }
       const publication: Publication = {
         ...preview,
         id: randomUUID(),
@@ -363,6 +380,7 @@ export class CaptureAuthorizationService {
         requestId,
         shareId,
         sourceGeneration: sourceGeneration as number,
+        nativeViewers,
         share: own.identity,
         expires: Math.min(own.expires, auth.expiresAt.getTime()),
         issuedExpires: Math.min(own.expires, auth.expiresAt.getTime()),

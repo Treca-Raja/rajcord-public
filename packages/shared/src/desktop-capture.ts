@@ -64,6 +64,7 @@ export type DesktopScreenStatus = {
   error?: string;
 };
 export interface DesktopScreenBridge {
+  readonly renewsNativeViewerGrants?: true;
   capabilities(): Promise<{
     version: typeof DESKTOP_SCREEN_PROTOCOL_VERSION;
     systemSound: boolean;

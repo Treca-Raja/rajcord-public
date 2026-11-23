@@ -203,17 +203,20 @@ export class ObsScreen {
   private links = new Map<string, ReturnType<typeof setTimeout>>();
   private line = '';
   private closed = false;
-  private grants = new NativeViewerGrants();
+  private grants: NativeViewerGrants;
   private ice: ReturnType<typeof obsIce> = { uris: [], secure: undefined };
   private turnTls = new Map<string, Awaited<ReturnType<typeof openTurnTls>>>();
   private offers = new Map<string, string>();
-  private generations = new Map<string, object>();
+  private generations = new Map<string, { opening: boolean }>();
+  private closing = new Set<string>();
   observe(snapshot: NativeViewerSnapshot, started: number) {
     if (this.closed) return;
     this.ice = obsIce(snapshot.iceServers);
-    const authorized = this.grants.observe(snapshot, started);
+    this.grants.observe(snapshot, started);
     for (const id of this.links.keys()) {
-      if (!authorized.has(id))
+      const deadline = this.grants.currentDeadline(id);
+      if (deadline) this.lease(id, deadline);
+      else
         void this.closeLink(id).catch(() => this.fail('Could not stop the revoked native viewer.'));
     }
   }
@@ -224,10 +227,12 @@ export class ObsScreen {
     private readonly tag: string,
     private readonly event: (event: NativeScreenEvent) => void,
     private readonly ended: (reason: string) => void,
+    private readonly viewerBatchSize: number,
     obsEncoder?: ObsEncoderChoice,
     diagnosticOutput?: (chunk: string) => void,
     loopbackRelayFixture = false,
   ) {
+    this.grants = new NativeViewerGrants(viewerBatchSize);
     const bin = path.join(runtime.root, 'bin');
     this.child = spawn(runtime.executable, [], {
       shell: false,
@@ -307,7 +312,9 @@ export class ObsScreen {
 
   private request(...fields: string[]): Promise<string> {
     if (this.closed) return Promise.reject(sourceEnded());
-    if (this.pending.size >= 24) return Promise.reject(new Error('OBS controls are busy.'));
+    // Closing a tracked peer has its own bounded admission and must work even when controls are busy.
+    if (fields[0] !== 'close' && this.pending.size >= 24)
+      return Promise.reject(new Error('OBS controls are busy.'));
     const id = String(++this.sequence);
     const command = [id, ...fields].join('\t') + '\n';
     if (command.length > maxLine) return Promise.reject(new Error('OBS command is too large.'));
@@ -346,9 +353,11 @@ export class ObsScreen {
     this.links.delete(id);
     const tunnel = this.turnTls.get(id);
     this.turnTls.delete(id);
+    this.closing.add(id);
     try {
       return await this.request('close', id);
     } finally {
+      this.closing.delete(id);
       tunnel?.close();
     }
   }
@@ -364,16 +373,17 @@ export class ObsScreen {
       });
     const existing = this.links.has(linkId);
     if (op === 'open' || op === 'restart') {
-      if ((op === 'open' && (existing || this.links.size >= 3)) || (op === 'restart' && !existing))
-        throw new Error('OBS screen sharing supports up to three viewers.');
-      if (op === 'open' && (this.generations.has(linkId) || this.generations.size >= 3))
-        throw new Error('Native viewer admission is busy.');
-      const generation = {};
+      const current = this.generations.get(linkId);
+      if (this.closing.has(linkId) || (op === 'open' ? current : !existing || current?.opening))
+        throw new Error('The native viewer state changed.');
+      if (op === 'open' && this.generations.size + this.closing.size >= this.viewerBatchSize)
+        throw new Error('The native viewer authorization batch is full.');
+      const generation = { opening: true };
       this.generations.set(linkId, generation);
       let tunnel: Awaited<ReturnType<typeof openTurnTls>> | undefined;
       const previousTunnel = this.turnTls.get(linkId);
       try {
-        const deadline = await this.grants.deadline(linkId);
+        await this.grants.deadline(linkId);
         if (this.generations.get(linkId) !== generation) throw sourceEnded();
         const { uris, secure } = this.ice;
         const endpoints = [...uris];
@@ -383,13 +393,14 @@ export class ObsScreen {
           endpoints.push(`turn://${secure.credentials}@127.0.0.1:${tunnel.port}?transport=tcp`);
         }
         const args = [...video(command.video), ...endpoints.map(encode)];
-        this.lease(linkId, Math.min(deadline, command.deadline));
+        this.lease(linkId, Math.min(this.grants.currentDeadline(linkId), command.deadline));
         const sdp = await this.request(op, linkId, ...args);
         if (this.generations.get(linkId) !== generation) throw sourceEnded();
         if (tunnel) this.turnTls.set(linkId, tunnel);
         else this.turnTls.delete(linkId);
         previousTunnel?.close();
         this.offers.set(linkId, sdp);
+        generation.opening = false;
         return sdp;
       } catch (error) {
         tunnel?.close();
@@ -409,16 +420,20 @@ export class ObsScreen {
       return '';
     }
     if (op === 'quality') return this.request(op, linkId, ...video(command.video));
+    const generation = this.generations.get(linkId);
     const { parseScreenDescription, parseScreenIce } = await import('@tricord/shared');
-    if (this.closed || !this.links.has(linkId)) throw sourceEnded();
+    if (this.closed || this.generations.get(linkId) !== generation || !this.links.has(linkId))
+      throw sourceEnded();
     if (op === 'local' || op === 'answer') {
       const description = parseScreenDescription(command.sdp, op === 'local' ? 'offer' : 'answer');
       if (op === 'local' && command.sdp !== this.offers.get(linkId))
         throw new Error('Native offer changed.');
       if (op === 'answer') {
-        const generation = this.generations.get(linkId);
-        await this.grants.deadline(linkId, createHash('sha256').update(command.sdp).digest('hex'));
+        const hash = createHash('sha256').update(command.sdp).digest('hex');
+        await this.grants.deadline(linkId, hash);
         if (this.generations.get(linkId) !== generation) throw sourceEnded();
+        if (!this.grants.currentDeadline(linkId, hash))
+          throw new Error('The server did not authorize this native viewer answer.');
       }
       if (description.kinds.join() !== (this.sound ? 'm=video,m=audio' : 'm=video'))
         throw new Error('Invalid native media description.');
@@ -436,6 +451,7 @@ export class ObsScreen {
     this.closed = true;
     this.grants.stop();
     this.generations.clear();
+    this.offers.clear();
     for (const timer of this.links.values()) clearTimeout(timer);
     this.links.clear();
     for (const pending of this.pending.values()) {

@@ -51,5 +51,18 @@ int main() {
   assert(sustained.observe(1'400'000, ceiling, 44000, {0, 80, 0}, false, true) == 1'190'000u);
   assert(!sustained.observe(950'000, ceiling, 45000, {4, 79, 0}, false, true));
   assert(sustained.observe(950'000, ceiling, 46000, {0, 30, 0}, false) == 1'187'500u);
+  EncoderCadence encoder;
+  encoder.observe(1000, 0, 60, 900);
+  assert(encoder.limit() == 60);
+  encoder.observe(2000, 60, 0, 900);
+  encoder.observe(3000, 0, 60, 900);
+  encoder.observe(4000, 0, 60, 900);
+  assert(encoder.limit() == 30);
+  encoder.observe(6000, 60, 0, 400);
+  assert(encoder.limit() == 30);
+  encoder.observe(8000, 60, 0, 900);
+  assert(encoder.limit() == 30);
+  encoder.observe(9000, 60, 0, 400);
+  assert(encoder.limit() == 60);
   std::puts("PASS congestion backoff, rate recovery, limits and independent peers.");
 }

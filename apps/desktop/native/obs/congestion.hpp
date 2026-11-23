@@ -10,6 +10,36 @@ struct VideoFeedback {
   unsigned remb = 0;
 };
 
+// OBS shares one composition clock and encoder hardware across otherwise independent peers.
+// Back off only when encoded frames are consistently too old to deliver.
+class EncoderCadence {
+  int fps_limit = 60;
+  unsigned late_windows = 0;
+  uint64_t probe_at = 0;
+  uint64_t overloaded_work = 0;
+
+ public:
+  int limit() const { return fps_limit; }
+
+  void observe(uint64_t now, uint64_t fresh, uint64_t late, uint64_t work) {
+    if (late >= 15 && late >= fresh) {
+      if (fps_limit > 15 && ++late_windows >= 2) {
+        fps_limit /= 2;
+        late_windows = 0;
+        overloaded_work = work;
+        probe_at = now + 3000;
+      }
+    } else {
+      late_windows = 0;
+      if (fps_limit < 60 && fresh && !late && now >= probe_at &&
+          work <= overloaded_work * 3 / 4) {
+        fps_limit *= 2;
+        probe_at = now + 3000;
+      }
+    }
+  }
+};
+
 class VideoCongestion {
  public:
   enum class Format { full, medium, compact };

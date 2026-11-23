@@ -6,7 +6,7 @@
 // RAJCORD_SCREEN_BENCH_RECEIVER selects visible Electron windows (default) or headless Edge.
 // RAJCORD_SCREEN_BENCH_IMPAIRMENT=1 uses the owned loopback TURN fixture with one native viewer.
 // RECOVERY=1 and VIEWER_ISOLATION=1 measure bitrate recovery for one shaped and one direct viewer.
-// SHARED_UPLOAD=1 shares the relay fixture's bitrate cap across two or three viewers.
+// SHARED_UPLOAD=1 shares the relay fixture's bitrate cap across the selected viewers.
 // For a live game, set RAJCORD_SCREEN_BENCH_DOOM and RAJCORD_SCREEN_BENCH_IWAD to
 // Chocolate Doom and Freedoom 2. The default game metric is the engine's timedemo FPS.
 import assert from 'node:assert/strict';
@@ -35,6 +35,9 @@ const profile = env.RAJCORD_SCREEN_BENCH_PROFILE;
 const seconds = Number(env.RAJCORD_SCREEN_BENCH_SECONDS ?? 20);
 const counts = (env.RAJCORD_SCREEN_BENCH_VIEWERS ?? '1,2,3').split(',').map(Number);
 const bitrate = Number(env.RAJCORD_SCREEN_BENCH_BITRATE ?? 12000000);
+const height = Number(env.RAJCORD_SCREEN_BENCH_HEIGHT ?? 1080);
+const width = Math.round((height * 16) / 9);
+const fps = Number(env.RAJCORD_SCREEN_BENCH_FPS ?? 60);
 const liveGame = Boolean(env.RAJCORD_SCREEN_BENCH_DOOM);
 const recording = env.RAJCORD_SCREEN_BENCH_RECORD;
 const gameCapture = env.RAJCORD_OBS_GAME_CAPTURE_TEST === '1';
@@ -77,8 +80,14 @@ assert(
   'Freedoom uses its original demo with no video or marker override, up to 40 seconds.',
 );
 assert(process.platform === 'win32' && seconds >= 5 && seconds <= 180);
-assert(counts.every((count) => [1, 2, 3].includes(count)));
+assert(counts.every((count) => Number.isSafeInteger(count) && count > 0));
+assert(
+  counts.every((count) => count <= 3) || liveGame || env.RAJCORD_SCREEN_BENCH_VIDEO,
+  'Select moving gameplay for the large-audience benchmark.',
+);
 assert([2000000, 4000000, 6000000, 8000000, 12000000, 20000000].includes(bitrate));
+assert([720, 1080].includes(height) && [30, 60].includes(fps));
+assert((height === 1080 && fps === 60) || (!impairment && !coturn && !expectUnpadded));
 
 async function launchFixture() {
   await mkdir(fixtureRoot, { recursive: true });
@@ -232,6 +241,7 @@ function installPeers() {
     },
     ice: (candidate) => peers[0].addIceCandidate(candidate),
     first: () => firstFrame,
+    peerState: () => [peers[0]?.iceConnectionState, peers[0]?.connectionState],
     record(duration) {
       return new Promise((resolve, reject) => {
         const recorder = new MediaRecorder(video.srcObject, {
@@ -282,6 +292,7 @@ function installPeers() {
           jitterBufferSeconds: inbound.jitterBufferDelay,
           jitterBufferFrames: inbound.jitterBufferEmittedCount,
           bytes: inbound.bytesReceived,
+          transportBytes: pair?.bytesReceived,
           decoder: inbound.decoderImplementation,
           codec: stats.get(inbound.codecId)?.mimeType,
           pairId: pair?.id,
@@ -471,7 +482,10 @@ function nativeSender(target, onIce) {
     renderUpdates = [],
     encoded = new Map(),
     encoders = new Map(),
-    timing = new Map();
+    timing = new Map(),
+    resources = [],
+    cadence = [],
+    congestion = new Map();
   let seq = 0,
     lastTime,
     failure;
@@ -487,6 +501,29 @@ function nativeSender(target, onIce) {
   child.once('exit', () => fail(failure ?? new Error('OBS helper exited.')));
   createInterface({ input: child.stderr }).on('line', (line) => {
     if (env.RAJCORD_SCREEN_BENCH_DIAGNOSTICS === '1') console.error(line);
+    const resource =
+      /^resources_ms=(\d+) peers=(\d+) working_set_bytes=(\d+) handles=(\d+) cpu_us=(\d+)/.exec(
+        line,
+      );
+    if (resource) {
+      const [time, peers, workingSetBytes, handles, cpuUs] = resource.slice(1).map(Number);
+      resources.push({ time, peers, workingSetBytes, handles, cpuUs });
+    }
+    const sample = /^encoder_cadence_ms=(\d+) fps_limit=(\d+) fresh=(\d+) stale=(\d+)/.exec(line);
+    if (sample) {
+      const [time, limit, fresh, stale] = sample.slice(1).map(Number);
+      cadence.push({ time, limit, fresh, stale });
+    }
+    const traffic =
+      /^congestion link=(\S+) .* sent_bytes=(\d+) queue_ms=(\d+) discarded=(\d+) repairs=(\d+)/.exec(
+        line,
+      );
+    if (traffic) {
+      const [, id, ...values] = traffic;
+      const [sentBytes, queueMs, discarded, repairs] = values.map(Number);
+      if (!congestion.has(id)) congestion.set(id, []);
+      congestion.get(id).push({ time: lastTime, sentBytes, queueMs, discarded, repairs });
+    }
     const capture = /capture_ms=(\d+) captured=(\d+)/.exec(line);
     const wgc = /wgc_ms=(\d+) arrivals=(\d+) rendered_updates=(\d+)/.exec(line);
     if (wgc) {
@@ -554,7 +591,15 @@ function nativeSender(target, onIce) {
     start: () => request('start', 'window', ...target),
     async offer(id, turn, restart = false) {
       const uris = turn ? [encode(turn)] : [];
-      const sdp = await request(restart ? 'restart' : 'open', id, 1920, 1080, 60, bitrate, ...uris);
+      const sdp = await request(
+        restart ? 'restart' : 'open',
+        id,
+        width,
+        height,
+        fps,
+        bitrate,
+        ...uris,
+      );
       await request('local', id, encode(sdp));
       return sdp;
     },
@@ -566,8 +611,20 @@ function nativeSender(target, onIce) {
       renderUpdates.length = 0;
       encoded.clear();
       timing.clear();
+      resources.length = 0;
+      congestion.clear();
     },
-    samples: () => ({ captured, arrivals, renderUpdates, encoded, encoders, timing }),
+    samples: () => ({
+      captured,
+      arrivals,
+      renderUpdates,
+      encoded,
+      encoders,
+      timing,
+      resources,
+      cadence,
+      congestion,
+    }),
     async expectSourceEnd() {
       if (child.exitCode === null && child.signalCode === null)
         await once(child, 'close', { signal: AbortSignal.timeout(5000) });
@@ -578,8 +635,10 @@ function nativeSender(target, onIce) {
       const exited = once(child, 'exit');
       const deadline = setTimeout(() => child.kill(), 1500);
       try {
+        const began = performance.now();
         child.stdin.end();
-        await exited;
+        const [code, signal] = await exited;
+        return { ms: performance.now() - began, code, signal };
       } finally {
         clearTimeout(deadline);
       }
@@ -624,6 +683,9 @@ async function run() {
       JSON.stringify(
         {
           bitrate,
+          width,
+          height,
+          fps,
           seconds,
           source: liveGame
             ? 'Chocolate Doom / Freedoom 2 DEMO2'
@@ -711,15 +773,23 @@ async function run() {
       separateSourceDisplay = actual.id !== receiverDisplay.id;
     }
     let target = ownedSource?.target;
-    for (let i = 0; i < Math.max(...counts); i++) {
+    const maxCount = Math.max(...counts);
+    const area = receiverDisplay.workArea;
+    const columns = Math.ceil(Math.sqrt(maxCount));
+    const tileWidth = Math.min(560, Math.floor(area.width / columns));
+    const tileHeight = Math.min(
+      Math.floor((tileWidth * 9) / 16),
+      Math.floor(area.height / Math.ceil(maxCount / columns)),
+    );
+    for (let i = 0; i < maxCount; i++) {
       if (receiver === 'electron') {
         const window = new BrowserWindow({
           ...windowOptions,
           show: false,
-          width: 560,
-          height: 315,
-          x: receiverDisplay.workArea.x + 20 + 570 * i,
-          y: receiverDisplay.workArea.y + 50,
+          width: tileWidth,
+          height: tileHeight,
+          x: area.x + tileWidth * (i % columns),
+          y: area.y + tileHeight * Math.floor(i / columns),
           title: 'Rajcord benchmark viewer ' + (i + 1),
           webPreferences: {
             ...windowOptions.webPreferences,
@@ -867,6 +937,7 @@ async function run() {
         const captureStarted = performance.now();
         await native.start();
         report.captureReadyMs = performance.now() - captureStarted;
+        gpuTask = sampleGpu();
         report.nativeHelperSha256 = native.sha256;
         report.obsCaptureSha256 = native.captureSha256;
         async function connect(viewer, linkId, previous) {
@@ -923,10 +994,27 @@ async function run() {
           await viewer.wait('bench.first()');
           return { firstFrameMs: performance.now() - started, description: link.description };
         }
-        report.connectionMs = [];
-        for (const viewer of current) {
-          const connection = await connect(viewer, crypto.randomUUID());
-          report.connectionMs.push(connection.firstFrameMs);
+        const links = current.map(() => crypto.randomUUID());
+        const joins = await Promise.allSettled(
+          current.map((viewer, i) => connect(viewer, links[i])),
+        );
+        report.connectionMs = joins.map((join) =>
+          join.status === 'fulfilled' ? join.value.firstFrameMs : null,
+        );
+        const failed = joins.find((join) => join.status === 'rejected');
+        if (failed) {
+          report.joinFailures = await Promise.all(
+            joins.map(async (join, i) => {
+              if (join.status === 'fulfilled') return null;
+              return {
+                error: join.reason instanceof Error ? join.reason.message : String(join.reason),
+                peer: await current[i].js('bench.peerState()'),
+                encodedFps: rate(native.samples().encoded.get(links[i])),
+                encoder: native.samples().encoders.get(links[i]),
+              };
+            }),
+          );
+          throw failed.reason;
         }
         if (windowLifecycle) {
           const [viewer] = current;
@@ -962,7 +1050,6 @@ async function run() {
         native.reset();
         const startQuality = await sourceQuality();
         const startCpu = cpuTimes();
-        gpuTask = sampleGpu();
         const presents =
           game &&
           game.measure(seconds).then(
@@ -989,18 +1076,27 @@ async function run() {
         }
         if (iceError) throw iceError;
         const samples = native.samples();
+        report.encoderCadence = samples.cadence.filter(
+          (sample, index) => index === 0 || sample.limit !== samples.cadence[index - 1].limit,
+        );
         report.viewers = end.map((s, i) => {
           const start = initial[i],
             secs = (s.time - start.time) / 1000;
-          assert.equal(s.width, 1920);
-          assert.equal(s.height, 1080);
+          assert(s.width > 0 && s.width <= width && s.height > 0 && s.height <= height);
+          if (count <= 3) {
+            assert.equal(s.width, width);
+            assert.equal(s.height, height);
+          }
           assert.equal(s.codec.toLowerCase(), 'video/h264');
           if (relayOnly && (!isolation || i === 0)) assert.deepEqual(s.ice, ['relay', 'relay']);
           else assert(s.ice?.every((type) => ['host', 'srflx', 'prflx'].includes(type)));
           assert(s.decoded > start.decoded && s.presented > start.presented);
           const gaps = s.gaps.sort((a, b) => a - b);
           const percentile = (p) => gaps[Math.min(gaps.length - 1, Math.ceil(p * gaps.length) - 1)];
-          const key = [...byId.keys()][i];
+          const key = links[i];
+          const congestion = samples.congestion.get(key) ?? [];
+          const first = congestion[0];
+          const last = congestion.at(-1);
           return {
             decodedFps: (s.decoded - start.decoded) / secs,
             presentedFps: (s.presented - start.presented) / secs,
@@ -1047,10 +1143,83 @@ async function run() {
             freezes: s.freezes - start.freezes,
             freezeSeconds: s.freezeSeconds - start.freezeSeconds,
             loss: s.lost - start.lost,
+            retransmitted: (s.retransmitted ?? 0) - (start.retransmitted ?? 0),
             jitterMs: s.jitterMs,
             receivedMbps: (8 * (s.bytes - start.bytes)) / secs / 1e6,
+            receivedTransportMbps:
+              (8 * ((s.transportBytes ?? 0) - (start.transportBytes ?? 0))) / secs / 1e6,
+            nativeVideoRtpMbps:
+              first && last?.time > first.time
+                ? (0.008 * (last.sentBytes - first.sentBytes)) / (last.time - first.time)
+                : null,
+            nativeQueueMaxMs: summarize(congestion.map((sample) => sample.queueMs))?.max,
+            nativeDiscards: first && last ? last.discarded - first.discarded : null,
+            nativeRepairs: first && last ? last.repairs - first.repairs : null,
           };
         });
+        report.totalReceivedTransportMbps = report.viewers.reduce(
+          (sum, viewer) => sum + viewer.receivedTransportMbps,
+          0,
+        );
+        if (report.viewers.every((viewer) => viewer.nativeVideoRtpMbps !== null))
+          report.totalNativeVideoRtpMbps = report.viewers.reduce(
+            (total, viewer) => total + viewer.nativeVideoRtpMbps,
+            0,
+          );
+        if (samples.resources.length >= 2) {
+          const first = samples.resources[0],
+            last = samples.resources.at(-1);
+          report.helperResources = {
+            cpuCores: (last.cpuUs - first.cpuUs) / ((last.time - first.time) * 1000),
+            maxWorkingSetBytes: Math.max(
+              ...samples.resources.map((sample) => sample.workingSetBytes),
+            ),
+            maxHandles: Math.max(...samples.resources.map((sample) => sample.handles)),
+            maxPeers: Math.max(...samples.resources.map((sample) => sample.peers)),
+          };
+        }
+        if (!relayOnly && !windowLifecycle && count > 3) {
+          report.rejoin = [];
+          for (const [i, viewer] of current.entries()) {
+            const id = links[i];
+            const healthy = current[(i + 1) % current.length];
+            const before = await healthy.js('bench.stats(0)');
+            await viewer.js('bench.resetPeer()');
+            const restart = await connect(viewer, id, byId.get(id).description);
+            await native.closeViewer(id);
+            byId.delete(id);
+            await viewer.js('bench.resetPeer()');
+            const rejoin = await connect(viewer, crypto.randomUUID());
+            const after = await healthy.js('bench.stats(0)');
+            assert(
+              after.presented > before.presented,
+              'A different viewer must continue presenting.',
+            );
+            report.rejoin.push({ restartMs: restart.firstFrameMs, rejoinMs: rejoin.firstFrameMs });
+          }
+          const survivor = [...byId.keys()][0];
+          const began = performance.now();
+          const lastLimit = samples.cadence.at(-1)?.limit;
+          await Promise.all(
+            [...byId.keys()].filter((id) => id !== survivor).map((id) => native.closeViewer(id)),
+          );
+          while (
+            performance.now() - began < 6000 &&
+            (samples.resources.at(-1)?.peers !== 1 ||
+              (lastLimit < fps && samples.cadence.at(-1)?.limit < fps))
+          )
+            await delay(100);
+          assert.equal(samples.resources.at(-1)?.peers, 1, 'Closed native peers must be released.');
+          const first = await current[0].js('bench.stats(0)');
+          await current[0].wait('bench.stats(0).then(s => s?.presented > ' + first.presented + ')');
+          report.capacityAfterLeave = {
+            fpsLimit: samples.cadence.at(-1)?.limit,
+            handles: samples.resources.at(-1)?.handles,
+            workingSetBytes: samples.resources.at(-1)?.workingSetBytes,
+            elapsedMs: performance.now() - began,
+          };
+          if (lastLimit < fps) assert.equal(report.capacityAfterLeave.fpsLimit, fps);
+        }
         if (coturn) {
           report.coturnRejoin = [];
           const links = [...byId.entries()];
@@ -1346,7 +1515,11 @@ async function run() {
         try {
           await gpuTask;
           report.gpuSamples = gpuSamples;
-          await native?.stop();
+          report.stop = await native?.stop();
+          if (!relayOnly && !windowLifecycle && !report.failure && report.stop?.code !== 0) {
+            report.failure = 'The OBS helper did not exit cleanly after Stop.';
+            process.exitCode = 1;
+          }
           game?.stop();
           await Promise.allSettled(current.map((browser) => browser.js('window.bench?.stop()')));
           await Promise.allSettled(iceTasks);

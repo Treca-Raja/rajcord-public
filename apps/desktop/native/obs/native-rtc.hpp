@@ -176,6 +176,8 @@ class Peer {
   unsigned last_rtt = 0;
   uint64_t feedback_window = 0, prior_nacks = 0, prior_packets = 0, prior_queue_drops = 0;
   uint64_t encoder_ready_by = 0;
+  int encoder_fps_limit;
+  std::atomic<uint64_t> fresh_frames{0}, stale_frames{0};
   bool local = false, answered = false, first_audio = true;
 
  public:
@@ -186,8 +188,8 @@ class Peer {
   FrameGaps encode_gaps;
   ObsEncoder obs;
 
-  Peer(const std::vector<std::string>& command, bool audio_enabled, uint64_t clock)
-      : epoch(clock), id(command.at(2)), limits(command) {
+  Peer(const std::vector<std::string>& command, bool audio_enabled, uint64_t clock, int fps_limit)
+      : epoch(clock), encoder_fps_limit(fps_limit), id(command.at(2)), limits(command) {
     rtc::Configuration settings;
     settings.disableAutoNegotiation = true;
     settings.disableAutoGathering = true;
@@ -314,7 +316,12 @@ class Peer {
       ++encoded;
       encoded_bytes += packet.size + size;
       encode_gaps.frame();
-      if (!feedback->connected || !video.track->isOpen() || age > 250'000'000) return;
+      if (age > 250'000'000) {
+        ++stale_frames;
+        return;
+      }
+      ++fresh_frames;
+      if (!feedback->connected || !video.track->isOpen()) return;
       if (packet.keyframe) waiting_for_idr = false;
       if (waiting_for_idr) return;
       try {
@@ -364,14 +371,14 @@ class Peer {
         if (!exact || std::string_view(exact) != name) started = start(name);
       }
     } else started = start(obs_encoder_name(obs_choice));
-    require(started, "The selected OBS H.264 encoder could not initialize.");
+    require(started, "OBS could not allocate an H.264 encoder for this viewer. Check publisher encoder capacity.");
     encoder_ready_by = wait_for_packet ? 0 : GetTickCount64() + 1200;
     applied = static_cast<unsigned>(settings.bitrate);
     if (!selected_obs_encoder) selected_obs_encoder = obs.id;
     emit("ENCODER\t" + id + "\t" + obs.id);
   }
 
-  Video active_video(Video settings) const {
+  Video delivery_video(Video settings) const {
     if (congestion.format() != VideoCongestion::Format::full) {
       const auto height = congestion.format() == VideoCongestion::Format::compact ? 480. : 720.;
       const auto scale = std::min({1., height * 16. / 9. / settings.width, height / settings.height});
@@ -381,6 +388,28 @@ class Peer {
     }
     settings.bitrate = std::min(settings.bitrate, static_cast<int>(applied));
     return settings;
+  }
+
+  Video active_video(Video settings) const {
+    auto active = delivery_video(settings);
+    active.fps = std::min(active.fps, encoder_fps_limit);
+    return active;
+  }
+
+  uint64_t encoder_work() const {
+    const auto video = delivery_video(limits);
+    return uint64_t(video.width) * video.height * video.fps;
+  }
+
+  std::pair<uint64_t, uint64_t> take_encode_freshness() {
+    return {fresh_frames.exchange(0), stale_frames.exchange(0)};
+  }
+
+  void limit_encoder_fps(int fps) {
+    if (fps == encoder_fps_limit) return;
+    const auto previous = active_video(limits);
+    encoder_fps_limit = fps;
+    change_format(previous, active_video(limits), false);
   }
 
   void change_format(const Video& previous, const Video& next, bool wait_for_packet = true) {

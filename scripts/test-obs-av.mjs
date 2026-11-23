@@ -22,7 +22,11 @@ import { createScreenNetworkFixture } from '../apps/api/dist/screen/network-fixt
 import { startSharedVoiceFixture } from '../apps/api/dist/screen/shared-voice-fixture.js';
 import { launch } from '../apps/api/dist/voice/browser-harness.js';
 import { screenRelayServers } from '../apps/api/dist/screen/relay.js';
-import { parseScreenDescription, parseScreenIce } from '../packages/shared/dist/index.js';
+import {
+  NATIVE_VIEWER_GRANT_BATCH_SIZE,
+  parseScreenDescription,
+  parseScreenIce,
+} from '../packages/shared/dist/index.js';
 import { bindLocalRelay } from './screen-loopback-relay.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -43,7 +47,19 @@ const rejoin = process.argv.includes('--rejoin');
 const matchedDisplay = system || process.argv.includes('--matched-display');
 const layered = process.argv.includes('--layered');
 const twoViewers = process.argv.includes('--two-viewers');
-const viewerCount = process.argv.includes('--three-viewers') ? 3 : twoViewers ? 2 : 1;
+const viewerOption = process.argv.find((arg) => arg.startsWith('--viewers='));
+const viewerCount = viewerOption
+  ? Number(viewerOption.slice(10))
+  : process.argv.includes('--three-viewers')
+    ? 3
+    : twoViewers
+      ? 2
+      : 1;
+assert(
+  Number.isInteger(viewerCount) &&
+    viewerCount >= 1 &&
+    viewerCount <= NATIVE_VIEWER_GRANT_BATCH_SIZE,
+);
 const startupCycles = Number(
   process.argv.find((arg) => arg.startsWith('--startup-cycles='))?.slice(17) ?? 0,
 );
@@ -418,6 +434,7 @@ try {
       (reason) => {
         fatal = reason;
       },
+      NATIVE_VIEWER_GRANT_BATCH_SIZE,
       undefined,
       (chunk) => {
         nativeDiagnostics += chunk;
