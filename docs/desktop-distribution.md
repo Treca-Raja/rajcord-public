@@ -17,7 +17,7 @@ pnpm desktop:audit
 python scripts/audit-obs-runtime.py artifacts/desktop/win-unpacked/resources/obs-screen
 ```
 
-The local qualification build is unsigned and has no automatic update feed by default. It includes the private OBS runtime and Visual C++ DLLs. Output under `artifacts/desktop/` includes `Rajcord-Setup-<version>-x64.exe`, its blockmap and `win-unpacked/Rajcord.exe`. The version in `apps/desktop/package.json` controls the executable metadata, installer name, preload version and release tag. Signing and installer distribution are held pending [GPL review and OBS qualification](screen-sharing-handoff.md#windows-obs-publisher).
+The local qualification build is unsigned and has no automatic update feed by default. It includes the private OBS runtime and Visual C++ DLLs. Output under `artifacts/desktop/` includes `Rajcord-Setup-<version>-x64.exe`, its blockmap and `win-unpacked/Rajcord.exe`. The version in `apps/desktop/package.json` controls the executable metadata, installer name, preload version and release tag. Public installer publication is held pending [GPL review and OBS qualification](screen-sharing-handoff.md#windows-obs-publisher).
 
 The native source manifest maps the installer DLLs to their upstream inputs. The audited installer retains the pinned OBS FFmpeg DLLs. The release needs complete corresponding-source inputs, a reproduction check, physical AMF qualification and a licensing decision for the combined distribution. [Source manifest](../apps/desktop/native/obs/corresponding-source.md) · [Exact installer evidence](verification.md#native-windows-sender-cutover--2026-11-23)
 
@@ -78,6 +78,8 @@ Use the same key for later releases. If the key is lost or compromised, distribu
 ## Authorized release process
 
 Include the matching Windows update in every release that changes the installed app, its bundled assets or hosted behavior that depends on new desktop capabilities. Before promoting `develop`, compare the candidate with the latest public Windows release and record which changes will reach existing installs from the hosted rollout and which need a new installer. Include the target desktop version, signing mode and update-feed verification in the same release plan. Check the old public client against the new hosted app during the rollout and verify the new client against the deployed app. Report hosted deployment and Windows publication separately, including any pending approval or acceptance check.
+
+For a private rollout, build a higher-version installer from the matching hosted source and verify it using the [local build and audit](#build-locally). Record the exact installer SHA-256 and hand it off through the chosen private channel. Existing clients on the public GitHub feed need a manual install of the private build. Quit Rajcord from the tray before running the installer and select the existing install directory so that Windows continues to use the existing profile.
 
 `.github/workflows/desktop.yml` builds and audits the unsigned OBS package on PRs, pushes to `develop`/`main`, and manual runs. CI retains the binary only on the build runner while the redistribution review is open. Its release-policy job rejects draft requests before entering the signing environment. The steps below apply after the hold is lifted in a reviewed change. Linux Verify continues to own the database and server checks.
 
