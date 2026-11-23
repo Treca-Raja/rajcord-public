@@ -170,17 +170,25 @@ async function fixture(failDisposal = false, chooseSource = true) {
 
 function desktopBridge(version: number, available: boolean, reason?: string) {
   const screens = {
-    capabilities: vi.fn(async () => ({ version, obs: { available, reason }, systemSound: true })),
-    prepare: vi.fn(async (request: DesktopScreenPreparation) => ({
-      clientIntentRef: request.clientIntentRef,
+    capabilities: vi.fn(async () => ({
+      version,
+      ...(version === 1 ? {} : { obs: { available, reason } }),
+      systemSound: true,
+    })),
+    prepare: vi.fn(async ({ clientIntentRef }: Partial<DesktopScreenPreparation>) => ({
+      clientIntentRef,
+      remainingMs: 45000,
+      ready: true,
+    })),
+    handoff: vi.fn(async ({ clientIntentRef }: { clientIntentRef: string }) => ({
+      clientIntentRef,
       remainingMs: 45000,
       ready: true,
     })),
     cancel: vi.fn(async () => {}),
     onStop: () => () => {},
     onVisibility: () => () => {},
-    nativeCommand: vi.fn(),
-    onNativeEvent: () => () => {},
+    ...(version === 1 ? {} : { nativeCommand: vi.fn(), onNativeEvent: () => () => {} }),
   };
   vi.stubGlobal('window', { tricordDesktop: { platform: 'win32', screens } });
   return screens;
@@ -201,8 +209,64 @@ it('starts desktop preparation with OBS Automatic even when old settings contain
   expect(f.getDisplayMedia).not.toHaveBeenCalled();
 });
 
+it('keeps version 1 desktop publication on the authorized Chromium path', async () => {
+  const screens = desktopBridge(1, false);
+  const f = await fixture(false, false);
+  await f.call.prepare(f.settings);
+  const tag = screens.prepare.mock.calls[0]![0].clientIntentRef;
+  expect(screens.prepare).toHaveBeenCalledExactlyOnceWith({
+    clientIntentRef: tag,
+    epoch: f.binding.binding.epoch,
+    sound: 'none',
+  });
+  expect(f.getDisplayMedia).not.toHaveBeenCalled();
+  await f.call.choose();
+  f.published.resolve(f.grant);
+  await f.call.publish();
+  expect(f.command).toHaveBeenCalledWith(
+    'screen:publish',
+    {
+      ...f.settings,
+      epoch: f.binding.binding.epoch,
+      requestId: expect.any(String),
+      sourceGeneration: 1,
+    },
+    undefined,
+  );
+  expect(screens.handoff).toHaveBeenCalledExactlyOnceWith({
+    clientIntentRef: tag,
+    shareId: f.grant.share.id,
+    sourceGeneration: 1,
+  });
+  expect(f.call.inspect().phase).toBe('sharing');
+  f.call.stopSource();
+  expect(screens.cancel).toHaveBeenCalledExactlyOnceWith({ clientIntentRef: tag });
+  expect(f.track.readyState).toBe('ended');
+  expect(f.voice.leave).not.toHaveBeenCalled();
+});
+
+it('retires version 1 desktop publication if the desktop denies handoff', async () => {
+  const screens = desktopBridge(1, false);
+  screens.handoff.mockImplementationOnce(async ({ clientIntentRef }) => ({
+    clientIntentRef,
+    ready: false,
+    remainingMs: 0,
+  }));
+  const f = await fixture(false, false);
+  await f.call.prepare(f.settings);
+  await f.call.choose();
+  f.published.resolve(f.grant);
+  await expect(f.call.publish()).rejects.toThrow('Desktop screen authority ended.');
+  expect(f.track.readyState).toBe('ended');
+  expect(f.command).toHaveBeenCalledWith('screen:stop', {
+    epoch: f.binding.binding.epoch,
+    shareId: f.grant.share.id,
+  });
+  expect(f.voice.leave).not.toHaveBeenCalled();
+});
+
 it.each([
-  [1, true, 'Update Rajcord Desktop to share your screen with OBS.'],
+  [3, true, 'Update Rajcord Desktop to share your screen with OBS.'],
   [DESKTOP_SCREEN_PROTOCOL_VERSION, false, 'Reinstall Rajcord Desktop to restore screen sharing.'],
 ])(
   'blocks desktop capture and reports an actionable error for capability %s',

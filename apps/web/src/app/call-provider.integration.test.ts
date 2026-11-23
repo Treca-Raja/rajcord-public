@@ -2630,15 +2630,19 @@ async function saveCallScreenshot(browser: Awaited<ReturnType<typeof launch>>, n
 }
 
 it.each([
-  { open: false, entry: 'sidebar' },
-  { open: true, entry: 'sidebar' },
-  { open: true, entry: 'toolbar' },
-])('offers OBS source audio from $entry with the call view open=$open', async ({ open, entry }) => {
+  { open: false, entry: 'sidebar', version: 2 },
+  { open: true, entry: 'sidebar', version: 2 },
+  { open: true, entry: 'toolbar', version: 2 },
+  { open: true, entry: 'toolbar', version: 1 },
+])('offers desktop v$version audio from $entry ($open)', async ({ open, entry, version }) => {
   await mountedFixture(
     async (browser) => {
       await browser.wait('!!window.fixture?.call?.screens');
       await browser.js(`fixture.call.controls.join('lounge');
-        window.tricordDesktop={platform:'win32'};
+        window.tricordDesktop={platform:'win32',screens:{
+          capabilities:async()=>({version:${version}, sourceSound:true, obs:{available:true,encoders:['x264']}}),
+          ...(${version}===2?{nativeCommand:async()=>{},onNativeEvent:()=>()=>{}}:{})
+        }};
         fixture.preparations=[];fixture.choices=0;
         fixture.screens.prepare=async options=>{fixture.preparations.push(options);fixture.screenSet({prepared:true})};
         fixture.screens.choose=async()=>{fixture.choices++};
@@ -2659,11 +2663,23 @@ it.each([
         false,
       );
       expect(
-        await browser.js(`document.querySelector('[aria-label="Screen encoder"]').value`),
-      ).toBe('auto');
+        await browser.js(`document.querySelector('[aria-label="Screen encoder"]')?.value ?? null`),
+      ).toBe(version === 2 ? 'auto' : null);
+      expect(
+        await browser.js(`!!document.querySelector('[aria-label="Screen capture mode"]')`),
+      ).toBe(version === 1);
       expect(
         await browser.js(`document.querySelector('[aria-label="Screen source sound"]').value`),
       ).toBe('none');
+      expect(
+        await browser.js(
+          `document.querySelector('[aria-label="Screen source sound"] option[value="source"]').textContent`,
+        ),
+      ).toBe(
+        version === 2
+          ? 'Application audio or system audio excluding Rajcord'
+          : 'Application audio or system audio',
+      );
       await browser.js(`(()=>{
           const sound=document.querySelector('[aria-label="Screen source sound"]');
           sound.value='source';
@@ -2674,7 +2690,9 @@ it.each([
       );
       await browser.wait('fixture.preparations.length===1');
       expect(await browser.js('fixture.preparations[0].sound')).toBe('source');
-      expect(await browser.js('fixture.preparations[0].encoder')).toBe('auto');
+      expect(await browser.js('fixture.preparations[0].encoder ?? null')).toBe(
+        version === 2 ? 'auto' : null,
+      );
       expect(await browser.js('fixture.choices')).toBe(0);
       if (open)
         await browser.js(
