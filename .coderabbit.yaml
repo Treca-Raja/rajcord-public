@@ -5,17 +5,17 @@ reviews:
     enabled: true
     drafts: false
     base_branches:
-      - "^develop$"
+      - '^develop$'
     auto_incremental_review: true
     auto_pause_after_reviewed_commits: 3
   path_instructions:
-    - path: "apps/api/src/{auth,voice,screen}/**"
+    - path: 'apps/api/src/{auth,voice,screen}/**'
       instructions: |
         Check authorization at the service boundary, token/lease revocation,
         resource ownership and cleanup, rate limits, and cross-user data access.
         Do not mistake socket-room membership for permission.
         Flag missing failure, concurrency, and permission regressions.
-    - path: "apps/web/src/features/{voice,screen-sharing}/**"
+    - path: 'apps/web/src/features/{voice,screen-sharing}/**'
       instructions: |
         Check single-active-call semantics, switching calls/channels, stale
         async completions, track/device lifetime, and peer cleanup on stop,
@@ -23,19 +23,19 @@ reviews:
         frame delivery, audio handling, and whether tests exercise real media
         paths rather than only mocks. Never assume successful CI proves WAN
         latency, smooth playback, or physical-device behavior.
-    - path: "apps/desktop/src/**"
+    - path: 'apps/desktop/src/**'
       instructions: |
         Check Electron context isolation, sandbox and renderer Node restrictions,
         trusted origins, main-frame IPC permissions, OS media permissions,
         screen-capture authority, app updates, and Windows compatibility.
         Flag unsafe privileged operations and lifecycle leaks.
-    - path: "apps/web/src/**/*.{css,tsx}"
+    - path: 'apps/web/src/**/*.{css,tsx}'
       instructions: |
         For user-visible changes, check keyboard and touch access, focus
         restoration, reduced motion, readable foreground/background contrast
         in both Original and Retro themes, mobile layout, and preserved drafts.
         Flag plausible regressions with a reproducible UI state or test.
-    - path: "{.github/workflows/**,scripts/ci/**}"
+    - path: '{.github/workflows/**,scripts/ci/**}'
       instructions: |
         Preserve feature/* -> develop -> main, verified deployment artifacts,
         branch protections, environment approvals, least-privilege permissions,

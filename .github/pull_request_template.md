@@ -31,4 +31,4 @@ What changed and why? Link the issue/ticket and state acceptance criteria.
 - [ ] Relevant review conversations are resolved with evidence.
 - [ ] Manual functional acceptance and release-specific gates are complete (if applicable).
 
-See [PR review and repair workflow](../docs/pr-review-workflow.md).
+See [PR review and repair workflow](https://github.com/Treca-Raja/rajcord-public/blob/develop/docs/pr-review-workflow.md).

@@ -20,7 +20,7 @@
     "lint": "eslint . && pnpm check:cycles",
     "check:cycles": "node scripts/check-import-cycles.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --write .coderabbit.yaml docs/pr-review-workflow.md && git diff -- .coderabbit.yaml docs/pr-review-workflow.md && git diff --exit-code -- .coderabbit.yaml docs/pr-review-workflow.md",
+    "format:check": "prettier --check .",
     "test": "vitest run",
     "db:generate": "pnpm --filter @tricord/api db:generate",
     "db:migrate": "pnpm --filter @tricord/api db:migrate",

@@ -58,11 +58,11 @@ The human maintainer decides what to ship. Use the existing
 
 ### Risk-appropriate verification
 
-| Risk | Typical changes | Additional evidence |
-| --- | --- | --- |
-| Low | Docs, mechanical tooling, scoped dependency updates | Changed-file checks, relevant security/advisory review |
-| Medium | UI state, chat behavior, API contracts | Unit/integration regressions, browser checks, both themes and mobile |
-| High | Auth, permission checks, voice/screen streaming, Electron IPC, database schema, deployment | Adversarial/cleanup tests, service/browser/device testing and a second independent review; manual production-readiness decision |
+| Risk   | Typical changes                                                                            | Additional evidence                                                                                                             |
+| ------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Low    | Docs, mechanical tooling, scoped dependency updates                                        | Changed-file checks, relevant security/advisory review                                                                          |
+| Medium | UI state, chat behavior, API contracts                                                     | Unit/integration regressions, browser checks, both themes and mobile                                                            |
+| High   | Auth, permission checks, voice/screen streaming, Electron IPC, database schema, deployment | Adversarial/cleanup tests, service/browser/device testing and a second independent review; manual production-readiness decision |
 
 For screen sharing, CI's synthetic/loopback tests do **not** establish
 1080p60 smoothness under real WAN conditions. Test the publisher/viewer
