@@ -19,6 +19,7 @@ import type {
   ScreenSelectRequest,
   DesktopScreenStatus,
   DesktopScreenBridge,
+  LegacyDesktopScreenBridge,
 } from '@tricord/shared';
 import { CaptureSession, ScreenLifetime } from './capture-session';
 import { screenSocket, type ScreenSocket } from './screen-socket';
@@ -158,7 +159,12 @@ export class ScreenCall {
   private source?: CaptureSession;
   private settings?: ScreenSettings;
   private ownShare?: ScreenShare;
-  private prepared?: { tag: string; deadline: number; desktop?: DesktopScreenBridge };
+  private prepared?: {
+    tag: string;
+    deadline: number;
+    desktop?: DesktopScreenBridge | LegacyDesktopScreenBridge;
+    native?: DesktopScreenBridge;
+  };
   private sourceGeneration = 0;
   private revision = 0;
   private renewalRevision = 0;
@@ -507,24 +513,22 @@ export class ScreenCall {
     }
     const desktop = window.tricordDesktop;
     const bridge = desktop?.screens;
-    this.prepared = { tag, deadline: initial.deadline, desktop: bridge };
+    const prepared: NonNullable<ScreenCall['prepared']> = {
+      tag,
+      deadline: initial.deadline,
+      desktop: bridge,
+    };
+    this.prepared = prepared;
     this.update({ phase: 'preparing', error: '' });
     try {
       if (!this.current(binding) || this.prepared?.tag !== tag)
         throw new Error('Screen preparation ended.');
-      if (desktop && (!bridge?.nativeCommand || !bridge.onNativeEvent))
+      if (desktop && !bridge)
         throw new Error('Update Rajcord Desktop to share your screen with OBS.');
       if (bridge) {
         if (settings.sound === 'tab')
           throw new Error('Choose system sound or video only in the desktop app.');
         const capabilities = await bridge.capabilities();
-        if (capabilities.version !== DESKTOP_SCREEN_PROTOCOL_VERSION)
-          throw new Error('Update Rajcord Desktop to share your screen with OBS.');
-        if (!capabilities.obs?.available)
-          throw new Error(
-            capabilities.obs?.reason ??
-              'OBS screen sharing is unavailable. Reinstall Rajcord Desktop.',
-          );
         if (
           (settings.sound === 'system' && !capabilities.systemSound) ||
           (settings.sound === 'application' && !capabilities.applicationSound) ||
@@ -534,20 +538,37 @@ export class ScreenCall {
         if (!this.current(binding) || this.prepared?.tag !== tag)
           throw new Error('Screen preparation ended.');
         const started = Date.now();
-        const result = await bridge.prepare({
+        const request = {
           clientIntentRef: tag,
           epoch: binding.binding.epoch,
           sound: settings.sound,
-          encoder: settings.encoder ?? 'auto',
-        });
+        };
+        let result: DesktopScreenStatus;
+        if (capabilities.version === 1 && !bridge.nativeCommand && !bridge.onNativeEvent) {
+          result = await bridge.prepare(request);
+        } else if (
+          capabilities.version === DESKTOP_SCREEN_PROTOCOL_VERSION &&
+          typeof bridge.nativeCommand === 'function' &&
+          typeof bridge.onNativeEvent === 'function'
+        ) {
+          if (!capabilities.obs?.available)
+            throw new Error(
+              capabilities.obs?.reason ??
+                'OBS screen sharing is unavailable. Reinstall Rajcord Desktop.',
+            );
+          prepared.native = bridge;
+          result = await bridge.prepare({ ...request, encoder: settings.encoder ?? 'auto' });
+        } else {
+          throw new Error('Update Rajcord Desktop to share your screen with OBS.');
+        }
         this.status(result, tag);
-        this.prepared!.deadline = Math.min(initial.deadline, lifetime(result.remainingMs, started));
+        prepared.deadline = Math.min(initial.deadline, lifetime(result.remainingMs, started));
       }
       if (!this.current(binding) || this.prepared?.tag !== tag)
         throw new Error('Screen preparation ended.');
       const captureSession = new CaptureSession({
         adapter: this.options.capture,
-        deadline: this.prepared.deadline,
+        deadline: prepared.deadline,
         sound: settings.sound,
         quality,
         onEnded: () => {
@@ -649,7 +670,7 @@ export class ScreenCall {
           requestId: crypto.randomUUID(),
           sourceGeneration: generation,
           ...settings,
-          ...(prepared.desktop ? { native: true } : {}),
+          ...(prepared.native ? { native: true } : {}),
         } satisfies ScreenPublishRequest),
         started,
       );
@@ -702,7 +723,7 @@ export class ScreenCall {
     let dispatched = false;
     try {
       if (
-        !this.prepared?.desktop &&
+        !this.prepared?.native &&
         publisher.resolution !== undefined &&
         publisher.frameRate !== undefined &&
         (publisher.resolution !== own.resolution || publisher.frameRate !== own.frameRate)
@@ -1102,7 +1123,7 @@ export class ScreenCall {
     try {
       const capture = source.borrow();
       const prepared = this.prepared;
-      const desktop = prepared?.desktop;
+      const desktop = prepared?.native;
       peer = new ScreenPeer({
         endpoint: { epoch, linkId: link.id, role: 'publisher', sound: own.sound },
         lifecycle: life,

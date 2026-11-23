@@ -9,7 +9,9 @@ type DesktopNotificationResult =
   | { status: 'unavailable' | 'invalid' };
 interface Window {
   readonly tricordDesktop?: {
-    readonly screens?: import('@tricord/shared').DesktopScreenBridge;
+    readonly screens?:
+      | import('@tricord/shared').DesktopScreenBridge
+      | import('@tricord/shared').LegacyDesktopScreenBridge;
     readonly platform: string;
     readonly version: string;
     readonly onMicrophonePermissionReset?: (callback: () => void) => () => void;

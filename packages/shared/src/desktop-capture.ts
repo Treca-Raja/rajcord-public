@@ -83,3 +83,18 @@ export interface DesktopScreenBridge {
   nativeCommand(request: NativeScreenCommand): Promise<string>;
   onNativeEvent(listener: (event: NativeScreenEvent) => void): () => void;
 }
+
+export interface LegacyDesktopScreenBridge extends Omit<
+  DesktopScreenBridge,
+  'capabilities' | 'prepare' | 'nativeCommand' | 'onNativeEvent'
+> {
+  capabilities(): Promise<{
+    version: 1;
+    systemSound: boolean;
+    applicationSound?: boolean;
+    sourceSound?: boolean;
+  }>;
+  prepare(request: Omit<DesktopScreenPreparation, 'encoder'>): Promise<DesktopScreenStatus>;
+  nativeCommand?: never;
+  onNativeEvent?: never;
+}

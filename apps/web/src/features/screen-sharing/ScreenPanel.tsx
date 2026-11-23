@@ -30,7 +30,6 @@ import {
   type ScreenShare,
   type ObsEncoder,
   type ObsEncoderChoice,
-  type DesktopScreenBridge,
   DESKTOP_SCREEN_PROTOCOL_VERSION,
   OBS_ENCODERS,
 } from '@tricord/shared';
@@ -172,16 +171,17 @@ function ConnectedScreenPanel({
   const [applyingQuality, setApplyingQuality] = useState(false);
   const [sound, setSound] = useState<ScreenSound>('none');
   const [encoder, setEncoder] = useState<ObsEncoderChoice>('auto');
+  const desktop = window.tricordDesktop;
+  const desktopScreens = desktop?.screens;
+  const native = !!desktopScreens?.nativeCommand && !!desktopScreens.onNativeEvent;
   const [capabilities, setCapabilities] =
-    useState<Awaited<ReturnType<DesktopScreenBridge['capabilities']>>>();
-  const desktop = !!window.tricordDesktop;
+    useState<Awaited<ReturnType<NonNullable<typeof desktopScreens>['capabilities']>>>();
   const obs =
     capabilities?.version === DESKTOP_SCREEN_PROTOCOL_VERSION ? capabilities.obs : undefined;
   useEffect(() => {
-    const bridge = window.tricordDesktop?.screens;
-    if (!bridge?.nativeCommand) return;
+    if (!desktopScreens) return;
     let active = true;
-    void bridge.capabilities().then(
+    void desktopScreens.capabilities().then(
       (capabilities) => {
         if (active) setCapabilities(capabilities);
       },
@@ -190,7 +190,7 @@ function ConnectedScreenPanel({
     return () => {
       active = false;
     };
-  }, []);
+  }, [desktopScreens]);
   const [error, setError] = useState('');
   const currentControls = useRef(controls);
   currentControls.current = controls;
@@ -752,7 +752,7 @@ function ConnectedScreenPanel({
               }
             >
               <legend>Your screen</legend>
-              {desktop && (
+              {native && (
                 <label>
                   Encoder
                   <select
@@ -775,7 +775,7 @@ function ConnectedScreenPanel({
                   {obs?.reason && <span className="screen-help">{obs.reason}</span>}
                 </label>
               )}
-              {!desktop && (
+              {!native && (
                 <label className="screen-capture-mode">
                   Capture mode
                   <select
@@ -863,7 +863,9 @@ function ConnectedScreenPanel({
                   <option value="none">Video only</option>
                   {desktop ? (
                     <option value="source" disabled={capabilities?.sourceSound === false}>
-                      Application audio or system audio excluding Rajcord
+                      {native
+                        ? 'Application audio or system audio excluding Rajcord'
+                        : 'Application audio or system audio'}
                     </option>
                   ) : (
                     <option value="tab">Selected browser tab sound</option>
@@ -886,7 +888,7 @@ function ConnectedScreenPanel({
                     controls.prepare({
                       ...publishQuality,
                       sound,
-                      ...(desktop ? { encoder } : {}),
+                      ...(native ? { encoder } : {}),
                     }),
                   );
                 }}
