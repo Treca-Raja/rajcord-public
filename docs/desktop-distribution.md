@@ -77,6 +77,8 @@ Use the same key for later releases. If the key is lost or compromised, distribu
 
 ## Authorized release process
 
+Include the matching Windows update in every release that changes the installed app, its bundled assets or hosted behavior that depends on new desktop capabilities. Before promoting `develop`, compare the candidate with the latest public Windows release and record which changes will reach existing installs from the hosted rollout and which need a new installer. Include the target desktop version, signing mode and update-feed verification in the same release plan. Check the old public client against the new hosted app during the rollout and verify the new client against the deployed app. Report hosted deployment and Windows publication separately, including any pending approval or acceptance check.
+
 `.github/workflows/desktop.yml` builds and audits the unsigned OBS package on PRs, pushes to `develop`/`main`, and manual runs. CI retains the binary only on the build runner while the redistribution review is open. Its release-policy job rejects draft requests before entering the signing environment. The steps below apply after the hold is lifted in a reviewed change. Linux Verify continues to own the database and server checks.
 
 Before the first release, an authorized repository administrator must create `desktop-release` with a required maintainer reviewer, administrator bypass disabled, and a selected-branch policy allowing exactly `main`. The workflow checks those settings before entering the environment and again after approval. This change does not create or modify remote environments or secrets.
