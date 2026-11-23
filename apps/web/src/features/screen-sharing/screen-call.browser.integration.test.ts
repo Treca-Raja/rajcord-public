@@ -18,13 +18,28 @@ navigator.mediaDevices.getDisplayMedia=async(options)=>{
  const canvas=document.createElement('canvas');canvas.width=options.video.width.ideal;canvas.height=options.video.height.ideal;
  const context=canvas.getContext('2d');let frame=0;
  const draw=()=>{context.fillStyle='#1c2630';context.fillRect(0,0,1920,1080);context.fillStyle='#a6ce8a';context.fillRect((frame++*12)%1800,100,120,800);context.fillStyle='white';context.font='50px sans-serif';context.fillText('OWNED SYNTHETIC SCREEN '+frame,60,80)};
- draw();const drawing=setInterval(draw,16),stream=canvas.captureStream(options.video.frameRate.ideal),video=stream.getVideoTracks()[0];
+ draw();const drawing=setInterval(draw,1000/options.video.frameRate.ideal),stream=canvas.captureStream(options.video.frameRate.ideal),video=stream.getVideoTracks()[0];
  const settings=video.getSettings.bind(video),stop=video.stop.bind(video);
  video.getSettings=()=>({...settings(),displaySurface:'browser',});
  video.stop=()=>{clearInterval(drawing);stop()};f.tracks.push(video);
  if(options.audio){const audio=new AudioContext(),destination=audio.createMediaStreamDestination(),tone=audio.createOscillator();tone.connect(destination);tone.start();const track=destination.stream.getAudioTracks()[0];stream.addTrack(track);f.tracks.push(track);const end=track.stop.bind(track);track.stop=()=>{tone.stop();void audio.close();end()}}
  return stream;
 };`;
+
+const delayedFirstPlaybackOutput = `
+(() => {
+ const setSinkId = HTMLMediaElement.prototype.setSinkId;
+ HTMLMediaElement.prototype.setSinkId = function (id) {
+  if (!this.hasAttribute('data-screen-playback')) return setSinkId.call(this, id);
+  const fixture = window.__screenTest;
+  fixture.playbackOutputAttempts = (fixture.playbackOutputAttempts ?? 0) + 1;
+  if (fixture.playbackOutputAttempts !== 1) return setSinkId.call(this, id);
+  return new Promise((resolve, reject) => {
+   fixture.releasePlaybackOutput = () => reject(new DOMException('Test output was interrupted', 'AbortError'));
+  });
+ };
+})();
+`;
 
 for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
   it(
@@ -50,6 +65,7 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         staticRoot: fileURLToPath(new URL('../../../dist', import.meta.url)),
       });
       const browsers: Browser[] = [];
+      const errors: unknown[] = [];
       const renewals = new Map<string, number>();
       const commandDiagnostics: { event: string; ms: number; code?: string }[] = [];
       server.io.on('connection', (socket) => {
@@ -101,7 +117,11 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         for (const account of [publisher, viewer]) {
           const browser = await launch();
           browsers.push(browser);
-          await browser.call('Page.addScriptToEvaluateOnNewDocument', { source: captureScript });
+          await browser.call('Page.addScriptToEvaluateOnNewDocument', {
+            source:
+              captureScript +
+              (sound === 'none' && account === viewer ? delayedFirstPlaybackOutput : ''),
+          });
           await setup(browser, account.token, origin);
           await browser.js("document.querySelector('.screen-launcher > button').click()");
           await browser.wait("document.querySelector('#screen-panel')?.dataset.phase==='ready'");
@@ -148,25 +168,11 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           browser.js(
             `(()=>{const select=document.querySelector('[aria-label="${label}"]');select.value='${value}';select.dispatchEvent(new Event('change',{bubbles:true}))})()`,
           );
-        await choose(a, 'Screen resolution', '720');
-        await choose(a, 'Screen frame rate', '60');
+        await choose(a, 'Screen resolution', sound === 'nine' ? '480' : '720');
+        await choose(a, 'Screen frame rate', sound === 'nine' ? '15' : '60');
         await choose(a, 'Screen video bitrate', '4000000');
         if (sound === 'tab') await choose(a, 'Screen source sound', 'tab');
         if (sound === 'none') {
-          await a.js(`(() => {
-            const setParameters = RTCRtpSender.prototype.setParameters;
-            RTCRtpSender.prototype.setParameters = function (parameters) {
-              if (parameters.degradationPreference === 'maintain-framerate-and-resolution')
-                throw new TypeError('Unsupported degradation preference');
-              return setParameters.call(this, parameters);
-            };
-          })()`);
-          await a.click('Prepare source');
-          await a.wait(
-            "document.querySelector('.screen-error')?.textContent.includes('Choose Adaptive capture in the browser')",
-          );
-          expect(await a.js('window.__screenTest.calls')).toBe(0);
-          expect(commandDiagnostics.some(({ event }) => event === 'screen:publish')).toBe(false);
           await choose(a, 'Screen capture mode', 'adaptive');
           expect(await a.js('!document.querySelector(\'[aria-label="Screen resolution"]\')')).toBe(
             true,
@@ -179,9 +185,9 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         await a.click('Choose source');
         await a.wait("document.querySelector('#screen-panel')?.dataset.phase==='preview'");
         expect(await a.js('window.__screenTest.options[0].video')).toEqual({
-          width: { ideal: sound === 'none' ? 1920 : 1280 },
-          height: { ideal: sound === 'none' ? 1080 : 720 },
-          frameRate: { ideal: 60, max: 60 },
+          width: { ideal: sound === 'none' ? 1920 : sound === 'nine' ? 854 : 1280 },
+          height: { ideal: sound === 'none' ? 1080 : sound === 'nine' ? 480 : 720 },
+          frameRate: { ideal: sound === 'nine' ? 15 : 60, max: sound === 'nine' ? 15 : 60 },
         });
         expect(await a.js('window.__screenTest.options[0].audio')).toBe(sound === 'tab');
         expect(
@@ -197,15 +203,32 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         await b.wait(
           "[...document.querySelectorAll('.screen-share-item')].some(item=>item.textContent.includes('Screen owner'))",
         );
-        await choose(b, 'Watch resolution', '720');
-        await choose(b, 'Watch frame rate', '30');
-        await choose(b, 'Watch video bitrate', '2000000');
+        expect(
+          await b.js(
+            `[...document.querySelectorAll('.screen-watch select')].map(control=>control.getAttribute('aria-label'))`,
+          ),
+        ).toEqual([]);
         await b.js("document.querySelector('.screen-watch input[type=checkbox]').click()");
         await b.js(
           "[...document.querySelectorAll('.screen-share-item')].find(item=>item.textContent.includes('Screen owner')).querySelector('.screen-share-action').click()",
         );
-        await b.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
+        const playingVideo =
+          "document.querySelector('[data-screen-playback]')?.videoWidth>0 && !document.querySelector('[data-screen-playback]').paused";
         if (sound === 'none') {
+          await b.wait(
+            "document.querySelector('#screen-settings').hidden && document.querySelector('.screen-error')?.textContent==='Playback operation timed out.'",
+          );
+          expect(await b.js('window.__screenTest.playbackOutputAttempts')).toBe(1);
+          await b.js('window.__screenTest.releasePlaybackOutput()');
+          await b.wait(playingVideo + " && !document.querySelector('.screen-error')");
+        } else await b.wait(playingVideo);
+        if (sound === 'none') {
+          expect(
+            await b.js(`({
+              attempts:window.__screenTest.playbackOutputAttempts,
+              tiles:document.querySelectorAll('.screen-incoming-tile').length
+            })`),
+          ).toEqual({ attempts: 2, tiles: 1 });
           const thumbnail =
             "document.querySelector('#screen-participants .screen-stream-thumbnail')";
           const player = "document.querySelector('[data-screen-playback]')";
@@ -230,12 +253,15 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           await b.wait(thumbnail + '?.videoWidth>0');
           await b.js('delete window.__thumbnailTest');
         }
-        await a.wait("document.querySelector('.screen-status').textContent.includes('1 viewers')");
+        await a.wait("document.querySelector('.screen-status').textContent.includes('1 viewer ·')");
         const parameters = await a.js(
           `window.__screenTest.peers.flatMap(peer=>peer.getSenders()).filter(sender=>sender.track?.kind==='video').map(sender=>sender.getParameters().encodings[0])`,
         );
         expect(parameters).toEqual([
-          expect.objectContaining({ maxBitrate: 2000000, maxFramerate: 30 }),
+          expect.objectContaining({
+            maxBitrate: 4000000,
+            maxFramerate: sound === 'nine' ? 15 : 60,
+          }),
         ]);
         const routes = await a.js(
           `Promise.all(window.__screenTest.peers.filter(peer=>peer.getSenders().some(sender=>sender.track?.kind==='video')).map(async peer=>{const stats=await peer.getStats();const transport=[...stats.values()].find(stat=>stat.type==='transport'&&stat.selectedCandidatePairId);const pair=stats.get(transport?.selectedCandidatePairId);return pair?[stats.get(pair.localCandidateId)?.candidateType,stats.get(pair.remoteCandidateId)?.candidateType]:[]}))`,
@@ -256,16 +282,30 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           );
           expect(await b.js("document.querySelector('[data-screen-playback]').muted")).toBe(true);
         }
-        await choose(b, 'Watch frame rate', '15');
-        await b.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
-        await a.wait(
-          "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxFramerate>0&&sender.getParameters().encodings[0]?.maxFramerate<=15)",
-        );
+        const height = sound === 'none' ? 1080 : sound === 'nine' ? 480 : 720;
+        await b.wait(`document.querySelector('[data-screen-playback]')?.videoHeight === ${height}`);
+        if (sound === 'tab') {
+          await b.js(
+            `void (window.watchedStream = document.querySelector('[data-screen-playback]').srcObject)`,
+          );
+          await a.js('document.querySelector(\'[aria-label="Open stream settings"]\').click()');
+          const cap = (value: number) =>
+            `window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxBitrate===${value})`;
+          for (const bitrate of [2000000, 4000000]) {
+            await choose(a, 'Screen video bitrate', String(bitrate));
+            await a.wait(
+              "[...document.querySelectorAll('button')].some(button=>button.textContent==='Apply stream quality'&&!button.matches(':disabled'))",
+            );
+            await a.click('Apply stream quality');
+            await a.wait(cap(bitrate));
+            await b.wait(
+              `document.querySelector('[data-screen-playback]').srcObject===window.watchedStream && ${playingVideo}`,
+            );
+          }
+          await a.js('document.querySelector(\'[aria-label="Close screen settings"]\').click()');
+        }
         if (fanoutCase) {
           for (const browser of browsers.slice(2)) {
-            // Bound this ten-client correctness fixture's encoder load. The
-            // publisher retains 720p60; high-rate fan-out needs a separate hardware budget.
-            if (sound === 'nine') await choose(browser, 'Watch frame rate', '15');
             await browser.wait(
               "[...document.querySelectorAll('.screen-share-item')].some(item=>item.textContent.includes('Screen owner'))",
             );
@@ -284,12 +324,15 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
             "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).filter(sender=>sender.track?.kind==='video').map(sender=>sender.getParameters().encodings[0].maxBitrate)",
           )) as number[];
           expect(fanout).toHaveLength(viewerCount);
-          expect(fanout.filter((cap) => cap === 2000000)).toHaveLength(1);
-          expect(fanout.filter((cap) => cap === 4000000)).toHaveLength(viewerCount - 1);
+          expect(fanout).toEqual(Array(viewerCount).fill(4000000));
           const secondPublisher = browsers[2]!;
           await secondPublisher.js(
             'document.querySelector(\'[aria-label="Open stream settings"]\').click()',
           );
+          if (sound === 'nine') {
+            await choose(secondPublisher, 'Screen resolution', '480');
+            await choose(secondPublisher, 'Screen frame rate', '15');
+          }
           await secondPublisher.click('Prepare source');
           await secondPublisher.wait(
             "document.querySelector('#screen-panel')?.dataset.prepared==='true'",
@@ -310,6 +353,10 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
             "document.querySelectorAll('[data-screen-playback]').length===2 && [...document.querySelectorAll('[data-screen-playback]')].every(video=>video.videoWidth>0)",
           );
           expect(await b.js("document.querySelector('#screen-panel').dataset.layout")).toBe('grid');
+          const heights = sound === 'nine' ? [480, 480] : [720, 1080];
+          await b.wait(
+            `JSON.stringify([...document.querySelectorAll('[data-screen-playback]')].map(video=>video.videoHeight).sort((a,b)=>a-b))==='${JSON.stringify(heights)}'`,
+          );
         }
         const shareId = server.voice!.leases.get(publisher.auth.user.id)!.id;
         const beforeVoice = sound === 'nine' ? await voiceBytes() : [];
@@ -353,7 +400,7 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         cleanupGate = undefined;
         await b.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
         await a.wait(
-          "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxFramerate>0&&sender.getParameters().encodings[0]?.maxFramerate<=15)",
+          `window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxFramerate===${sound === 'nine' ? 15 : 60})`,
         );
         const artifacts = fileURLToPath(new URL('../../../../../artifacts', import.meta.url));
         await mkdir(artifacts, { recursive: true });
@@ -368,11 +415,13 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           );
           expect(await b.js("document.querySelector('#screen-panel').dataset.layout")).toBe('grid');
           await browsers[2]!.js(
-            'document.querySelector(\'[aria-label="Stop screen sharing"]\').click()',
+            'document.querySelector(\'#screen-panel [aria-label="Stop screen sharing"]\').click()',
           );
           await b.wait("document.querySelectorAll('[data-screen-playback]').length===1");
         }
-        await a.js('document.querySelector(\'[aria-label="Stop screen sharing"]\').click()');
+        await a.js(
+          'document.querySelector(\'#screen-panel [aria-label="Stop screen sharing"]\').click()',
+        );
         expect(
           await a.js("window.__screenTest.tracks.every(track=>track.readyState==='ended')"),
         ).toBe(true);
@@ -383,11 +432,38 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           expect(
             await browser.js("document.querySelector('[data-voice-status]')?.dataset.voiceStatus"),
           ).toBe('connected');
+        if (sound === 'nine')
+          expect(
+            commandDiagnostics.filter(
+              ({ event, code }) => event === 'screen:renew' && code === 'throttled',
+            ),
+          ).toEqual([]);
       } catch (cause) {
+        console.error('Owned screen fixture error:', cause);
         const diagnostics = await Promise.allSettled(
           browsers.map((browser) =>
             browser.js(
-              "({phase:document.querySelector('#screen-panel')?.dataset.phase,error:document.querySelector('.screen-error')?.textContent,peers:window.__screenTest.peers.map(peer=>({connection:peer.connectionState,signaling:peer.signalingState}))})",
+              `(async () => ({
+                phase: document.querySelector('#screen-panel')?.dataset.phase,
+                error: document.querySelector('.screen-error')?.textContent,
+                peers: await Promise.all(window.__screenTest.peers
+                  .filter(peer => peer.getTransceivers().some(t => t.receiver.track.kind === 'video'))
+                  .slice(-12).map(async peer => {
+                    const video = peer.getReceivers().find(r => r.track.kind === 'video')?.track;
+                    const stats = [...(await peer.getStats()).values()].filter(s => s.kind === 'video');
+                    return {
+                      connection: peer.connectionState, signaling: peer.signalingState,
+                      muted: video?.muted, track: video?.readyState,
+                      inbound: stats.filter(s => s.type === 'inbound-rtp').map(s => ({
+                        bytes: s.bytesReceived, frames: s.framesDecoded, keys: s.keyFramesDecoded,
+                      })),
+                      outbound: stats.filter(s => s.type === 'outbound-rtp').map(s => ({
+                        bytes: s.bytesSent, frames: s.framesEncoded, keys: s.keyFramesEncoded,
+                        limitation: s.qualityLimitationReason,
+                      })),
+                    };
+                  })),
+              }))()`,
             ),
           ),
         );
@@ -396,15 +472,30 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           'Screen command failures/slow replies:',
           JSON.stringify(commandDiagnostics.filter((item) => item.code || item.ms > 1000)),
         );
-        throw cause;
+        errors.push(cause);
       } finally {
         releaseCleanup?.();
-        for (const browser of browsers) await browser.close();
-        await server.app.close();
-        for (const room of await server.voice!.media.listRooms())
-          if (room.name.startsWith(prefix)) await server.voice!.media.deleteRoom(room.name);
-        await database.cleanup();
+        const cleanup = async (release: () => Promise<unknown>) => {
+          try {
+            await release();
+          } catch (error) {
+            errors.push(error);
+          }
+        };
+        await Promise.all(browsers.map((browser) => cleanup(browser.close)));
+        await cleanup(() => server.app.close());
+        await cleanup(async () => {
+          const rooms = await server.voice!.media.listRooms();
+          await Promise.all(
+            rooms
+              .filter((room) => room.name.startsWith(prefix))
+              .map((room) => cleanup(() => server.voice!.media.deleteRoom(room.name))),
+          );
+        });
+        await cleanup(() => database.cleanup());
       }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, 'Screen call fixture failed');
     },
     sound === 'nine' ? 240000 : 120000,
   );

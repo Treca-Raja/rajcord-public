@@ -28,7 +28,7 @@ concurrency:
 jobs:
   build:
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,14 +44,10 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: pnpm desktop:obs:setup
       - run: pnpm desktop:package
       - run: node scripts/desktop-audit.mjs
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: Rajcord-Windows-review
-          path: artifacts/desktop/Rajcord-Setup-*.exe
-          if-no-files-found: error
-          retention-days: 7
+      - run: python scripts/audit-obs-runtime.py artifacts/desktop/win-unpacked/resources/obs-screen > artifacts/desktop/obs-imports.json
 
   release-policy:
     needs: build
@@ -61,6 +57,10 @@ jobs:
       contents: read
       actions: read
     steps:
+      - name: Enforce OBS redistribution hold
+        run: |
+          echo 'OBS redistribution review and release qualification are open.' >&2
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -76,7 +76,7 @@ jobs:
     needs: [build, release-policy]
     if: github.event_name == 'workflow_dispatch' && inputs.publish_draft == true
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 75
     environment: desktop-release
     permissions:
       contents: write
@@ -96,6 +96,7 @@ jobs:
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: pnpm desktop:obs:setup
       - name: Build signed installer with protected credentials
         if: inputs.signed == true
         run: pnpm desktop:package

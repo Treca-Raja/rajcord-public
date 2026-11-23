@@ -427,7 +427,29 @@ class ReceiveLink {
     else this.audio = track;
     this.update({ hasVideo: !!this.video, hasAudio: !!this.audio });
     this.check();
-    if (!this.video || (this.options.endpoint.sound !== 'none' && !this.audio)) return;
+    if (track.kind === 'video') {
+      // ontrack can precede the SDP answer and the first RTP packet.
+      const unmuted = () => {
+        try {
+          this.check();
+          this.preparePlayback();
+        } catch (cause) {
+          this.fail(cause);
+        }
+      };
+      track.addEventListener('unmute', unmuted);
+      this.cleanups.push(() => track.removeEventListener('unmute', unmuted));
+    }
+    this.preparePlayback();
+  }
+  private preparePlayback() {
+    if (
+      this.playback ||
+      !this.video ||
+      this.video.muted ||
+      (this.options.endpoint.sound !== 'none' && !this.audio)
+    )
+      return;
     clearTimeout(this.trackTimer);
     const playback = new ScreenPlaybackOwner({
       lifecycle: this.lifecycle,

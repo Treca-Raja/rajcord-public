@@ -44,10 +44,7 @@ export async function screenCodecSelection(
       .filter((codec) => codec.mimeType.toLowerCase() === 'video/h264')
       .sort((a, b) => h264Level(b) - h264Level(a));
     if (!candidates.length) return selection('unavailable');
-    const { source, encoding } = screenVideoPlan(
-      { revision: 1, publisher: quality, viewer: quality },
-      settings,
-    );
+    const { source, encoding } = screenVideoPlan({ revision: 1, publisher: quality }, settings);
     const width = Math.round(source.width / encoding.scaleResolutionDownBy);
     const height = Math.round(source.height / encoding.scaleResolutionDownBy);
     const result = await Promise.race([

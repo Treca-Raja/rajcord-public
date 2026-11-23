@@ -66,8 +66,10 @@ it('keeps reactions beneath and outside the message highlight while retaining a 
   const html = renderToStaticMarkup(
     createElement(MessageCard, { item, grouped: true, ...actions }),
   );
-  expect(html).toContain('Same display name');
-  expect(html).toContain('@first_user');
+  expect(html).toContain('aria-label="Message from Same display name @first_user"');
+  expect(html).not.toContain('chat-message-author');
+  expect(html).not.toContain('chat-message-avatar');
+  expect(html).toContain('<time');
   expect(html.indexOf('class="chat-message-reactions"')).toBeGreaterThan(
     html.indexOf('</article>'),
   );

@@ -45,3 +45,22 @@ it('requires an explicit bare screen TURN host and rejects URLs or credential-be
   ])
     expect(() => parseVoiceConfig({ ...local, SCREEN_TURN_HOST: host })).toThrow();
 });
+
+it('uses a separate screen relay secret and rejects partial configuration', () => {
+  const local = { ...base, LIVEKIT_URL: 'http://127.0.0.1:7880' };
+  const SCREEN_COTURN_HOST = 'screen-turn.example.com';
+  const SCREEN_COTURN_SECRET = '2f'.repeat(32);
+  expect(
+    parseVoiceConfig({ ...local, SCREEN_COTURN_HOST, SCREEN_COTURN_SECRET })?.screenCoturn,
+  ).toEqual({ host: SCREEN_COTURN_HOST, secret: SCREEN_COTURN_SECRET });
+  expect(() => parseVoiceConfig({ ...local, SCREEN_COTURN_HOST })).toThrow();
+  expect(() => parseVoiceConfig({ ...local, SCREEN_COTURN_SECRET })).toThrow();
+  expect(() =>
+    parseVoiceConfig({
+      ...local,
+      SCREEN_COTURN_HOST,
+      SCREEN_COTURN_SECRET,
+      LIVEKIT_API_SECRET: SCREEN_COTURN_SECRET,
+    }),
+  ).toThrow();
+});

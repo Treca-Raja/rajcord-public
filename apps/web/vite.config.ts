@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url';
 import { emojiAssetPrefix } from './src/shared/emoji/assets.ts';
 const require = createRequire(import.meta.url);
 const fontLicenses = [
-  'Inter — @fontsource-variable/inter',
-  readFileSync(require.resolve('@fontsource-variable/inter/LICENSE'), 'utf8'),
+  'IBM Plex Sans - @fontsource-variable/ibm-plex-sans',
+  readFileSync(require.resolve('@fontsource-variable/ibm-plex-sans/LICENSE'), 'utf8'),
+  'IBM Plex Mono - @fontsource/ibm-plex-mono',
+  readFileSync(require.resolve('@fontsource/ibm-plex-mono/LICENSE'), 'utf8'),
   'Twemoji graphics — Twitter, Inc. and contributors — CC BY 4.0',
   'Rajcord Composer Emoji — color font derived from the same Twemoji SVG artwork; built with scripts/build-composer-emoji.py',
   'https://github.com/jdecked/twemoji — Unicode 17 supplement pinned to b6b55fef1e8636b540a6d016a4729ca8cdf2e60b',

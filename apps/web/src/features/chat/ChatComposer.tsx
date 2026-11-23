@@ -86,16 +86,19 @@ export function ChatComposer({
     if (!input) return;
     let width = input.getBoundingClientRect().width;
     const resize = () => resizeComposerInput(input);
+    let pendingResize = 0;
     const observer = new ResizeObserver(() => {
       const next = input.getBoundingClientRect().width;
       if (next === width) return;
       width = next;
-      resize();
+      cancelAnimationFrame(pendingResize);
+      pendingResize = requestAnimationFrame(resize);
     });
     observer.observe(input);
     document.fonts.addEventListener('loadingdone', resize);
     return () => {
       observer.disconnect();
+      cancelAnimationFrame(pendingResize);
       document.fonts.removeEventListener('loadingdone', resize);
     };
   }, []);
@@ -246,11 +249,7 @@ export function ChatComposer({
             suggestions.length ? optionId(suggestions[active % suggestions.length]!) : undefined
           }
           placeholder={
-            disabled
-              ? 'Sending is unavailable here'
-              : reply
-                ? 'Write a reply'
-                : 'Send a little something · @ to mention'
+            disabled ? 'Sending is unavailable here' : reply ? 'Write a reply' : 'Write a message'
           }
           value={body}
           onChange={(event) => {

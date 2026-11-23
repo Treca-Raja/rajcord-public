@@ -5,6 +5,10 @@ import {
   type TProperties,
   type TSchema,
 } from '@sinclair/typebox';
+import {
+  NATIVE_VIEWER_GRANT_BATCH_SIZE,
+  NATIVE_VIEWER_GRANT_VERSION,
+} from '../capture-authorization.js';
 
 if (!FormatRegistry.Has('date-time'))
   FormatRegistry.Set(
@@ -128,6 +132,25 @@ export const errorResponse = object({ error: text });
 export const ok = object({ ok: literal(true) });
 export const cancelled = object({ cancelled: literal(true) });
 export const capture = object({ id: nonempty, remainingMs: Type.Number({ minimum: 0 }) });
+export const publicationCheck = object({
+  ...capture.properties,
+  native: optional(
+    object({
+      viewers: Type.Array(
+        object({
+          id: uuid,
+          remainingMs: count,
+          answerHash: nullable(Type.String({ pattern: '^[0-9a-f]{64}$' })),
+        }),
+        { maxItems: NATIVE_VIEWER_GRANT_BATCH_SIZE },
+      ),
+      iceServers: Type.Array(
+        object({ urls: array(nonempty), username: optional(text), credential: optional(text) }),
+        { maxItems: 4 },
+      ),
+    }),
+  ),
+});
 export const voiceJoin = object({
   id: nonempty,
   channelId: nonempty,
@@ -212,8 +235,10 @@ export const request = {
     shareId: uuid,
     sourceGeneration: Type.Integer({ minimum: 1 }),
     requestId: uuid,
+    nativeViewers: optional(literal(NATIVE_VIEWER_GRANT_VERSION)),
   }),
   publicationCheck: requestObject({
+    nativeViewers: optional(literal(1)),
     id: uuid,
     requestId: uuid,
     revision: Type.Integer({ minimum: 1 }),

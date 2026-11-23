@@ -1,13 +1,14 @@
 import { screenRelayServers } from './relay.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   SCREEN_PROTOCOL_VERSION,
+  NATIVE_VIEWER_GRANT_BATCH_SIZE,
   SCREEN_RENEWAL_PAGE_SIZE,
   SCREEN_PROFILES,
   SCREEN_VIDEO_BITRATES,
   SCREEN_RESOLUTIONS,
   SCREEN_FRAME_RATES,
-  screenQualityCeiling,
+  sameScreenQuality,
   type ScreenBinding,
   type ScreenErrorCode,
   type ScreenQuality,
@@ -63,9 +64,18 @@ type Binding = {
     publication: { share: Share; expires: number } | null;
   };
 };
-type Share = { value: ScreenShare; publisher: Binding; expires: number; publishExpires: number };
+type Share = {
+  value: ScreenShare;
+  publisher: Binding;
+  native: boolean;
+  nativeViewerBatch?: true;
+  viewers: Set<Link>;
+  expires: number;
+  publishExpires: number;
+  qualityRevision: number;
+};
 type Link = {
-  value: ScreenLink;
+  value: Omit<ScreenLink, 'quality' | 'videoBitrate'>;
   share: Share;
   viewer: Binding;
   expires: number;
@@ -73,6 +83,7 @@ type Link = {
     revision: number;
     offer: Description;
     answer?: Description;
+    answerHash?: string;
     deadline: number;
     early: number;
     candidates: [number, number];
@@ -80,7 +91,7 @@ type Link = {
   sequences?: [number, number];
 };
 export type ScreenSnapshot = { directory: ScreenDirectory; links: ScreenLinkGrant[] };
-type SnapshotMembership = { shares: ReadonlySet<string>; links: ReadonlySet<string> };
+type SnapshotMembership = { shares: ReadonlyMap<string, ScreenShare>; links: ReadonlySet<string> };
 export type ScreenDestination = { transportId: string; epoch: string };
 
 export class ScreenError extends HttpError {
@@ -150,7 +161,7 @@ export class ScreenService {
     shareId: string,
     sourceGeneration: number,
     sound: string,
-  ): { identity: object; expires: number } | null {
+  ) {
     if (!this.captureBinding(userId, sessionId, lease, epoch)) return null;
     const share = this.bindings.get(userId)?.share;
     return share &&
@@ -158,12 +169,43 @@ export class ScreenService {
       share.value.sourceGeneration === sourceGeneration &&
       share.value.sound === sound &&
       share.expires > this.now()
-      ? { identity: share, expires: Math.min(share.expires, lease.expires) }
+      ? {
+          identity: share,
+          expires: Math.min(share.expires, lease.expires),
+          enableNativeViewerBatch: share.native
+            ? () => (share.nativeViewerBatch = true)
+            : undefined,
+        }
       : null;
   }
   private relayConfig(binding: Binding) {
     const iceServers = screenRelayServers(this.voice.config, binding.userId, this.now());
     return iceServers ? { iceServers } : {};
+  }
+  async nativeViewers(shareIdentity: object, userId: string) {
+    const publisher = this.bindings.get(userId);
+    const share = publisher?.share;
+    if (!publisher || share !== shareIdentity || !this.current(publisher)) throw denied();
+    const links = [...share.viewers].filter(
+      ({ viewer, expires }) => expires > this.now() && this.current(viewer),
+    );
+    if (links.length)
+      await this.endpoints(publisher, new Set(links.map(({ viewer }) => viewer)), true);
+    if (publisher.share !== shareIdentity || !this.current(publisher)) throw denied();
+    const viewers = [];
+    for (const link of links) {
+      const { value, viewer, share, expires, negotiation } = link;
+      if (this.links.get(value.id) !== link || !this.current(viewer)) continue;
+      const remainingMs = Math.min(expires, viewer.lease.expires, share.expires) - this.now();
+      if (remainingMs > 0)
+        viewers.push({ id: value.id, remainingMs, answerHash: negotiation?.answerHash ?? null });
+    }
+    return {
+      viewers,
+      iceServers: this.relayConfig(publisher).iceServers ?? [
+        { urls: ['stun:stun.cloudflare.com:3478'] },
+      ],
+    };
   }
   private listeners = new Set<() => void>();
   onChange(listener: () => void) {
@@ -300,24 +342,33 @@ export class ScreenService {
       if (binding.requests.size > 64)
         binding.requests.delete(binding.requests.keys().next().value!);
     }
+    return previous !== undefined;
   }
   private grant(link: Link, expires = link.expires): ScreenLinkGrant {
+    const { profile, resolution, frameRate, videoBitrate } = link.share.value;
     return {
-      link: { ...link.value, quality: { ...link.value.quality } },
+      link: {
+        ...link.value,
+        quality: {
+          profile,
+          videoBitrate,
+          ...(resolution !== undefined && { resolution, frameRate }),
+        },
+        videoBitrate,
+      },
       remainingMs: Math.max(0, Math.min(expires, link.expires) - this.now()),
     };
   }
   private checkRenewalCapacity(binding: Binding, additional: number) {
     if (binding.renewalPages || additional <= 0) return;
-    let count = binding.selections.size + additional;
-    if (binding.share)
-      for (const link of this.links.values()) if (link.share === binding.share) count++;
+    const count = binding.selections.size + additional + (binding.share?.viewers.size ?? 0);
     if (count > SCREEN_RENEWAL_PAGE_SIZE)
       throw new ScreenError('capacity', 409, 'Update the screen client to renew more links.');
   }
   private dropLink(link: Link) {
     if (this.links.get(link.value.id) === link) {
       this.links.delete(link.value.id);
+      link.share.viewers.delete(link);
       this.changed();
     }
     if (link.viewer.selections.get(link.share.value.id) === link)
@@ -329,7 +380,7 @@ export class ScreenService {
       this.changed();
     }
     if (share.publisher.share === share) share.publisher.share = undefined;
-    for (const link of this.links.values()) if (link.share === share) this.dropLink(link);
+    for (const link of share.viewers) this.dropLink(link);
   }
   private dropBinding(binding: Binding) {
     if (binding.share) this.dropShare(binding.share);
@@ -438,13 +489,24 @@ export class ScreenService {
       'resolution',
       'frameRate',
       'sound',
+      'native',
     ]);
     const requestId = uuid(body.requestId),
       generation = revision(body.sourceGeneration),
       selected = quality(body);
     if (!['none', 'tab', 'system', 'application', 'source'].includes(body.sound as string))
       throw new ScreenError('invalid', 400, 'Invalid source sound mode.');
-    const fingerprint = JSON.stringify(['publish', requestId, generation, selected, body.sound]);
+    if (body.native !== undefined && body.native !== true)
+      throw new ScreenError('invalid', 400, 'Invalid native publication mode.');
+    const native = body.native === true;
+    const fingerprint = JSON.stringify([
+      'publish',
+      requestId,
+      generation,
+      selected,
+      body.sound,
+      native,
+    ]);
     return this.run(async () => {
       const binding = await this.bound(caller, body.epoch);
       this.request(binding, requestId, fingerprint);
@@ -465,6 +527,9 @@ export class ScreenService {
         expires: binding.lease.expires,
         publishExpires: binding.lease.expires,
         publisher: binding,
+        native,
+        viewers: new Set(),
+        qualityRevision: 0,
         value: {
           id: randomUUID(),
           publisherId: binding.userId,
@@ -492,6 +557,46 @@ export class ScreenService {
       return { stopped: true };
     });
   }
+  updateQuality(caller: ScreenCaller, value: unknown): Promise<ScreenShare> {
+    const body = input(value, [
+      'epoch',
+      'shareId',
+      'requestId',
+      'revision',
+      'profile',
+      'videoBitrate',
+      'resolution',
+      'frameRate',
+    ]);
+    const shareId = uuid(body.shareId);
+    const requestId = uuid(body.requestId);
+    const next = revision(body.revision);
+    const selected = quality(body);
+    if (
+      selected.profile === 'auto' ||
+      selected.profile === 'ultra' ||
+      selected.videoBitrate === null
+    )
+      throw new ScreenError('invalid', 400, 'Choose a supported stream format and bitrate.');
+    const fingerprint = JSON.stringify(['quality', shareId, next, selected]);
+    return this.run(async () => {
+      const binding = await this.bound(caller, body.epoch);
+      const share = binding.share;
+      if (!share || share.value.id !== shareId) throw denied();
+      const replay = this.request(binding, requestId, fingerprint);
+      if (next < share.qualityRevision || (next === share.qualityRevision && !replay))
+        throw stale();
+      if (replay) return this.shareValue(share);
+      this.request(binding, requestId, fingerprint, true);
+      share.qualityRevision = next;
+      if (!sameScreenQuality(share.value, selected)) {
+        const { id, publisherId, sourceGeneration, sound } = share.value;
+        share.value = { id, publisherId, sourceGeneration, sound, ...selected };
+        this.changed();
+      }
+      return this.shareValue(share);
+    });
+  }
   select(
     caller: ScreenCaller,
     value: unknown,
@@ -510,8 +615,12 @@ export class ScreenService {
       'removeShareId',
     ]);
     const requestId = uuid(body.requestId),
-      next = revision(body.revision),
-      selected = quality(body);
+      next = revision(body.revision);
+    const legacyQuality = ['profile', 'videoBitrate', 'resolution', 'frameRate'].some((field) =>
+      Object.hasOwn(body, field),
+    )
+      ? quality(body)
+      : null;
     const shareId = body.shareId === null ? null : uuid(body.shareId);
     const mode = body.mode === undefined ? (shareId === null ? 'clear' : 'replace') : body.mode;
     if (!['replace', 'add', 'remove', 'clear'].includes(mode as string))
@@ -529,7 +638,7 @@ export class ScreenService {
       requestId,
       next,
       shareId,
-      selected,
+      legacyQuality,
       mode,
       removeShareId,
     ]);
@@ -578,27 +687,25 @@ export class ScreenService {
       if (share) {
         await this.pair(viewer, share.publisher);
         if (share.publisher.share !== share) throw stale();
-        const requested = screenQualityCeiling(selected),
-          offered = screenQualityCeiling(share.value);
-        if (
-          requested.width > offered.width ||
-          requested.height > offered.height ||
-          requested.frameRate > offered.frameRate
-        )
-          throw new ScreenError('invalid', 400, 'Requested quality exceeds the publisher ceiling.');
-        if (
-          !share.publisher.supportsMoreThanNineViewers &&
-          !viewer.selections.has(share.value.id)
-        ) {
-          const viewers = [...this.links.values()].filter((link) => link.share === share).length;
-          if (viewers >= 9)
+        if (!viewer.selections.has(share.value.id)) {
+          // The old native helper accepts three peers and rejects larger authorization snapshots.
+          if (
+            share.native &&
+            share.viewers.size >= (share.nativeViewerBatch ? NATIVE_VIEWER_GRANT_BATCH_SIZE : 3)
+          )
             throw new ScreenError(
               'capacity',
               409,
-              'This publisher can share with up to nine viewers.',
+              share.nativeViewerBatch
+                ? 'This publisher has filled its native viewer authorization batch.'
+                : 'Update the publisher’s Rajcord Desktop to share with more viewers.',
             );
-        }
-        if (!viewer.selections.has(share.value.id)) {
+          if (!share.publisher.supportsMoreThanNineViewers && share.viewers.size >= 9)
+            throw new ScreenError(
+              'capacity',
+              409,
+              'This publisher can share with up to 9 viewers.',
+            );
           this.checkRenewalCapacity(share.publisher, 1);
           this.checkRenewalCapacity(viewer, mode === 'replace' ? 1 - viewer.selections.size : 1);
         }
@@ -610,9 +717,6 @@ export class ScreenService {
       viewer.lastSelection = fingerprint;
       this.request(viewer, requestId, fingerprint, true);
       if (!share) return finish(null);
-      const caps = [share.value.videoBitrate, selected.videoBitrate].filter(
-        (cap): cap is Exclude<ScreenVideoBitrate, null> => cap !== null,
-      );
       const link: Link = {
         share,
         viewer,
@@ -623,11 +727,10 @@ export class ScreenService {
           publisherId: share.publisher.userId,
           viewerId: viewer.userId,
           selectionRevision: next,
-          quality: selected,
-          videoBitrate: caps.length ? (Math.min(...caps) as ScreenVideoBitrate) : null,
         },
       };
       viewer.selections.set(share.value.id, link);
+      share.viewers.add(link);
       this.links.set(link.value.id, link);
       this.changed();
       return finish(this.grant(link));
@@ -694,13 +797,15 @@ export class ScreenService {
       const links = [...this.links.values()].filter(
         (l) => l.viewer === binding || l.share.publisher === binding,
       );
-      // Share and link records have immutable public identities. Changes to
-      // other viewers' selections do not require delivering this same snapshot.
+      // Changes to other viewers' selections do not require delivering this same snapshot.
       if (
         known &&
         shares.length === known.shares.size &&
         links.length === known.links.size &&
-        shares.every((share) => known.shares.has(share.value.id)) &&
+        shares.every(({ value }) => {
+          const previous = known.shares.get(value.id);
+          return previous && sameScreenQuality(value, previous);
+        }) &&
         links.every((link) => known.links.has(link.value.id))
       )
         return this.stateRevision;
@@ -788,6 +893,7 @@ export class ScreenService {
           )
             throw stale();
           negotiation.answer = answer;
+          negotiation.answerHash = createHash('sha256').update(payload.sdp).digest('hex');
           negotiation.candidates[1] = answer.candidates;
         } else {
           const desc = publisher ? negotiation.offer : negotiation.answer;

@@ -7,6 +7,7 @@ import type {
   ScreenSelectRequest,
 } from '@tricord/shared';
 import { ScreenCall } from './screen-call';
+import { ScreenPlaybackError } from './screen-playback';
 import { ScreenLifetime } from './capture-session';
 import type { ScreenSocket } from './screen-socket';
 import type { OwnedScreenBinding } from './screen-binding';
@@ -237,7 +238,7 @@ async function fixture() {
     element: () => () => {},
   } as unknown as ConstructorParameters<typeof ScreenCall>[0]);
   calls.push(call);
-  await call.watch(share.id, quality);
+  await call.watch(share.id);
   const visibility = (visible: boolean) => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: !visible });
     document.dispatchEvent(new Event('visibilitychange'));
@@ -276,7 +277,7 @@ it('ignores adopted link notices while timed renewals continue without a feedbac
   expect(f.call.inspect().error).toBe('');
 });
 
-it('automatically reselects a failed incoming stream with its previous quality', async () => {
+it('automatically reselects a failed incoming stream by ID', async () => {
   const f = await fixture();
   const previous = f.openIncoming.mock.results[0]!.value;
   previous.update({ phase: 'closed', reason: 'failed' });
@@ -290,7 +291,7 @@ it('automatically reselects a failed incoming stream with its previous quality',
           event === 'screen:select' && (request as ScreenSelectRequest).shareId === f.share.id,
       )
       .at(-1)?.[1],
-  ).toMatchObject({ ...f.quality, mode: 'add' });
+  ).toMatchObject({ shareId: f.share.id, mode: 'add' });
   expect(f.voice.leave).not.toHaveBeenCalled();
 });
 it('retries a transient renewal timeout without extending authority or discarding healthy watching', async () => {
@@ -327,7 +328,7 @@ it('collects 200 grants before adopting either page and retries the same throttl
   const f = await fixture(),
     first = firstRenewalPage(f.notice().grant);
   const other = f.addShare();
-  await f.call.watchMultiple(other.id, f.quality);
+  await f.call.watchMultiple(other.id);
   const grant = f.notice().grant;
   f.command
     .mockClear()
@@ -449,6 +450,52 @@ it('coalesces new viewer notices into a follow-up after an active renewal', asyn
   ]);
 });
 
+it('paces staggered viewer discovery while admitting all nine authorized links', async () => {
+  const f = await fixture();
+  const life = new ScreenLifetime(Date.now() + 45000);
+  const own = { ...f.share, id: crypto.randomUUID() };
+  Reflect.set(f.call, 'ownShare', own);
+  Reflect.set(f.call, 'source', { lifecycle: () => life, stop: () => life.stop() });
+  const grants: ScreenLinkGrant[] = [];
+  const open = vi
+    .spyOn(
+      f.call as unknown as { openPublisher(link: ScreenLinkGrant['link']): Promise<void> },
+      'openPublisher',
+    )
+    .mockResolvedValue();
+  const command = f.command.getMockImplementation()!;
+  f.command.mockImplementation(async (event, request) => {
+    if (event !== 'screen:renew') return command(event, request);
+    return {
+      remainingMs: 45000,
+      publication: { share: own, remainingMs: 45000 },
+      links: [f.notice().grant, ...grants],
+    };
+  });
+  for (let n = 0; n < 9; n++) {
+    const grant = {
+      remainingMs: 45000,
+      link: {
+        ...f.notice().grant.link,
+        id: crypto.randomUUID(),
+        shareId: own.id,
+        publisherId: own.publisherId,
+        viewerId: crypto.randomUUID(),
+      },
+    };
+    grants.push(grant);
+    f.emit('link', { ...f.notice(), grant });
+    await vi.advanceTimersByTimeAsync(250);
+  }
+  const renewals = () => f.command.mock.calls.filter(([event]) => event === 'screen:renew');
+  expect(renewals()).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(renewals()).toHaveLength(3);
+  expect(new Set(open.mock.calls.map(([link]) => link.id))).toEqual(
+    new Set(grants.map((grant) => grant.link.id)),
+  );
+});
+
 it('does not reopen an outgoing link closed between renewal pages', async () => {
   const f = await fixture(),
     gate = deferred(),
@@ -484,7 +531,7 @@ it('does not reopen an outgoing link closed between renewal pages', async () => 
   });
   gate.resolve();
   await flush();
-  expect(open.mock.calls.map(([link]) => link)).toEqual([healthy]);
+  expect(open.mock.calls.map(([link]) => link.id)).toEqual([healthy.id]);
   expect(f.binding.adoptRenewal).toHaveBeenCalledOnce();
   expect(f.call.inspect().watching).toBe(f.share.id);
   open.mockRestore();
@@ -532,13 +579,27 @@ it('discards an expired first page even when the last page has a live deadline',
 it('serializes recovery of simultaneously failed watched streams', async () => {
   const f = await fixture(),
     other = f.addShare();
-  await f.call.watchMultiple(other.id, f.quality);
+  await f.call.watchMultiple(other.id);
   f.openIncoming.mock.results[0]!.value.update({ phase: 'closed', reason: 'failed' });
   f.openIncoming.mock.results[1]!.value.update({ phase: 'closed', reason: 'failed' });
   await vi.advanceTimersByTimeAsync(1100);
   expect(f.openIncoming).toHaveBeenCalledTimes(4);
   expect(new Set(f.call.inspect().watchingShareIds)).toEqual(new Set([f.share.id, other.id]));
   expect(f.call.inspect().error).toBe('');
+});
+
+it('watches a legacy publication without interpreting its link quality as a viewer preference', async () => {
+  const f = await fixture();
+  const legacy = f.addShare();
+  const command = f.command.getMockImplementation()!;
+  f.command.mockImplementationOnce(async (event, request) => {
+    const grant = (await command(event, request)) as ScreenLinkGrant;
+    grant.link.quality = { profile: 'auto', videoBitrate: null };
+    grant.link.videoBitrate = null;
+    return grant;
+  });
+  await f.call.watchMultiple(legacy.id);
+  expect(f.call.inspect().watchingShareIds).toContain(legacy.id);
 });
 
 it('does not send compensating cleanup for a selection explicitly rejected by admission', async () => {
@@ -548,7 +609,7 @@ it('does not send compensating cleanup for a selection explicitly rejected by ad
   f.command.mockRejectedValueOnce(
     Object.assign(new Error('Screen authorization is busy.'), { code: 'throttled' }),
   );
-  await expect(f.call.watchMultiple(other.id, f.quality)).rejects.toMatchObject({
+  await expect(f.call.watchMultiple(other.id)).rejects.toMatchObject({
     code: 'throttled',
   });
   await flush();
@@ -563,7 +624,7 @@ it('honors Stop triggered synchronously by a selection-state observer', async ()
   const unsubscribe = f.call.subscribe(() => {
     if (f.call.inspect().selectingShareId === other.id) f.call.stopWatching();
   });
-  await expect(f.call.watch(other.id, f.quality)).rejects.toThrow('selection ended');
+  await expect(f.call.watch(other.id)).rejects.toThrow('selection ended');
   unsubscribe();
   expect(
     f.command.mock.calls.some(
@@ -722,7 +783,7 @@ it('preserves a watch selected before the renewal acknowledgement arrives', asyn
   });
   await vi.advanceTimersByTimeAsync(10100);
   expect(f.command).toHaveBeenLastCalledWith('screen:renew', expect.anything());
-  await f.call.watchMultiple(next.id, f.quality);
+  await f.call.watchMultiple(next.id);
   gate.resolve();
   await flush();
   expect(f.call.inspect().watchingShareIds).toEqual([next.id]);
@@ -860,7 +921,7 @@ it.each(['stop', 'hide', 'binding', 'source', 'dispose'] as const)(
 it('bounds automatic reselection and leaves other watched streams and focus intact', async () => {
   const f = await fixture(),
     other = f.addShare();
-  await f.call.watchMultiple(other.id, f.quality);
+  await f.call.watchMultiple(other.id);
   const initial = f.openIncoming.mock.results[0]!.value;
   initial.update({ phase: 'closed', reason: 'failed' });
   await vi.advanceTimersByTimeAsync(1000);
@@ -905,7 +966,7 @@ it.each(['before retry', 'during selection'] as const)(
   async (timing) => {
     const f = await fixture();
     const other = f.addShare();
-    await f.call.watchMultiple(other.id, f.quality);
+    await f.call.watchMultiple(other.id);
     const gate = deferred();
     const command = f.command.getMockImplementation()!;
     f.command.mockImplementation(async (event, request) => {
@@ -956,7 +1017,7 @@ it.each([18, 38, 64])(
   },
 );
 
-it('preserves watch quality across duplicate hidden and visible notifications', async () => {
+it('restores the watched share across duplicate hidden and visible notifications', async () => {
   const f = await fixture();
   f.nativeVisibility(false);
   f.visibility(false);
@@ -970,14 +1031,14 @@ it('preserves watch quality across duplicate hidden and visible notifications', 
     ([event, request]) => event === 'screen:select' && request.shareId,
   );
   expect(selections).toHaveLength(2);
-  expect(selections[1]![1]).toMatchObject({ ...f.quality, revision: 3 });
+  expect(selections[1]![1]).toMatchObject({ revision: 3, shareId: f.share.id });
 });
 
 it('adds and removes watched streams independently and switches focused layout locally', async () => {
   const f = await fixture(),
     other = f.addShare();
   const initialSelections = f.command.mock.calls.filter(([event]) => event === 'screen:select');
-  await f.call.watchMultiple(other.id, f.quality);
+  await f.call.watchMultiple(other.id);
   expect(f.call.inspect()).toMatchObject({
     watching: other.id,
     watchingShareIds: [f.share.id, other.id],
@@ -991,11 +1052,9 @@ it('adds and removes watched streams independently and switches focused layout l
   expect(f.call.inspect()).toMatchObject({ watching: f.share.id, layout: 'focus' });
   f.call.zoomOutWatch();
   expect(f.call.inspect().layout).toBe('grid');
-  await f.call.watchMultiple(other.id, { ...f.quality, resolution: 480 });
-  const revised = f.command.mock.calls
-    .filter(([event, request]) => event === 'screen:select' && request.shareId === other.id)
-    .at(-1);
-  expect(revised?.[1]).toMatchObject({ mode: 'add', resolution: 480 });
+  await f.call.watchMultiple(other.id);
+  expect(f.call.inspect()).toMatchObject({ watching: other.id, layout: 'focus' });
+  expect(f.command.mock.calls.filter(([event]) => event === 'screen:select')).toHaveLength(2);
   f.call.focusWatch(f.share.id);
   f.call.zoomOutWatch();
   const count = f.command.mock.calls.filter(([event]) => event === 'screen:select').length;
@@ -1091,7 +1150,7 @@ it.each([false, true])(
     const f = await fixture(),
       other = f.addShare(),
       cleanup = deferred();
-    await f.call.watchMultiple(other.id, { ...f.quality, resolution: 480 });
+    await f.call.watchMultiple(other.id);
     f.call.focusWatch(f.share.id);
     f.call.zoomOutWatch();
     f.transport.cleanup = () => cleanup.promise;
@@ -1119,7 +1178,9 @@ it.each([false, true])(
       const selection = f.command.mock.calls
         .filter(([event, request]) => event === 'screen:select' && request.shareId === other.id)
         .at(-1);
-      expect(selection?.[1]).toMatchObject({ mode: 'add', resolution: 480, frameRate: 15 });
+      expect(selection?.[1]).toMatchObject({ mode: 'add', shareId: other.id });
+      expect(selection?.[1]).not.toHaveProperty('resolution');
+      expect(selection?.[1]).not.toHaveProperty('videoBitrate');
     }
   },
 );
@@ -1148,9 +1209,9 @@ it('retains stream audio controls across close and reopen and applies them to ev
 
   f.call.close();
   await f.call.open();
-  await f.call.watch(f.share.id, f.quality);
+  await f.call.watch(f.share.id);
   const other = f.addShare();
-  await f.call.watchMultiple(other.id, f.quality);
+  await f.call.watchMultiple(other.id);
   const receivers = f.openIncoming.mock.results.slice(1).map((result) => result.value);
   for (const receiver of receivers) {
     receiver.ready();
@@ -1174,6 +1235,51 @@ it('retains stream audio controls across close and reopen and applies them to ev
   expect(first.setVolume).toHaveBeenLastCalledWith(0.35);
 });
 
+it.each(['recovered', 'timed out again', 'stopped'] as const)(
+  'bounds automatic playback startup retry when the watch is %s',
+  async (outcome) => {
+    const f = await fixture();
+    f.call.observeVoice(voiceState());
+    const receiver = f.openIncoming.mock.results[0]!.value;
+    const firstPlay = deferred();
+    const timeout = new ScreenPlaybackError('timeout', 'Playback operation timed out.');
+    receiver.play.mockImplementationOnce(() => firstPlay.promise);
+    receiver.ready();
+    const playback = receiver.inspect().playback!;
+    const failed = { ...playback, phase: 'error', error: timeout } as const;
+    receiver.update({ playback: { ...failed, pendingNative: true } });
+    firstPlay.reject(timeout);
+    await flush();
+    expect(receiver.play).toHaveBeenCalledTimes(1);
+    expect(f.call.inspect().playback).toBe(timeout.message);
+    expect(f.call.inspect().playbackTimeout).toBe(timeout.message);
+
+    if (outcome === 'stopped') {
+      f.call.stopWatching();
+      receiver.update({ playback: { ...failed, pendingNative: false } });
+      expect(receiver.play).toHaveBeenCalledTimes(1);
+      expect(f.call.inspect().playbackTimeout).toBe('');
+      return;
+    }
+    receiver.play.mockImplementationOnce(async () => {
+      receiver.update({ playback: { ...playback, phase: 'routing', pendingNative: true } });
+      expect(f.call.inspect().playbackTimeout).toBe(timeout.message);
+      if (outcome === 'timed out again') {
+        receiver.update({ playback: { ...failed, pendingNative: false } });
+        throw timeout;
+      }
+      receiver.update({ playback: { ...playback, phase: 'playing' } });
+    });
+    receiver.update({ playback: { ...failed, pendingNative: false } });
+    await flush();
+    expect(receiver.play).toHaveBeenCalledTimes(2);
+    expect(receiver.setOutput).toHaveBeenLastCalledWith('headphones');
+    expect(f.call.inspect().error).toBe('');
+    expect(f.call.inspect().playbackTimeout).toBe(outcome === 'recovered' ? '' : timeout.message);
+    if (outcome === 'recovered') expect(f.call.inspect().playback).toBe('playing');
+  },
+);
+
 it('rejects invalid stream volume without changing the retained controls or receiver', async () => {
   const f = await fixture();
   f.call.observeVoice(voiceState());
@@ -1193,7 +1299,7 @@ it.each(['joining', 'reconnecting', 'connected'] as const)(
     const f = await fixture(),
       other = f.addShare();
     await f.call.open();
-    await f.call.watchMultiple(other.id, f.quality);
+    await f.call.watchMultiple(other.id);
     f.call.observeVoice(voiceState({ status }));
     expect(f.call.inspect().open).toBe(true);
     f.call.observeVoice(voiceState({ status: 'idle', channelId: null }));
@@ -1228,7 +1334,7 @@ it('ignores stale receiver notifications and automatic playback failures after r
   const previous = f.openIncoming.mock.results[0]!.value;
   previous.play.mockImplementationOnce(() => playback.promise);
   previous.ready();
-  await f.call.watch(f.share.id, f.quality);
+  await f.call.watch(f.addShare().id);
   const current = f.openIncoming.mock.results[1]!.value;
   current.ready();
   const before = f.call.inspect();

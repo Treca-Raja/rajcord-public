@@ -1,0 +1,11 @@
+--- a/src/client/ns_turn_msg.c
++++ b/src/client/ns_turn_msg.c
+@@ -1404,6 +1404,7 @@
+     lifetime = STUN_DEFAULT_ALLOCATE_LIFETIME;
+   } else if (lifetime < STUN_MIN_ALLOCATE_LIFETIME) {
+     lifetime = STUN_MIN_ALLOCATE_LIFETIME;
+-  } else if (lifetime > max_allowed_lifetime) {
++  }
++  if (lifetime > max_allowed_lifetime) {
+     lifetime = max_allowed_lifetime;
+   }

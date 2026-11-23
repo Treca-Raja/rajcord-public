@@ -1,0 +1,30 @@
+name: rajcord-screen-turn-fixture
+
+services:
+  coturn:
+    image: rajcord-screen-coturn:4.19.2
+    build: .
+    command: ['-c', '/run/screen-turn/turnserver.conf']
+    volumes:
+      - ${SCREEN_TURN_RUNTIME:?Set the isolated fixture directory}:/run/screen-turn:ro
+    networks:
+      relay-fixture:
+        ipv4_address: 172.31.247.2
+    ports:
+      - '127.0.0.1:3479:3479/udp'
+      - '127.0.0.1:3479:3479/tcp'
+      - '127.0.0.1:5350:5350/tcp'
+      - '127.0.0.1:19641:9641/tcp'
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 256m
+    cpus: 1
+
+networks:
+  relay-fixture:
+    ipam:
+      config:
+        - subnet: 172.31.247.0/28

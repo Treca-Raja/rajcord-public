@@ -88,20 +88,21 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     assert.equal(await js("!!document.querySelector('.shell')"), false);
     console.log('TRICORD_SMOKE_PENDING');
     await wait("!!document.querySelector('[data-connection=connected]')");
+    await js("document.querySelector('button[aria-controls=workspace-activity]').click()");
     await wait("!!document.querySelector('[data-presence-state=ready] [data-presence=online]')");
     const originalSize = win.getSize();
-    win.setSize(620, 820);
+    win.setSize(720, 820);
     await wait(
-      "getComputedStyle(document.querySelector('button[aria-label=Members]')).display!=='none'",
+      "innerWidth<=750 && document.querySelector('button[aria-controls=workspace-activity]')?.getAttribute('aria-expanded')==='false' && !document.querySelector('#workspace-activity')",
     );
     await js(
-      "document.querySelector('button[aria-label=Members]').focus();document.querySelector('button[aria-label=Members]').click()",
+      "document.querySelector('button[aria-controls=workspace-activity]').focus();document.querySelector('button[aria-controls=workspace-activity]').click()",
     );
-    await wait("!!document.querySelector('[role=dialog][aria-label=Members]')");
+    await wait("!!document.querySelector('[role=dialog][aria-label=Activity]')");
     assert.equal(
-      await js("!!document.activeElement.closest('[role=dialog][aria-label=Members]')"),
+      await js("!!document.activeElement.closest('[role=dialog][aria-label=Activity]')"),
       true,
-      'Opening Members must move focus into its drawer',
+      'Opening Activity must move focus into its drawer',
     );
     assert.equal(
       await js('document.documentElement.scrollWidth<=innerWidth'),
@@ -109,8 +110,8 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       'Narrow desktop layout must not overflow horizontally',
     );
     await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
-    await wait("!document.querySelector('[role=dialog][aria-label=Members]')");
-    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Members');
+    await wait("!document.querySelector('[role=dialog][aria-label=Activity]')");
+    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Activity');
     win.setSize(originalSize[0]!, originalSize[1]!);
 
     if (!chatOnly) {
@@ -218,7 +219,7 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       await wait(
         "fetch('/test/voice-published').then(response=>response.json()).then(result=>result.published)",
       );
-      await js('document.querySelector(\'[aria-label="Back to chat"]\')?.click()');
+      await js('document.querySelector(\'[aria-label="Back to channel"]\')?.click()');
       await wait("!document.querySelector('#screen-panel')");
       await js(`(()=>{const field=document.querySelector('textarea[name=message]');window.permissionDraftField=field;
         window.permissionOriginalDraft=field.value;Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'Microphone reset draft');
@@ -345,13 +346,10 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
       await js('document.querySelector(\'button[aria-label="Unmute microphone"]\').click()');
       await wait("fetch('/test/voice-published').then(r=>r.json()).then(r=>r.published)");
       await js(
-        "document.querySelector('button[aria-label=Deafen],button[aria-label=Undeafen]').click()",
+        "document.querySelector('.profile-audio-controls button[aria-label=Deafen]').click()",
       );
-      assert.equal(
-        await js(
-          "document.querySelector('button[aria-label=Deafen],button[aria-label=Undeafen]').getAttribute('aria-pressed')",
-        ),
-        'true',
+      await wait(
+        "document.querySelector('.profile-audio-controls button[aria-label=\"Enable audio\"]')?.getAttribute('aria-pressed')==='true'",
       );
       await wait('window.soundCalls.length===2');
       await click('Preview sound');
@@ -362,7 +360,9 @@ export async function runAuthSmoke(win: BrowserWindow, target: string) {
     }
 
     await js("document.querySelector('button[aria-label=Settings]').click()");
-    await wait("!!document.querySelector('input[name=displayName]')");
+    await wait(
+      "!!document.querySelector('input[name=displayName]')?.form?.querySelector('button:enabled')",
+    );
     await fill({ displayName: 'Verified desktop member' });
     await click('Save name');
     await wait("document.body.innerText.includes('Display name saved.')");

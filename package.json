@@ -9,6 +9,7 @@
   },
   "scripts": {
     "setup:desktop": "pnpm --filter @tricord/desktop exec install-electron",
+    "desktop:obs:setup": "pwsh -NoProfile -File apps/desktop/native/obs/setup.ps1",
     "desktop:package": "pnpm --filter @tricord/desktop package:win",
     "desktop:audit": "node scripts/desktop-audit.mjs",
     "desktop:test:install": "powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/desktop-install-smoke.ps1",
@@ -57,12 +58,12 @@
     "@types/node": "^24.0.0",
     "concurrently": "^9.2.0",
     "cross-env": "^10.1.0",
-    "eslint": "^10.0.0",
+    "eslint": "^10.15.0",
     "eslint-plugin-react-hooks": "7.1.1",
-    "globals": "^17.0.0",
-    "prettier": "^3.6.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "^8.72.1",
+    "typescript-eslint": "^8.73.0",
     "vitest": "^5.1.0",
     "wait-on": "^9.0.0"
   }

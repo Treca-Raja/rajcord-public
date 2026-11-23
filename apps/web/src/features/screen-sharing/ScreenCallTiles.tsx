@@ -109,23 +109,19 @@ export function StreamTile({
 
 export function ParticipantTile({
   person,
-  index,
   own,
   expanded,
   open,
 }: {
   person: Readonly<VoiceState['participants'][number]>;
-  index: number;
   own: boolean;
   expanded: boolean;
   open: (anchor: HTMLElement) => void;
 }) {
-  const tones = ['green', 'purple', 'orange'] as const;
   return (
     <button
       type="button"
       className="screen-participant-tile"
-      data-tone={index % 5}
       data-speaking={person.speaking}
       disabled={own}
       aria-label={`${person.name}${person.muted ? ', muted' : ''}`}
@@ -140,9 +136,7 @@ export function ParticipantTile({
       }}
     >
       <span className="screen-participant-avatar">
-        <Avatar tone={tones[index % tones.length] ?? 'green'}>
-          {person.name.slice(0, 1).toUpperCase()}
-        </Avatar>
+        <Avatar>{person.name.slice(0, 1).toUpperCase()}</Avatar>
         {person.muted && (
           <span className="screen-participant-muted" aria-label="Muted">
             <MicOff size={12} />
@@ -152,6 +146,9 @@ export function ParticipantTile({
       <span className="screen-participant-name">
         <strong>{person.name}</strong>
         {own && <small>You</small>}
+        <small className="screen-participant-status">
+          {person.muted ? 'Muted' : person.speaking ? 'Speaking' : 'In voice'}
+        </small>
       </span>
     </button>
   );

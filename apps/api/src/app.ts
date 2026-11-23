@@ -120,6 +120,7 @@ export function createApp({
           undefined,
           screen.captureBinding.bind(screen),
           screen.capturePublication.bind(screen),
+          screen.nativeViewers.bind(screen),
         )
       : undefined;
   app.setErrorHandler((error, req, reply) => {

@@ -25,7 +25,7 @@
   const soundLabels = {
     none: 'Video only',
     application: 'Selected app audio, including its child processes and other windows',
-    system: 'System audio, including other apps and call playback',
+    system: 'System audio from other apps, excluding Rajcord',
     source: 'Automatic — application audio for a window, system audio for an entire screen',
   };
   const selectedSound = () =>
@@ -230,7 +230,7 @@
         help.textContent = !application.disabled
           ? 'Application audio includes this app and its child processes, including its other windows.'
           : !system.disabled
-            ? 'System sound can include other applications and call playback. Check your audio routing.'
+            ? 'The stream includes system audio from other applications and excludes Rajcord.'
             : 'Requested audio is unavailable for this source. Choose a compatible source or prepare video only.';
         message('Choose sound, then confirm this source.');
         update();

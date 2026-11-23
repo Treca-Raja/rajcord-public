@@ -129,6 +129,32 @@ try {
   containers.push(name + '-api');
   const info = JSON.parse(docker(['inspect', name + '-api']).toString())[0];
   assert.equal(info.Config.User, 'node');
+  const packages = JSON.parse(
+    docker([
+      'exec',
+      name + '-api',
+      'node',
+      '-p',
+      "JSON.stringify(require('node:fs').readdirSync('node_modules/.pnpm'))",
+    ]).toString(),
+  );
+  const minimatchInventory = packages.filter((name) => name.startsWith('minimatch@')).join(' ');
+  assert.doesNotMatch(
+    minimatchInventory,
+    /\bminimatch@(?:(?:[7-9]|10)\.|11\.0\.0\b)/,
+    'Server image contains a minimatch version affected by GHSA-g3hv-75wg-m249',
+  );
+  console.log(`Server image minimatch inventory: ${minimatchInventory || 'absent'}`);
+  const wsInventory = packages.filter((name) => name.startsWith('ws@'));
+  assert.ok(wsInventory.length, 'Server image must include ws for voice and Socket.IO');
+  for (const name of wsInventory) {
+    const version = /^ws@(\d+)\.(\d+)\.\d+$/.exec(name);
+    assert.ok(
+      version && (Number(version[1]) > 8 || (version[1] === '8' && Number(version[2]) >= 23)),
+      `Server image contains ${name}. The remote memory exhaustion fix requires ws 8.23.0 or later.`,
+    );
+  }
+  console.log(`Server image ws inventory: ${wsInventory.join(' ')}`);
   const port = info.NetworkSettings.Ports['3001/tcp'][0].HostPort;
   const origin = 'http://127.0.0.1:' + port;
   ready = false;

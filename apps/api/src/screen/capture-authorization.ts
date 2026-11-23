@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { CaptureAuthorization, CaptureSoundChoice } from '@tricord/shared';
+import { NATIVE_VIEWER_GRANT_VERSION } from '@tricord/shared';
+import type {
+  CaptureAuthorization,
+  CaptureSoundChoice,
+  NativeViewerSnapshot,
+} from '@tricord/shared';
 import { approved, equal, identity, type Identity } from '../auth/service.js';
 import { HttpError, input, uuid } from '../auth/validation.js';
 import type { Lease, VoiceService } from '../voice/service.js';
@@ -22,7 +27,7 @@ export type CapturePublicationMatcher = (
   shareId: string,
   sourceGeneration: number,
   sound: string,
-) => { identity: object; expires: number } | null;
+) => { identity: object; expires: number; enableNativeViewerBatch?: () => void } | null;
 type Grant = {
   id: string;
   requestId: string;
@@ -41,6 +46,7 @@ type Publication = Omit<Grant, 'consumed' | 'promoted'> & {
   previewId: string;
   shareId: string;
   sourceGeneration: number;
+  nativeViewers?: number;
   share: object;
   issuedExpires: number;
   revision: number;
@@ -67,6 +73,7 @@ export class CaptureAuthorizationService {
       approved(await identity(voice.pool, token)),
     private matchBinding: CaptureBindingMatcher = () => null,
     private matchPublication: CapturePublicationMatcher = () => null,
+    private nativeViewers?: (share: object, userId: string) => Promise<NativeViewerSnapshot>,
   ) {
     this.time = now();
     this.unsubscribe = voice.onLeaseInvalidated((lease) => {
@@ -294,7 +301,17 @@ export class CaptureAuthorizationService {
     return own?.identity === publication.share ? own : null;
   }
   handoff(token: string, value: unknown, csrf: unknown) {
-    const body = input(value, ['id', 'epoch', 'shareId', 'sourceGeneration', 'requestId']);
+    const body = input(value, [
+      'id',
+      'epoch',
+      'shareId',
+      'sourceGeneration',
+      'requestId',
+      'nativeViewers',
+    ]);
+    const nativeViewers = body.nativeViewers;
+    if (nativeViewers !== undefined && nativeViewers !== NATIVE_VIEWER_GRANT_VERSION)
+      throw new HttpError(400, 'Invalid native viewer grant version.');
     const id = uuid(body.id),
       epoch = uuid(body.epoch),
       shareId = uuid(body.shareId),
@@ -333,6 +350,7 @@ export class CaptureAuthorizationService {
           previous.previewId !== id ||
           previous.shareId !== shareId ||
           previous.sourceGeneration !== sourceGeneration ||
+          previous.nativeViewers !== nativeViewers ||
           !this.current(previous) ||
           this.ownPublication(previous)?.identity !== own.identity
         )
@@ -351,6 +369,10 @@ export class CaptureAuthorizationService {
         };
       }
       if (preview.promoted) throw denied();
+      if (nativeViewers !== undefined) {
+        if (!own.enableNativeViewerBatch) throw denied();
+        own.enableNativeViewerBatch();
+      }
       const publication: Publication = {
         ...preview,
         id: randomUUID(),
@@ -358,6 +380,7 @@ export class CaptureAuthorizationService {
         requestId,
         shareId,
         sourceGeneration: sourceGeneration as number,
+        nativeViewers,
         share: own.identity,
         expires: Math.min(own.expires, auth.expiresAt.getTime()),
         issuedExpires: Math.min(own.expires, auth.expiresAt.getTime()),
@@ -369,7 +392,9 @@ export class CaptureAuthorizationService {
     });
   }
   checkPublication(token: string, value: unknown, csrf: unknown) {
-    const body = input(value, ['id', 'requestId', 'revision']);
+    const body = input(value, ['id', 'requestId', 'revision', 'nativeViewers']);
+    if (body.nativeViewers !== undefined && body.nativeViewers !== 1)
+      throw new HttpError(400, 'Invalid native viewer request.');
     const id = uuid(body.id),
       requestId = uuid(body.requestId),
       revision = body.revision;
@@ -400,6 +425,18 @@ export class CaptureAuthorizationService {
         (revision === publication.revision && fingerprint !== publication.fingerprint)
       )
         throw denied();
+      let native: NativeViewerSnapshot | undefined;
+      if (body.nativeViewers === 1) {
+        if (!this.nativeViewers) throw denied();
+        native = await this.nativeViewers(own.identity, auth.user.id);
+        current();
+        if (
+          this.publications.get(auth.user.id) !== publication ||
+          this.ownPublication(publication)?.identity !== own.identity ||
+          !this.current(publication)
+        )
+          throw denied();
+      }
       if (revision !== publication.revision) {
         publication.expires = Math.min(own.expires, auth.expiresAt.getTime());
         publication.checkedExpires = publication.expires;
@@ -414,7 +451,7 @@ export class CaptureAuthorizationService {
           auth.expiresAt.getTime(),
         ) - this.now();
       if (remainingMs <= 0) throw denied();
-      return { id: publication.id, remainingMs };
+      return { id: publication.id, remainingMs, ...(native ? { native } : {}) };
     });
   }
   cancelPublication(token: string, value: unknown, csrf: unknown) {

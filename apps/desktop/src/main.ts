@@ -6,8 +6,18 @@ import { MicrophonePermission, microphonePermissions } from './microphone-permis
 import { installNativeCapture } from './native-capture.js';
 import { createSessionCaptureAuthority } from './capture-authority-http.js';
 import { installScreenIpc } from './screen-ipc.js';
-import { applicationAudioSupported, applicationAudioSources } from './application-audio.js';
-import { app, BrowserWindow, session, dialog, ipcMain, shell, desktopCapturer } from 'electron';
+import { obsRuntime, obsTarget, nativeCaptureIdentity } from './obs-screen.js';
+import { applicationAudioSupported, windowProcessSources } from './application-audio.js';
+import {
+  app,
+  BrowserWindow,
+  session,
+  dialog,
+  ipcMain,
+  shell,
+  desktopCapturer,
+  screen,
+} from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { configureUpdates } from './updates.js';
@@ -15,6 +25,7 @@ import { installWindowsChrome, windowsChromeOptions } from './window-chrome.js';
 import { Menu, Tray, nativeImage } from 'electron';
 const smoke = !app.isPackaged && process.argv.includes('--smoke');
 const authSmoke = !app.isPackaged && process.argv.includes('--auth-smoke');
+const nativeScreenTest = authSmoke && process.argv.includes('--native-screen-smoke');
 const local = authSmoke ? process.env.TRICORD_TEST_PROFILE : path.resolve(__dirname, '../.local');
 if (!local) throw new Error('Test profile required.');
 app.setName('Rajcord');
@@ -110,7 +121,7 @@ app
       minWidth: 720,
       minHeight: 600,
       show: !smoke && !authSmoke,
-      backgroundColor: '#16191f',
+      backgroundColor: '#101019',
       ...(process.platform === 'win32' ? windowsChromeOptions() : {}),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
@@ -130,6 +141,8 @@ app
       shutdown: app,
       onError: (code) => console.warn('Capture authority unavailable:', code),
     });
+    let displayRevision = 0;
+    const sourceAudio = applicationAudioSupported();
     const captureBoundary: ReturnType<typeof installNativeCapture> = installNativeCapture({
       owner: win,
       session: session.defaultSession,
@@ -139,8 +152,8 @@ app
       authority: captureAuthority,
       enabled: true,
       qualification: 'native-provider',
-      systemAudio: process.platform === 'win32' ? 'consented-windows-loopback' : 'unqualified',
-      applicationAudio: applicationAudioSupported(),
+      systemAudio: sourceAudio ? 'consented-windows-loopback' : 'unqualified',
+      applicationAudio: sourceAudio,
       enumerate: async (signal) => {
         const sources = await desktopCapturer.getSources({
           types: ['screen', 'window'],
@@ -148,25 +161,40 @@ app
           fetchWindowIcons: false,
         });
         if (signal.aborted) throw new Error('Screen enumeration cancelled.');
-        const applicationSources = ['application', 'source'].includes(
-          captureAuthority.inspect()?.sound ?? '',
-        )
-          ? await applicationAudioSources(
-              sources.map((source) => source.id),
-              signal,
-            )
-          : new Map();
-        return sources.map((source) => {
+        const sound = captureAuthority.inspect()?.sound ?? 'none';
+        const applicationSources = await windowProcessSources(
+          sources.map((source) => source.id),
+          signal,
+        );
+        return sources.flatMap((source) => {
           const previewDataUrl = source.thumbnail.isEmpty()
             ? undefined
             : `data:image/jpeg;base64,${source.thumbnail.toJPEG(65).toString('base64')}`;
-          return {
+          const candidate = {
             id: source.id,
             name: source.name,
             ...applicationSources.get(source.id),
             ...(previewDataUrl ? { previewDataUrl } : {}),
             video: source,
           };
+          if (source.id.startsWith('window:') && !candidate.applicationIdentity) return [];
+          if (
+            source.id.startsWith('screen:') &&
+            !screen.getAllDisplays().some((display) => String(display.id) === source.display_id)
+          )
+            return [];
+          if (
+            (sound === 'application' && !source.id.startsWith('window:')) ||
+            (sound === 'system' && !source.id.startsWith('screen:'))
+          )
+            return [];
+          const target = obsTarget(candidate, screen, sound);
+          return [
+            {
+              ...candidate,
+              nativeCaptureIdentity: nativeCaptureIdentity(candidate, target, displayRevision),
+            },
+          ];
         });
       },
       onError: (code) => console.warn('Display capture boundary unavailable:', code),
@@ -200,15 +228,47 @@ app
         event.senderFrame?.url ?? '',
         event.senderFrame === win.webContents.mainFrame,
       );
-    installNotificationMain({ owner: win, notificationAppId, trustedSender });
-    const screens = installScreenIpc({
+    installNotificationMain({ owner: win, notificationAppId, authSmoke, trustedSender });
+    const obsNativeRuntime = obsRuntime(
+      app.isPackaged,
+      nativeScreenTest ? process.env.RAJCORD_SCREEN_BENCH_BUNDLE : undefined,
+    );
+    const screens: ReturnType<typeof installScreenIpc> = installScreenIpc({
       owner: win,
       ipc: ipcMain,
       authority: captureAuthority,
       trusted: trustedSender,
-      systemSound: process.platform === 'win32',
-      applicationSound: applicationAudioSupported(),
+      systemSound: sourceAudio,
+      applicationSound: sourceAudio,
+      obs: obsNativeRuntime,
+      target: (intent) => {
+        const selected = captureBoundary.selectedSource(intent);
+        if (!selected) throw new Error('The Rajcord screen picker consent ended.');
+        const target = obsTarget(selected, screen, intent.sound);
+        const identity = nativeCaptureIdentity(selected, target, displayRevision);
+        if (identity !== selected.nativeCaptureIdentity)
+          throw new Error('The selected native capture source changed. Choose it again.');
+        return target;
+      },
     });
+    const displayChanged = () => {
+      displayRevision++;
+      if (captureBoundary.hasNativeMonitor()) captureAuthority.invalidate();
+    };
+    if (obsNativeRuntime.available) {
+      const displayMetricsChanged = (_event: unknown, _display: unknown, metrics: string[]) => {
+        if (metrics.some((metric) => ['bounds', 'scaleFactor', 'rotation'].includes(metric)))
+          displayChanged();
+      };
+      screen.on('display-added', displayChanged);
+      screen.on('display-removed', displayChanged);
+      screen.on('display-metrics-changed', displayMetricsChanged);
+      win.once('closed', () => {
+        screen.removeListener('display-added', displayChanged);
+        screen.removeListener('display-removed', displayChanged);
+        screen.removeListener('display-metrics-changed', displayMetricsChanged);
+      });
+    }
     const resetAvailability = (event: Electron.IpcMainEvent, ready: unknown) => {
       if (trustedSender(event) && typeof ready === 'boolean') setMicrophoneResetReady(ready);
     };
@@ -347,9 +407,17 @@ app
       });
       app.quit();
     }
-    if (authSmoke) {
-      const { runAuthSmoke } = await import('./smoke.js');
-      await runAuthSmoke(win, target);
+    if (authSmoke && process.argv.includes('--native-screen-viewer')) {
+      const { showDesktopViewer } = await import('./obs-app-smoke.js');
+      showDesktopViewer(win);
+    } else if (authSmoke) {
+      if (nativeScreenTest) {
+        const { nativeScreenSmoke } = await import('./obs-app-smoke.js');
+        await nativeScreenSmoke(win, target);
+      } else {
+        const { runAuthSmoke } = await import('./smoke.js');
+        await runAuthSmoke(win, target);
+      }
       app.quit();
     } else if (smoke) {
       const result = await win.webContents.executeJavaScript(

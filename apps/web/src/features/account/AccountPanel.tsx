@@ -18,12 +18,14 @@ export function AccountPanel({
   close,
   tab,
   setTab,
+  returnFocusTo,
   notificationHostRef,
   voiceHostRef,
 }: {
   close: () => void;
   tab: SettingsTab;
   setTab: (tab: SettingsTab) => void;
+  returnFocusTo?: HTMLElement;
   notificationHostRef: (element: HTMLDivElement | null) => void;
   voiceHostRef: (element: HTMLDivElement | null) => void;
 }) {
@@ -32,7 +34,7 @@ export function AccountPanel({
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = returnFocusTo ?? document.activeElement;
     panel.current?.querySelector<HTMLButtonElement>('button')?.focus();
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -65,9 +67,11 @@ export function AccountPanel({
     document.addEventListener('keydown', key);
     return () => {
       document.removeEventListener('keydown', key);
-      if (previous?.isConnected) previous.focus();
+      if (previous instanceof HTMLElement && previous.isConnected) {
+        previous.focus({ preventScroll: true });
+      }
     };
-  }, []);
+  }, [returnFocusTo]);
 
   const [users, setUsers] = useState<AuthUser[]>([]),
     [sessions, setSessions] = useState<Device[]>([]),
@@ -356,7 +360,7 @@ export function AccountPanel({
               <LogOut size={16} /> Sign out of Rajcord
             </button>
             <p className="font-credits">
-              Inter typography & Twemoji artwork · self-hosted ·{' '}
+              IBM Plex typography & Twemoji artwork · self-hosted ·{' '}
               <a href="/font-licenses.txt" target="_blank" rel="noopener noreferrer">
                 Font & emoji licenses
               </a>
