@@ -36,6 +36,13 @@ Code map: `apps/api/src/{auth,chat,db,screen,voice}`, `apps/api/src/{app.ts,pres
 - Planning, connecting tools and editing configuration do not authorize tickets, pushes, merges, deployments or purchases. Use existing scoped authorization; confirm missing destination/cost/destructive decisions before acting. See [CONTRIBUTING.md](CONTRIBUTING.md) when performing Git workflow operations.
 - Ticket drafts, creation and substantial rewrites use [rajcord-ticket](.agents/skills/rajcord-ticket/SKILL.md) and [the template](docs/ticket-template.md). Check destination/duplicates before publishing; keep personal routing outside the repo. Never invent owners, estimates, dates or completion evidence.
 
+## Pull request review and repair
+
+- Use [the PR review workflow](docs/pr-review-workflow.md). Keep reviewers independent from the implementation session when practical; reviewer comments are evidence to investigate, not automatically correct fixes or formal approvals.
+- A code-review agent should focus on actionable correctness, permission, security, concurrency, resource-lifetime, and test-coverage regressions in the diff. Check realistic counterexamples; cite affected paths and reproduction conditions. Do not repeat lint or formatting feedback already enforced by CI, or declare performance validated by unit tests.
+- A repair agent should inspect every active P0/P1/P2 thread and the latest CI result, reproduce the concern when possible, fix it with focused regression evidence, and request review of the newest head. Reply to findings with proof; do not mark them resolved solely because a commit exists. Escalate after two unsuccessful repair passes rather than looping.
+- Never merge, deploy, self-approve, bypass protections, or change production credentials as a side effect of review automation.
+
 ## Verification and handoff
 
 - Add regression tests for implemented behavior, including relevant failures/permissions. Use [rajcord-verify](.agents/skills/rajcord-verify/SKILL.md) for the smallest local checks covering the change and dependent contracts; widen when needed. Never omit required evidence to save tokens. CI is not a substitute for available local checks.

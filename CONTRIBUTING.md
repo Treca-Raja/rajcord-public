@@ -56,6 +56,15 @@ Trusted collaborators may push their feature branches when authorized. Contribut
 
 Verification runs on pull requests and pushes to develop without publishing or deploying. Feature pushes are checked through their pull request to avoid duplicate runs. Windows PR tests remain enabled. Only verified `main` commits enter the separately gated release pipeline; a PR merge does not authorize bypassing production approval.
 
+## Independent PR reviews
+
+Before merging, use the [PR review and repair workflow](docs/pr-review-workflow.md)
+to triage independent AI feedback, reproduce important findings, verify the
+latest head, and resolve relevant conversations. AI review does not replace
+the required GitHub checks, maintainer acceptance, or release approvals.
+GitHub App connections and branch rules must be configured separately by
+authorized repository administrators.
+
 ## Licensing
 
 By submitting a contribution, you agree that your contribution may be distributed under the repository's MIT License. Only submit material you have the right to contribute.
