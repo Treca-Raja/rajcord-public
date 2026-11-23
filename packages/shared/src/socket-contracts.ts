@@ -57,6 +57,7 @@ const clientPayloads: Record<string, TSchema | undefined> = {
     requestId: id,
     sourceGeneration: Type.Integer({ minimum: 1 }),
     sound: oneOf('none', 'tab', 'system', 'application', 'source'),
+    native: optional(Type.Literal(true)),
   }),
   'screen:stop': object({ epoch: id, shareId: id }),
   'screen:quality': object({ ...quality, epoch: id, shareId: id, requestId: id, revision }),

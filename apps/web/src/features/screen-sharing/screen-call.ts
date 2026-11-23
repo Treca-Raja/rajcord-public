@@ -9,6 +9,7 @@ import type {
   ScreenSound,
   ScreenShare,
   ScreenPublishGrant,
+  ScreenPublishRequest,
   ScreenDirectory,
   ScreenLinkGrant,
   ScreenRenewal,
@@ -648,7 +649,8 @@ export class ScreenCall {
           requestId: crypto.randomUUID(),
           sourceGeneration: generation,
           ...settings,
-        }),
+          ...(prepared.desktop ? { native: true } : {}),
+        } satisfies ScreenPublishRequest),
         started,
       );
       issued = proof.grant;

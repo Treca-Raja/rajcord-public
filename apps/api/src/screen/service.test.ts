@@ -1057,6 +1057,36 @@ describe('ephemeral screen authorization', () => {
     expect((await renew(2)).links).toHaveLength(18);
   });
 
+  it('admits a fourth native viewer only after one of the three authorized viewers leaves', async () => {
+    const f = fixture(),
+      publisher = f.user(undefined, true),
+      binding = await f.bind(publisher);
+    const request = {
+      epoch: binding.epoch,
+      requestId: randomUUID(),
+      sourceGeneration: 1,
+      profile: 'smooth',
+      videoBitrate: 8000000,
+      sound: 'none',
+      native: true,
+    };
+    const { share } = await f.screen.publish(publisher.caller, request);
+    await expect(
+      f.screen.publish(publisher.caller, { ...request, native: undefined }),
+    ).rejects.toMatchObject({ code: 'invalid' });
+
+    const viewers = Array.from({ length: 4 }, () => f.user(undefined, true));
+    const bindings = await Promise.all(viewers.map((viewer) => f.bind(viewer)));
+    const select = (index: number, shareId: string | null, revision = 1) =>
+      f.screen.select(viewers[index]!.caller, selection(bindings[index]!.epoch, shareId, revision));
+    await Promise.all(viewers.slice(0, 3).map((_, index) => select(index, share.id)));
+    await expect(select(3, share.id)).rejects.toMatchObject({ code: 'capacity' });
+    await select(0, null, 2);
+    await expect(select(3, share.id)).resolves.toMatchObject({
+      link: { viewerId: viewers[3]!.lease.userId },
+    });
+  });
+
   it('protects a legacy publisher from a tenth viewer while allowing viewers to reselect and leave', async () => {
     const f = fixture(),
       publisher = f.user(),

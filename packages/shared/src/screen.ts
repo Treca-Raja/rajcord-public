@@ -1,4 +1,5 @@
 export const SCREEN_PROTOCOL_VERSION = 2;
+export const SCREEN_NATIVE_VIEWER_LIMIT = 3;
 // With the bounded link fields below, a page fits the 64 KiB socket output window.
 export const SCREEN_RENEWAL_PAGE_SIZE = 128;
 export const SCREEN_DIRECTORY_PAGE_SIZE = 128;
@@ -63,7 +64,12 @@ export type ScreenBinding = {
   iceServers?: ScreenIceServer[];
 };
 export type ScreenPublishRequest = ScreenBoundRequest &
-  ScreenQuality & { requestId: string; sourceGeneration: number; sound: ScreenSound };
+  ScreenQuality & {
+    requestId: string;
+    sourceGeneration: number;
+    sound: ScreenSound;
+    native?: true;
+  };
 export type ScreenShare = ScreenQuality & {
   id: string;
   publisherId: string;

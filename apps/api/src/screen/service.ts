@@ -2,6 +2,7 @@ import { screenRelayServers } from './relay.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   SCREEN_PROTOCOL_VERSION,
+  SCREEN_NATIVE_VIEWER_LIMIT,
   SCREEN_RENEWAL_PAGE_SIZE,
   SCREEN_PROFILES,
   SCREEN_VIDEO_BITRATES,
@@ -66,6 +67,7 @@ type Binding = {
 type Share = {
   value: ScreenShare;
   publisher: Binding;
+  native: boolean;
   expires: number;
   publishExpires: number;
   qualityRevision: number;
@@ -181,7 +183,7 @@ export class ScreenService {
       const remainingMs = Math.min(expires, viewer.lease.expires, share.expires) - this.now();
       if (remainingMs > 0)
         viewers.push({ id: value.id, remainingMs, answerHash: negotiation?.answerHash ?? null });
-      if (viewers.length === 3) break;
+      if (viewers.length === SCREEN_NATIVE_VIEWER_LIMIT) break;
     }
     return {
       viewers,
@@ -473,13 +475,24 @@ export class ScreenService {
       'resolution',
       'frameRate',
       'sound',
+      'native',
     ]);
     const requestId = uuid(body.requestId),
       generation = revision(body.sourceGeneration),
       selected = quality(body);
     if (!['none', 'tab', 'system', 'application', 'source'].includes(body.sound as string))
       throw new ScreenError('invalid', 400, 'Invalid source sound mode.');
-    const fingerprint = JSON.stringify(['publish', requestId, generation, selected, body.sound]);
+    if (body.native !== undefined && body.native !== true)
+      throw new ScreenError('invalid', 400, 'Invalid native publication mode.');
+    const native = body.native === true;
+    const fingerprint = JSON.stringify([
+      'publish',
+      requestId,
+      generation,
+      selected,
+      body.sound,
+      native,
+    ]);
     return this.run(async () => {
       const binding = await this.bound(caller, body.epoch);
       this.request(binding, requestId, fingerprint);
@@ -500,6 +513,7 @@ export class ScreenService {
         expires: binding.lease.expires,
         publishExpires: binding.lease.expires,
         publisher: binding,
+        native,
         qualityRevision: 0,
         value: {
           id: randomUUID(),
@@ -659,15 +673,16 @@ export class ScreenService {
         await this.pair(viewer, share.publisher);
         if (share.publisher.share !== share) throw stale();
         if (
-          !share.publisher.supportsMoreThanNineViewers &&
+          (share.native || !share.publisher.supportsMoreThanNineViewers) &&
           !viewer.selections.has(share.value.id)
         ) {
           const viewers = [...this.links.values()].filter((link) => link.share === share).length;
-          if (viewers >= 9)
+          const limit = share.native ? SCREEN_NATIVE_VIEWER_LIMIT : 9;
+          if (viewers >= limit)
             throw new ScreenError(
               'capacity',
               409,
-              'This publisher can share with up to nine viewers.',
+              `This publisher can share with up to ${limit} viewers.`,
             );
         }
         if (!viewer.selections.has(share.value.id)) {

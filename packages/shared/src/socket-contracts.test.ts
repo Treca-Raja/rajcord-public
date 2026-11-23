@@ -78,6 +78,12 @@ it('keeps the benchmark-only bitrate out of version 2 publication and selection 
     videoBitrate: 12000000,
   };
   const publish = { ...request, sourceGeneration: 1, sound: 'none' };
+  expect(validateClientSocketPacket('screen:publish', [{ ...publish, native: true }, ack])).toBe(
+    true,
+  );
+  expect(validateClientSocketPacket('screen:publish', [{ ...publish, native: false }, ack])).toBe(
+    false,
+  );
   const select = {
     ...request,
     revision: 1,
