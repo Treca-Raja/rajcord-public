@@ -1608,6 +1608,12 @@ try {
   await js(
     "(()=>{const area=document.querySelector('.message-scroll');area.scrollTop=area.scrollHeight})()",
   );
+  const timelineAtLatest = `(() => {
+    const area = document.querySelector('.message-scroll');
+    return area.scrollHeight - area.scrollTop - area.clientHeight <= 2 &&
+      !document.querySelector('.jump-latest');
+  })()`;
+  await wait(timelineAtLatest);
   await wait(`!document.querySelector('[data-conversation-id="${createdChannel}"] .unread-badge')`);
   const beforeResizeRead = (
     await fixture.database.pool.query(
@@ -1623,10 +1629,7 @@ try {
     mobile: false,
   });
   await wait(`document.querySelector('.message-scroll').clientHeight<${oldViewport}`);
-  await wait(`(() => {
-    const area = document.querySelector('.message-scroll');
-    return area.scrollHeight - area.scrollTop - area.clientHeight <= 2;
-  })()`);
+  await wait(timelineAtLatest);
   await js("document.querySelector('.message-scroll').scrollTop = 0");
   await wait("!!document.querySelector('.jump-latest')");
   const resizedTop = await js<number>("document.querySelector('.message-scroll').scrollTop");

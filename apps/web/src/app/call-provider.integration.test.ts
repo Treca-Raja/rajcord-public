@@ -560,6 +560,7 @@ async function mountedFixture(
   work: (browser: Awaited<ReturnType<typeof launch>>) => Promise<void>,
   initialStatus: 'approved' | 'pending' | 'rejected' = 'approved',
   source = fixture,
+  viewportWidth?: number,
 ) {
   const server = await createServer({
     configFile: false,
@@ -589,6 +590,13 @@ async function mountedFixture(
   try {
     await server.listen();
     browser = await launch();
+    if (viewportWidth !== undefined)
+      await browser.call('Emulation.setDeviceMetricsOverride', {
+        width: viewportWidth,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: viewportWidth <= 750,
+      });
     await browser.call('Page.navigate', { url: server.resolvedUrls!.local[0] });
     await work(browser);
   } finally {
@@ -2040,7 +2048,7 @@ it('opens mobile voice navigation from a channel link while a stream is playing'
   );
 });
 
-it('keeps focus in account settings opened from Activity and restores it on close', async () => {
+it.each([390, 1440])('keeps and restores Activity settings focus at %i px', async (width) => {
   await mountedFixture(
     async (browser) => {
       const press = async (
@@ -2062,36 +2070,29 @@ it('keeps focus in account settings opened from Activity and restores it on clos
           windowsVirtualKeyCode,
         });
       };
-      for (const width of [390, 1440]) {
-        await browser.call('Emulation.setDeviceMetricsOverride', {
-          width,
-          height: 844,
-          deviceScaleFactor: 1,
-          mobile: width === 390,
-        });
-        await browser.wait(
-          'innerWidth===' + width + " && !!document.querySelector('.members-action')",
-        );
-        await browser.js("document.querySelector('.members-action').focus()");
-        await press('Enter', 13, '\r');
-        await browser.wait("!!document.querySelector('.activity-footer button')");
-        await browser.js("document.querySelector('.activity-footer button').focus()");
-        await press('Enter', 13, '\r');
-        await browser.wait("!!document.querySelector('.account-panel')");
-        await browser.js(
-          'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
-        );
-        expect(await browser.js("document.activeElement.getAttribute('aria-label')")).toBe(
-          'Close settings',
-        );
-        expect(await browser.js("!!document.querySelector('#workspace-activity')")).toBe(false);
-        await press('Escape', 27);
-        await browser.wait("!document.querySelector('.account-panel')");
-        expect(await browser.js("document.activeElement.matches('.members-action')")).toBe(true);
-      }
+      await browser.wait(
+        'innerWidth===' + width + " && !!document.querySelector('.members-action')",
+      );
+      await browser.js("document.querySelector('.members-action').focus()");
+      await press('Enter', 13, '\r');
+      await browser.wait("!!document.querySelector('.activity-footer button')");
+      await browser.js("document.querySelector('.activity-footer button').focus()");
+      await press('Enter', 13, '\r');
+      await browser.wait("!!document.querySelector('.account-panel')");
+      await browser.js(
+        'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))',
+      );
+      expect(await browser.js("document.activeElement.getAttribute('aria-label')")).toBe(
+        'Close settings',
+      );
+      expect(await browser.js("!!document.querySelector('#workspace-activity')")).toBe(false);
+      await press('Escape', 27);
+      await browser.wait("!document.querySelector('.account-panel')");
+      expect(await browser.js("document.activeElement.matches('.members-action')")).toBe(true);
     },
     'approved',
     workspaceScreenFixture,
+    width,
   );
 });
 
