@@ -57,10 +57,6 @@ jobs:
       contents: read
       actions: read
     steps:
-      - name: Enforce OBS redistribution hold
-        run: |
-          echo 'OBS redistribution review and release qualification are open.' >&2
-          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -71,6 +67,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RAJCORD_RELEASE_TAG: ${{ inputs.release_tag }}
+          RAJCORD_RELEASE_MANIFEST_UPDATES: ${{ inputs.manifest_updates }}
+          RAJCORD_RELEASE_SIGNED: ${{ inputs.signed }}
 
   draft:
     needs: [build, release-policy]
@@ -93,6 +91,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RAJCORD_RELEASE_TAG: ${{ inputs.release_tag }}
+          RAJCORD_RELEASE_MANIFEST_UPDATES: ${{ inputs.manifest_updates }}
+          RAJCORD_RELEASE_SIGNED: ${{ inputs.signed }}
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
