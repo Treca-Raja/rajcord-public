@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { validateProduction } from './policy.mjs';
+import { validateDesktopDraft, validateProduction } from './policy.mjs';
 
 // Desktop releases use the transferred repository; server deployment policy is unchanged.
 assert.equal(process.env.GITHUB_REPOSITORY, 'Treca-Raja/rajcord-public');
@@ -13,6 +13,7 @@ assert.equal(
   `v${version}`,
   'Confirm the exact desktop version tag.',
 );
+validateDesktopDraft(version, process.env);
 const request = async (endpoint) => {
   const response = await fetch(
     `https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/${endpoint}`,

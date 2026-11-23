@@ -133,7 +133,27 @@ describe('verification and main-only delivery boundary', () => {
     expect(build.steps?.some((step) => step.uses?.startsWith('actions/upload-artifact'))).toBe(
       false,
     );
-    expect(job(desktop, 'release-policy').steps?.[0]?.run).toContain('OBS redistribution review');
+  });
+
+  it('checks the signed-manifest draft policy before and after desktop approval', () => {
+    const desktop = workflow('desktop');
+    const policy = job(desktop, 'release-policy');
+    const draft = job(desktop, 'draft');
+    expect(dependencies(policy)).toContain('build');
+    expect(dependencies(draft)).toEqual(['build', 'release-policy']);
+    expect(draft.environment).toBe('desktop-release');
+    for (const guarded of [policy, draft]) {
+      const step = guarded.steps?.find(
+        (step) => step.run === 'node scripts/ci/desktop-release.mjs',
+      );
+      expect(step?.env).toMatchObject({
+        RAJCORD_RELEASE_TAG: '${{ inputs.release_tag }}',
+        RAJCORD_RELEASE_MANIFEST_UPDATES: '${{ inputs.manifest_updates }}',
+        RAJCORD_RELEASE_SIGNED: '${{ inputs.signed }}',
+      });
+      expect(step?.if).toBeUndefined();
+    }
+    expect(runs(draft)).toContain('--draft');
   });
 
   it('verifies current main even when production delivery is disabled', () => {

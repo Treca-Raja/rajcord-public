@@ -1,10 +1,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 // @ts-expect-error JavaScript deployment tools are executed directly by Node.
-import { checkPolicy, validateProduction, validateRelease } from './ci/policy.mjs';
+import * as policy from './ci/policy.mjs';
+
+const { checkPolicy, validateDesktopDraft, validateProduction, validateRelease } = policy;
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('release boundaries', () => {
+  it('limits the OBS draft exception to v0.1.2 with signed update metadata', () => {
+    const inputs = {
+      RAJCORD_RELEASE_MANIFEST_UPDATES: 'true',
+      RAJCORD_RELEASE_SIGNED: 'false',
+    };
+    expect(() => validateDesktopDraft('0.1.2', inputs)).not.toThrow();
+    for (const version of ['0.1.1', '0.1.3']) {
+      expect(() => validateDesktopDraft(version, inputs)).toThrow('OBS release exception');
+    }
+    for (const flags of [
+      {},
+      { ...inputs, RAJCORD_RELEASE_MANIFEST_UPDATES: 'false' },
+      { ...inputs, RAJCORD_RELEASE_SIGNED: 'true' },
+    ]) {
+      expect(() => validateDesktopDraft('0.1.2', flags)).toThrow('OBS release exception');
+    }
+  });
+
   it('rejects mutable image tags and other repositories', () => {
     const sha = 'a'.repeat(40);
     const digest = 'ghcr.io/treca-raja/rajcord-public@sha256:' + 'b'.repeat(64);

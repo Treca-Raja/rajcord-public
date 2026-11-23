@@ -34,6 +34,15 @@ export function validateProduction(environment) {
   );
 }
 
+export function validateDesktopDraft(version, env) {
+  assert.ok(
+    version === '0.1.2' &&
+      env.RAJCORD_RELEASE_MANIFEST_UPDATES === 'true' &&
+      env.RAJCORD_RELEASE_SIGNED === 'false',
+    'The OBS release exception permits only a Windows-unsigned v0.1.2 draft with Rajcord-signed update metadata.',
+  );
+}
+
 export async function checkPolicy(mode, env = process.env) {
   validateRelease(env.GITHUB_REPOSITORY, env.GITHUB_SHA, env.TRICORD_IMAGE);
   assert.equal(env.GITHUB_REF, 'refs/heads/main', 'Only main may release.');
