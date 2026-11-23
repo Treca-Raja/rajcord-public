@@ -192,6 +192,10 @@ The voice controller owns the hardware track and worklet output together. Mute a
 
 The standalone WASM embeds Xiph's upstream little model. The build checks the source and model hashes, uses a pinned Emscripten image, fixes v0.2's portable header references and reserves a 512 KiB WASM stack. Vite emits same-origin WASM and worklet assets and includes the redistribution notices. The page CSP permits WebAssembly compilation specifically. Chromium and the hosted Electron renderer use the same assets. [Build script](../scripts/build-rnnoise.sh) · [Redistribution notices](../apps/web/public/rnnoise-licenses.txt)
 
+## Windows desktop screen publishing (2026-11-22)
+
+Windows desktop uses one OBS publisher. Electron main grants the exact picker selection and supervises the OBS helper over inherited pipes. OBS uses Windows Graphics Capture, Direct3D11 and H.264 via NVENC, AMF or x264. The helper's private transport libraries provide WASAPI and Opus audio plus WebRTC with one connection per authorized viewer. The renderer's consented preview stays local. Ordinary browsers publish and receive through WebRTC under the same Rajcord signaling and authorization contracts. The package carries the app-local runtime. Distribution remains blocked pending the [release gates](screen-sharing-handoff.md#windows-obs-publisher).
+
 ## Main-window P2P screen sharing (2026-11-13)
 
 Screens use dedicated authenticated signaling and direct WebRTC peers, separate from microphone-only LiveKit voice. Public Cloudflare STUN helps discover direct routes. Optional `SCREEN_TURN_HOST=turn.rajcord.com` reuses the existing LiveKit TURN listeners with binding-authorized, short-lived allocation credentials; direct routes remain preferred. TURN stays off until configured and forced-relay media acceptance passes, including both peers needing the same relay. No new service or public port is required. Resolution, frame rate and video bitrate are independent publisher/viewer ceilings; 4K remains deferred.

@@ -1,5 +1,9 @@
 // References are not bearer credentials: every operation also checks the current session/lease.
 export type CaptureAuthorization = { id: string; remainingMs: number };
+export type NativeViewerSnapshot = {
+  viewers: { id: string; remainingMs: number; answerHash: string | null }[];
+  iceServers: import('./screen.js').ScreenIceServer[];
+};
 export type CaptureSoundChoice = 'none' | 'system' | 'application' | 'source';
 export type CapturePreparationRequest = {
   requestId: string;

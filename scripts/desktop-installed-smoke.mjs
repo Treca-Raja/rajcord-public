@@ -12,6 +12,8 @@ delete env.ELECTRON_RUN_AS_NODE;
 // The installed application must ignore these inherited overrides.
 env.TRICORD_DEV_URL = 'http://127.0.0.1:5173';
 env.TRICORD_SERVER_URL = 'https://invalid.example';
+env.PATH = path.join(env.SystemRoot || 'C:\\Windows', 'System32');
+env.RAJCORD_OBS_ENCODER = 'invalid';
 const child = spawn(exe, ['--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1'], {
   windowsHide: true,
   stdio: 'ignore',
@@ -78,6 +80,25 @@ try {
   assert.ok(result?.isolated && result.secure && result.webrtc && result.media);
   const pkg = JSON.parse(await fs.readFile('apps/desktop/package.json', 'utf8'));
   assert.equal(result.version, pkg.version);
+  const probe = await command('Runtime.evaluate', {
+    expression: 'window.tricordDesktop.screens.capabilities()',
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  const capabilities = probe.result?.value;
+  assert.equal(capabilities?.version, 2, 'Installed app must expose the OBS screen protocol.');
+  assert.ok(capabilities.obs?.available, capabilities.obs?.reason ?? 'OBS helper is unavailable.');
+  assert.ok(
+    capabilities.obs.encoders.includes('x264'),
+    'Private software encoder must initialize.',
+  );
+  assert.ok(
+    capabilities.obs.encoders.every((encoder) => ['nvenc', 'amf', 'x264'].includes(encoder)),
+  );
+  console.log(
+    'PASS installed OBS encoder probe with private runtime: ' +
+      capabilities.obs.encoders.join(', '),
+  );
   // CDP key events do not exercise native menu accelerators. Real tray/Quit behavior
   // remains a manual gate; terminate only this anonymous test-owned process.
   const exited = new Promise((resolve) => child.once('exit', resolve));

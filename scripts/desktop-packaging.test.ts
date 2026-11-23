@@ -1,13 +1,31 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { expect, it } from 'vitest';
 
 const require = createRequire(new URL('../apps/desktop/package.json', import.meta.url));
 const builderRequire = createRequire(require.resolve('electron-builder'));
 const libRequire = createRequire(builderRequire.resolve('app-builder-lib'));
-const { files }: { files: string[] } = require('./electron-builder.cjs');
+function packagingConfig(): { files: string[]; asarUnpack: string[] } {
+  const staged = mkdtempSync(path.join(tmpdir(), 'rajcord-builder-test-'));
+  const previous = process.env.RAJCORD_OBS_PACKAGE_BUNDLE;
+  try {
+    mkdirSync(path.join(staged, 'obs'));
+    writeFileSync(path.join(staged, 'inventory.json'), '[]');
+    writeFileSync(path.join(staged, 'obs/source-build.json'), '{"transport":"libdatachannel"}');
+    process.env.RAJCORD_OBS_PACKAGE_BUNDLE = staged;
+    return require('./electron-builder.cjs');
+  } finally {
+    if (previous === undefined) delete process.env.RAJCORD_OBS_PACKAGE_BUNDLE;
+    else process.env.RAJCORD_OBS_PACKAGE_BUNDLE = previous;
+    rmSync(staged, { recursive: true, force: true });
+  }
+}
+const config = packagingConfig();
+const { files } = config;
 const { minimatch }: { minimatch: (file: string, pattern: string) => boolean } =
   libRequire('minimatch');
 
@@ -61,7 +79,6 @@ it.each([
 });
 
 it('unpacks the Windows identity helper so PowerShell can read it', () => {
-  const config = require('./electron-builder.cjs') as { asarUnpack: string[] };
   expect(config.asarUnpack).toContain('dist/window-audio-process.ps1');
 });
 

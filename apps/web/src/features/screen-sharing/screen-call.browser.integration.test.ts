@@ -168,25 +168,11 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           browser.js(
             `(()=>{const select=document.querySelector('[aria-label="${label}"]');select.value='${value}';select.dispatchEvent(new Event('change',{bubbles:true}))})()`,
           );
-        await choose(a, 'Screen resolution', '720');
-        await choose(a, 'Screen frame rate', '60');
+        await choose(a, 'Screen resolution', sound === 'nine' ? '480' : '720');
+        await choose(a, 'Screen frame rate', sound === 'nine' ? '15' : '60');
         await choose(a, 'Screen video bitrate', '4000000');
         if (sound === 'tab') await choose(a, 'Screen source sound', 'tab');
         if (sound === 'none') {
-          await a.js(`(() => {
-            const setParameters = RTCRtpSender.prototype.setParameters;
-            RTCRtpSender.prototype.setParameters = function (parameters) {
-              if (parameters.degradationPreference === 'maintain-framerate-and-resolution')
-                throw new TypeError('Unsupported degradation preference');
-              return setParameters.call(this, parameters);
-            };
-          })()`);
-          await a.click('Prepare source');
-          await a.wait(
-            "document.querySelector('.screen-error')?.textContent.includes('Choose Adaptive capture in the browser')",
-          );
-          expect(await a.js('window.__screenTest.calls')).toBe(0);
-          expect(commandDiagnostics.some(({ event }) => event === 'screen:publish')).toBe(false);
           await choose(a, 'Screen capture mode', 'adaptive');
           expect(await a.js('!document.querySelector(\'[aria-label="Screen resolution"]\')')).toBe(
             true,
@@ -199,9 +185,9 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         await a.click('Choose source');
         await a.wait("document.querySelector('#screen-panel')?.dataset.phase==='preview'");
         expect(await a.js('window.__screenTest.options[0].video')).toEqual({
-          width: { ideal: sound === 'none' ? 1920 : 1280 },
-          height: { ideal: sound === 'none' ? 1080 : 720 },
-          frameRate: { ideal: 60, max: 60 },
+          width: { ideal: sound === 'none' ? 1920 : sound === 'nine' ? 854 : 1280 },
+          height: { ideal: sound === 'none' ? 1080 : sound === 'nine' ? 480 : 720 },
+          frameRate: { ideal: sound === 'nine' ? 15 : 60, max: sound === 'nine' ? 15 : 60 },
         });
         expect(await a.js('window.__screenTest.options[0].audio')).toBe(sound === 'tab');
         expect(
@@ -217,9 +203,11 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         await b.wait(
           "[...document.querySelectorAll('.screen-share-item')].some(item=>item.textContent.includes('Screen owner'))",
         );
-        await choose(b, 'Watch resolution', '720');
-        await choose(b, 'Watch frame rate', '30');
-        await choose(b, 'Watch video bitrate', '2000000');
+        expect(
+          await b.js(
+            `[...document.querySelectorAll('.screen-watch select')].map(control=>control.getAttribute('aria-label'))`,
+          ),
+        ).toEqual([]);
         await b.js("document.querySelector('.screen-watch input[type=checkbox]').click()");
         await b.js(
           "[...document.querySelectorAll('.screen-share-item')].find(item=>item.textContent.includes('Screen owner')).querySelector('.screen-share-action').click()",
@@ -270,7 +258,10 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           `window.__screenTest.peers.flatMap(peer=>peer.getSenders()).filter(sender=>sender.track?.kind==='video').map(sender=>sender.getParameters().encodings[0])`,
         );
         expect(parameters).toEqual([
-          expect.objectContaining({ maxBitrate: 2000000, maxFramerate: 30 }),
+          expect.objectContaining({
+            maxBitrate: 4000000,
+            maxFramerate: sound === 'nine' ? 15 : 60,
+          }),
         ]);
         const routes = await a.js(
           `Promise.all(window.__screenTest.peers.filter(peer=>peer.getSenders().some(sender=>sender.track?.kind==='video')).map(async peer=>{const stats=await peer.getStats();const transport=[...stats.values()].find(stat=>stat.type==='transport'&&stat.selectedCandidatePairId);const pair=stats.get(transport?.selectedCandidatePairId);return pair?[stats.get(pair.localCandidateId)?.candidateType,stats.get(pair.remoteCandidateId)?.candidateType]:[]}))`,
@@ -291,19 +282,30 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
           );
           expect(await b.js("document.querySelector('[data-screen-playback]').muted")).toBe(true);
         }
-        await choose(b, 'Watch frame rate', '15');
-        await b.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
-        await a.wait(
-          "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxFramerate>0&&sender.getParameters().encodings[0]?.maxFramerate<=15)",
-        );
+        const height = sound === 'none' ? 1080 : sound === 'nine' ? 480 : 720;
+        await b.wait(`document.querySelector('[data-screen-playback]')?.videoHeight === ${height}`);
+        if (sound === 'tab') {
+          await b.js(
+            `void (window.watchedStream = document.querySelector('[data-screen-playback]').srcObject)`,
+          );
+          await a.js('document.querySelector(\'[aria-label="Open stream settings"]\').click()');
+          const cap = (value: number) =>
+            `window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxBitrate===${value})`;
+          for (const bitrate of [2000000, 4000000]) {
+            await choose(a, 'Screen video bitrate', String(bitrate));
+            await a.wait(
+              "[...document.querySelectorAll('button')].some(button=>button.textContent==='Apply stream quality'&&!button.matches(':disabled'))",
+            );
+            await a.click('Apply stream quality');
+            await a.wait(cap(bitrate));
+            await b.wait(
+              `document.querySelector('[data-screen-playback]').srcObject===window.watchedStream && ${playingVideo}`,
+            );
+          }
+          await a.js('document.querySelector(\'[aria-label="Close screen settings"]\').click()');
+        }
         if (fanoutCase) {
           for (const browser of browsers.slice(2)) {
-            // Bound this ten-client correctness fixture's encoder load. The
-            // publisher retains 720p60; high-rate fan-out needs a separate hardware budget.
-            if (sound === 'nine') {
-              await choose(browser, 'Watch resolution', '480');
-              await choose(browser, 'Watch frame rate', '15');
-            }
             await browser.wait(
               "[...document.querySelectorAll('.screen-share-item')].some(item=>item.textContent.includes('Screen owner'))",
             );
@@ -322,14 +324,7 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
             "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).filter(sender=>sender.track?.kind==='video').map(sender=>sender.getParameters().encodings[0].maxBitrate)",
           )) as number[];
           expect(fanout).toHaveLength(viewerCount);
-          expect(fanout.filter((cap) => cap === 2000000)).toHaveLength(1);
-          expect(fanout.filter((cap) => cap === 4000000)).toHaveLength(viewerCount - 1);
-          if (sound === 'nine') {
-            const scales = await a.js(
-              "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).filter(sender=>sender.track?.kind==='video').map(sender=>sender.getParameters().encodings[0].scaleResolutionDownBy).sort()",
-            );
-            expect(scales).toEqual([1, ...Array(viewerCount - 1).fill(720 / 480)]);
-          }
+          expect(fanout).toEqual(Array(viewerCount).fill(4000000));
           const secondPublisher = browsers[2]!;
           await secondPublisher.js(
             'document.querySelector(\'[aria-label="Open stream settings"]\').click()',
@@ -358,6 +353,10 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
             "document.querySelectorAll('[data-screen-playback]').length===2 && [...document.querySelectorAll('[data-screen-playback]')].every(video=>video.videoWidth>0)",
           );
           expect(await b.js("document.querySelector('#screen-panel').dataset.layout")).toBe('grid');
+          const heights = sound === 'nine' ? [480, 480] : [720, 1080];
+          await b.wait(
+            `JSON.stringify([...document.querySelectorAll('[data-screen-playback]')].map(video=>video.videoHeight).sort((a,b)=>a-b))==='${JSON.stringify(heights)}'`,
+          );
         }
         const shareId = server.voice!.leases.get(publisher.auth.user.id)!.id;
         const beforeVoice = sound === 'nine' ? await voiceBytes() : [];
@@ -401,7 +400,7 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
         cleanupGate = undefined;
         await b.wait("document.querySelector('[data-screen-playback]')?.videoWidth>0");
         await a.wait(
-          "window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxFramerate>0&&sender.getParameters().encodings[0]?.maxFramerate<=15)",
+          `window.__screenTest.peers.filter(peer=>peer.connectionState!=='closed').flatMap(peer=>peer.getSenders()).some(sender=>sender.track?.kind==='video'&&sender.getParameters().encodings[0]?.maxFramerate===${sound === 'nine' ? 15 : 60})`,
         );
         const artifacts = fileURLToPath(new URL('../../../../../artifacts', import.meta.url));
         await mkdir(artifacts, { recursive: true });
@@ -440,6 +439,7 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
             ),
           ).toEqual([]);
       } catch (cause) {
+        console.error('Owned screen fixture error:', cause);
         const diagnostics = await Promise.allSettled(
           browsers.map((browser) =>
             browser.js(

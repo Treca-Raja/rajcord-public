@@ -94,25 +94,42 @@ it('the real API development command boots and reloads under concurrently', asyn
   child.stderr.on('data', (chunk) => {
     output += String(chunk);
   });
-  async function listening(count: number) {
-    for (let attempt = 0; attempt < 150; attempt++) {
+  async function healthyPort(after = 0) {
+    let lastFailure: unknown;
+    const deadline = performance.now() + 15000;
+    while (performance.now() < deadline) {
       if (launchError) throw launchError;
       const matches = [...output.matchAll(/Server listening at http:\/\/127\.0\.0\.1:(\d+)/g)];
-      if (matches.length >= count) return matches.at(-1)![1]!;
       if (child.exitCode !== null) throw new Error('API development supervisor exited: ' + output);
+      const listening = matches.length;
+      const port = matches.at(-1)?.[1];
+      if (listening > after && port) {
+        try {
+          const response = await fetch('http://127.0.0.1:' + port + '/health', {
+            signal: AbortSignal.timeout(1000),
+          });
+          if (response.ok) {
+            const body: unknown = await response.json();
+            return { listening, body };
+          }
+          lastFailure = new Error('Health endpoint returned ' + response.status);
+        } catch (error) {
+          lastFailure = error;
+        }
+      }
       await delay(100);
     }
-    throw new Error('API development startup/reload timed out: ' + output);
+    throw new Error('API development startup/reload timed out: ' + output, { cause: lastFailure });
   }
   try {
-    const port = await listening(1);
-    expect(await (await fetch('http://127.0.0.1:' + port + '/health')).json()).toMatchObject({
+    const initial = await healthyPort();
+    expect(initial.body).toMatchObject({
       service: 'tricord-api',
       status: 'ok',
     });
     await utimes(watched, original.atime, new Date());
-    const restartedPort = await listening(2);
-    expect((await fetch('http://127.0.0.1:' + restartedPort + '/health')).status).toBe(200);
+    const restarted = await healthyPort(initial.listening);
+    expect(restarted.body).toMatchObject({ service: 'tricord-api', status: 'ok' });
   } finally {
     if (child.pid && child.exitCode === null) {
       if (process.platform === 'win32')

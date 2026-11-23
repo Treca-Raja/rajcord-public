@@ -20,6 +20,14 @@ export type ScreenQuality = {
   resolution?: ScreenResolution;
   frameRate?: ScreenFrameRate;
 };
+export function sameScreenQuality(left: Readonly<ScreenQuality>, right: Readonly<ScreenQuality>) {
+  return (
+    left.profile === right.profile &&
+    left.resolution === right.resolution &&
+    left.frameRate === right.frameRate &&
+    left.videoBitrate === right.videoBitrate
+  );
+}
 export function screenQualityCeiling(quality: Readonly<ScreenQuality>) {
   const presets = {
     low: { width: 854, height: 480, frameRate: 15 },
@@ -64,8 +72,10 @@ export type ScreenShare = ScreenQuality & {
 };
 export type ScreenPublishGrant = { share: ScreenShare; remainingMs: number };
 export type ScreenStopRequest = ScreenBoundRequest & { shareId: string };
+export type ScreenQualityUpdateRequest = ScreenBoundRequest &
+  ScreenQuality & { shareId: string; requestId: string; revision: number };
 export type ScreenSelectRequest = ScreenBoundRequest &
-  ScreenQuality & {
+  Partial<ScreenQuality> & {
     requestId: string;
     revision: number;
     shareId: string | null;
@@ -78,8 +88,8 @@ export type ScreenLink = {
   publisherId: string;
   viewerId: string;
   selectionRevision: number;
+  // Protocol v2 compatibility fields report the publisher's ceiling.
   quality: ScreenQuality;
-  // Manual ceiling, not measured delivery or a qualified Auto/profile default.
   videoBitrate: ScreenVideoBitrate;
 };
 export type ScreenLinkGrant = { link: ScreenLink; remainingMs: number };
@@ -141,6 +151,10 @@ export interface ScreenClientEvents {
   'screen:stop': (
     data: ScreenStopRequest,
     ack: (result: ScreenAck<{ stopped: true }>) => void,
+  ) => void;
+  'screen:quality': (
+    data: ScreenQualityUpdateRequest,
+    ack: (result: ScreenAck<ScreenShare>) => void,
   ) => void;
   'screen:select': (
     data: ScreenSelectRequest,

@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -40,6 +42,9 @@ export async function launch(
     fakeVideoFile?: string;
     fakeAudioFile?: string;
     visible?: boolean;
+    rajcordDesktop?: boolean;
+    loopbackIce?: boolean;
+    roomWindow?: 'left' | 'right' | 'background';
   } = {},
 ) {
   if ((options.fakeVideoFile || options.fakeAudioFile) && options.fakeMicrophone === false)
@@ -65,14 +70,32 @@ export async function launch(
     );
   const audio = path.join(profile, 'tone.wav');
   await writeFile(audio, wav);
+  const desktopPackage = new URL('../../../desktop/package.json', import.meta.url);
+  const childEnv = { ...process.env };
+  if (options.rajcordDesktop) {
+    delete childEnv.ELECTRON_RUN_AS_NODE;
+    for (const key of Object.keys(childEnv))
+      if (/^(DATABASE_URL|LIVEKIT_|TRICORD_TURN|SCREEN_COTURN_SECRET)/.test(key))
+        delete childEnv[key];
+    childEnv.TRICORD_TEST_PROFILE = profile;
+    childEnv.TRICORD_VOICE_SMOKE = '1';
+    if (options.roomWindow) childEnv.RAJCORD_TEST_ROOM_WINDOW = options.roomWindow;
+  }
   const child = spawn(
-    process.env.TRICORD_BROWSER_PATH ||
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    options.rajcordDesktop
+      ? createRequire(desktopPackage)('electron')
+      : process.env.TRICORD_BROWSER_PATH ||
+          'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
     [
-      ...(options.visible ? ['--new-window', '--window-size=1440,900'] : ['--headless=new']),
+      ...(options.rajcordDesktop
+        ? [fileURLToPath(new URL('.', desktopPackage)), '--auth-smoke', '--native-screen-viewer']
+        : options.visible
+          ? ['--new-window', '--window-size=1440,900']
+          : ['--headless=new']),
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-networking',
+      ...(options.loopbackIce ? ['--allow-loopback-in-peer-connection'] : []),
       ...(process.platform === 'linux' ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
       '--remote-debugging-address=127.0.0.1',
       '--remote-debugging-port=0',
@@ -83,15 +106,23 @@ export async function launch(
       ...(options.fakeMicrophone === false
         ? []
         : [
-            '--use-fake-ui-for-media-stream',
+            ...(options.rajcordDesktop ? [] : ['--use-fake-ui-for-media-stream']),
             '--use-fake-device-for-media-stream',
             '--use-file-for-fake-audio-capture=' + (options.fakeAudioFile ?? audio),
           ]),
       '--autoplay-policy=no-user-gesture-required',
-      'about:blank',
+      ...(options.rajcordDesktop ? [] : ['about:blank']),
     ],
-    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] },
+    {
+      windowsHide: !options.rajcordDesktop,
+      stdio: ['ignore', options.rajcordDesktop ? 'pipe' : 'ignore', 'pipe'],
+      env: childEnv,
+    },
   );
+  let viewerReady = false;
+  child.stdout?.on('data', (data: Buffer) => {
+    if (data.toString().includes('RAJCORD_DESKTOP_VIEWER_READY')) viewerReady = true;
+  });
   let diagnostics = '';
   child.stderr?.on('data', (chunk: Buffer) => {
     diagnostics = (diagnostics + chunk.toString()).slice(-4096);
@@ -128,6 +159,14 @@ export async function launch(
         { cause },
       );
     });
+    if (options.rajcordDesktop) {
+      for (let attempt = 0; attempt < 150 && !viewerReady; attempt++) {
+        if (child.exitCode !== null) break;
+        await delay(100);
+      }
+      if (!viewerReady)
+        throw new Error('The Rajcord viewer did not finish its first navigation. ' + diagnostics);
+    }
     const ws = new WebSocket(await waitForDebuggingPage(port));
     let sequence = 0;
     const pending = new Map<
@@ -223,6 +262,7 @@ export async function launch(
     });
     return {
       child,
+      rajcordDesktop: options.rajcordDesktop === true,
       ws,
       httpErrors,
       call,
@@ -266,25 +306,42 @@ export async function setup(browser: Browser, token: string, origin: string) {
     httpOnly: true,
     sameSite: 'Strict',
   });
-  await browser.call('Emulation.setDeviceMetricsOverride', {
-    width: 1360,
-    height: 980,
-    deviceScaleFactor: 1,
-    mobile: false,
-  });
-  await browser.call('Browser.grantPermissions', { origin, permissions: ['audioCapture'] });
+  if (!browser.rajcordDesktop)
+    await browser.call('Emulation.setDeviceMetricsOverride', {
+      width: 1360,
+      height: 980,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+  if (!browser.rajcordDesktop)
+    await browser.call('Browser.grantPermissions', { origin, permissions: ['audioCapture'] });
   await browser.call('Page.navigate', { url: origin });
   await browser.wait("!!document.querySelector('.profile-settings')");
   await browser.js("document.querySelector('.profile-settings').click()");
   await browser.click('Voice & audio');
+  if (browser.rajcordDesktop) {
+    assert.equal(
+      await browser.js(
+        "window.tricordDesktop?.platform === 'win32' && typeof require === 'undefined'",
+      ),
+      true,
+    );
+    assert.equal(await browser.js('window.__captureCount'), 0);
+    const status =
+      "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus";
+    await browser.wait(`['ready','permission-needed'].includes(${status})`);
+    if (await browser.js(`${status}==='permission-needed'`))
+      await browser.click('Allow microphone access');
+  }
   await browser.wait(
     "document.querySelector('[data-audio-devices-status]')?.dataset.audioDevicesStatus==='ready'",
   );
-  assert.equal(
-    await browser.js('window.__captureCount'),
-    0,
-    'Automatic setup must not capture audio',
-  );
+  if (!browser.rajcordDesktop)
+    assert.equal(
+      await browser.js('window.__captureCount'),
+      0,
+      'Automatic setup must not capture audio',
+    );
   await browser.wait(
     'document.querySelector(\'select[aria-label="Voice microphone"]\').options.length>1',
   );

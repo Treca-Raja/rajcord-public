@@ -275,7 +275,7 @@ it('switches content policy for real moving and static capture without changing 
       `${f}.contentAnalysis()?.kind==='motion' && ${f}.contentAnalysis()?.status==='available'`,
     );
     await publisher.js(
-      `${f}.setVideoQuality({revision:1,publisher:{profile:'smooth',videoBitrate:8000000},viewer:{profile:'smooth',videoBitrate:4000000}})`,
+      `${f}.setVideoQuality({revision:1,publisher:{profile:'smooth',videoBitrate:8000000}})`,
     );
     await publisher.js(`${f}.sourceMotion(false);true`);
     await publisher.wait(`${f}.contentAnalysis()?.kind==='detail'`);
@@ -299,13 +299,12 @@ it('round-trips native video ceilings without changing capture or source audio',
   await withPeers(
     async (publisher, viewer) => {
       const before = (await publisher.js(`${f}.parameterSnapshot()`)) as ParameterSnapshot;
-      const request = (revision: number, publisherBitrate: number, viewerProfile: string) => ({
+      const request = (revision: number, publisherBitrate: number, publisherProfile: string) => ({
         revision,
-        publisher: { profile: 'smooth', videoBitrate: publisherBitrate },
-        viewer: { profile: viewerProfile, videoBitrate: 4_000_000 },
+        publisher: { profile: publisherProfile, videoBitrate: publisherBitrate },
       });
       const low = (await publisher.js(
-        `${f}.setVideoQuality(${JSON.stringify(request(1, 8_000_000, 'low'))})`,
+        `${f}.setVideoQuality(${JSON.stringify(request(1, 4_000_000, 'low'))})`,
       )) as ScreenVideoApplied;
       expect(low.encoding).toEqual({
         maxBitrate: 4_000_000,

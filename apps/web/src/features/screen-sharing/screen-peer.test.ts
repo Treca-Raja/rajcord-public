@@ -109,17 +109,14 @@ it('confirms the selected fixed format before creating the first offer', async (
     options.initialVideoQuality = {
       revision: 1,
       publisher: quality,
-      viewer: { ...quality, frameRate: 30, videoBitrate: 2000000 },
     };
   });
   expect(f.rtc.addTransceiver).toHaveBeenCalledWith(f.video.media, {
     direction: 'sendonly',
-    sendEncodings: [{ maxBitrate: 2000000, maxFramerate: 30, scaleResolutionDownBy: 1.5 }],
+    sendEncodings: [{ maxBitrate: 4000000, maxFramerate: 60, scaleResolutionDownBy: 1.5 }],
   });
   await f.peer.offer();
-  expect(f.rtc.senders[0]!.parameters.degradationPreference).toBe(
-    'maintain-framerate-and-resolution',
-  );
+  expect(f.rtc.senders[0]!.parameters.degradationPreference).toBe('maintain-framerate');
   expect(f.rtc.senders[0]!.setParameters.mock.invocationCallOrder[0]).toBeLessThan(
     f.rtc.createOffer.mock.invocationCallOrder[0]!,
   );
@@ -904,10 +901,34 @@ it('inspection observes a clock jump or generation loss before delayed timers ca
   expect(next.rtc.close).toHaveBeenCalledOnce();
 });
 
-const videoRequest = (revision = 1, pub = 8000000, view = 4000000, profile = 'smooth') => ({
+const videoRequest = (revision = 1, pub = 8000000, profile = 'smooth') => ({
   revision,
-  publisher: { profile: 'smooth', videoBitrate: pub },
-  viewer: { profile, videoBitrate: view },
+  publisher: { profile, videoBitrate: pub },
+});
+
+it('keeps the connection and refreshes limits when capture settings settle during a live update', async () => {
+  const f = fixture();
+  await stable(f);
+  const sender = f.rtc.senders[0]!;
+  const original = sender.setParameters.getMockImplementation()!;
+  sender.setParameters.mockImplementationOnce(async (parameters) => {
+    f.video.settings = { width: 854, height: 480, frameRate: 15 };
+    await original(parameters);
+  });
+
+  await f.peer.updatePublisherQuality({
+    profile: 'smooth',
+    resolution: 480,
+    frameRate: 15,
+    videoBitrate: 4000000,
+  });
+  expect(f.peer.inspect().phase).toBe('stable');
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(f.peer.inspectVideoQuality().applied).toMatchObject({
+    plan: { source: { width: 854, height: 480, frameRate: 15 } },
+    encoding: { maxBitrate: 4000000, maxFramerate: 15, scaleResolutionDownBy: 1 },
+  });
+  expect(f.rtc.close).not.toHaveBeenCalled();
 });
 
 it('updates only negotiated video and exposes immutable requested/observed ceilings', async () => {
@@ -916,7 +937,7 @@ it('updates only negotiated video and exposes immutable requested/observed ceili
     code: 'unsupported',
   });
   await stable(f);
-  const applied = await f.peer.setVideoQuality(videoRequest(1, 8000000, 4000000, 'low'));
+  const applied = await f.peer.setVideoQuality(videoRequest(1, 4000000, 'low'));
   expect(applied.encoding).toEqual({
     maxBitrate: 4000000,
     maxFramerate: 15,
@@ -947,7 +968,7 @@ it('serializes a bounded pair using fresh native transactions and copied request
     await original(parameters);
   });
   const first = f.peer.setVideoQuality(videoRequest(1));
-  const request = videoRequest(2, 2000000, 8000000);
+  const request = videoRequest(2, 2000000);
   const second = f.peer.setVideoQuality(request);
   request.publisher.videoBitrate = 20000000;
   await expect(f.peer.setVideoQuality(videoRequest(3))).rejects.toMatchObject({ code: 'busy' });
@@ -1064,9 +1085,9 @@ it.each(['get', 'set', 'readback'] as const)(
 it('unqualified choices and unknown source settings consume no revisions or native work', async () => {
   const f = fixture();
   await stable(f);
-  await expect(
-    f.peer.setVideoQuality(videoRequest(1, 8000000, 4000000, 'auto')),
-  ).rejects.toMatchObject({ code: 'unqualified' });
+  await expect(f.peer.setVideoQuality(videoRequest(1, 8000000, 'auto'))).rejects.toMatchObject({
+    code: 'unqualified',
+  });
   f.video.settings = { width: 1920, height: 1080 };
   await expect(f.peer.setVideoQuality(videoRequest())).rejects.toMatchObject({
     code: 'unqualified',
@@ -1275,7 +1296,7 @@ it('samples actual delivery without ratcheting down the ceiling managed by nativ
     statistics: 'available',
     sample: { bitrate: 4000000, fps: 30, limitation: 'bandwidth' },
   });
-  expect(f.peer.inspectVideoQuality().applied?.encoding.maxBitrate).toBe(4000000);
+  expect(f.peer.inspectVideoQuality().applied?.encoding.maxBitrate).toBe(8000000);
   expect(f.video.applyConstraints).not.toHaveBeenCalled();
 });
 
@@ -1348,7 +1369,7 @@ it('maintains source and content limits even while native statistics remain hung
   await vi.advanceTimersByTimeAsync(1000);
   expect(f.rtc.senders[0]!.parameters).toMatchObject({
     degradationPreference: 'maintain-resolution',
-    encodings: [{ maxBitrate: 4000000, scaleResolutionDownBy: 2 }],
+    encodings: [{ maxBitrate: 8000000, scaleResolutionDownBy: 2 }],
   });
   expect(f.rtc.boundary.getStats).toHaveBeenCalledTimes(1);
   expect(f.peer.inspectMedia().statistics).toBe('pending');
@@ -1363,10 +1384,10 @@ it('installs the link bitrate before negotiation and keeps it across a sender re
     options.initialVideoQuality = quality;
   });
   expect(f.video.contentHint).toBe('motion');
-  expect(f.rtc.addTransceiver.mock.calls[0]![1].sendEncodings?.[0]?.maxBitrate).toBe(4000000);
+  expect(f.rtc.addTransceiver.mock.calls[0]![1].sendEncodings?.[0]?.maxBitrate).toBe(8000000);
   await f.peer.offer();
   expect(f.rtc.senders[0]!.setParameters).not.toHaveBeenCalled();
   await f.peer.receive(f.message({ type: 'answer', sdp: screenSdp('answer', false) }));
   await vi.advanceTimersByTimeAsync(2000);
-  expect(f.peer.inspectVideoQuality().applied?.encoding.maxBitrate).toBe(4000000);
+  expect(f.peer.inspectVideoQuality().applied?.encoding.maxBitrate).toBe(8000000);
 });

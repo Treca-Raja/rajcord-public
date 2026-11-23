@@ -23,10 +23,16 @@ import {
   SCREEN_RESOLUTIONS,
   SCREEN_FRAME_RATES,
   SCREEN_VIDEO_BITRATES,
+  sameScreenQuality,
   screenQualityCeiling,
   type ScreenQuality,
   type ScreenSound,
   type ScreenShare,
+  type ObsEncoder,
+  type ObsEncoderChoice,
+  type DesktopScreenBridge,
+  DESKTOP_SCREEN_PROTOCOL_VERSION,
+  OBS_ENCODERS,
 } from '@tricord/shared';
 import { useCall } from '../../shared/call';
 import { useAuth } from '../account';
@@ -36,6 +42,11 @@ import { StreamTile, ParticipantTile } from './ScreenCallTiles';
 import { ParticipantVolume } from '../../shared/ParticipantVolume';
 import './styles.css';
 
+const encoderLabels: Record<ObsEncoder, string> = {
+  nvenc: 'NVIDIA NVENC',
+  amf: 'AMD AMF',
+  x264: 'Software x264',
+};
 const defaultScreenQuality: ScreenQuality = Object.freeze({
   profile: 'smooth',
   resolution: 1080,
@@ -158,15 +169,28 @@ function ConnectedScreenPanel({
   const publishQuality: ScreenQuality = adaptiveCapture
     ? { profile: quality.profile, videoBitrate: quality.videoBitrate }
     : quality;
-  const [watchQuality, setWatchQuality] = useState<ScreenQuality>({
-    profile: 'smooth',
-    resolution: 1080,
-    frameRate: 60,
-    videoBitrate: null,
-  });
+  const [applyingQuality, setApplyingQuality] = useState(false);
   const [sound, setSound] = useState<ScreenSound>('none');
-  const automaticAudio = window.tricordDesktop?.platform === 'win32';
-  const sourceSound: ScreenSound = automaticAudio ? 'source' : sound;
+  const [encoder, setEncoder] = useState<ObsEncoderChoice>('auto');
+  const [capabilities, setCapabilities] =
+    useState<Awaited<ReturnType<DesktopScreenBridge['capabilities']>>>();
+  const desktop = !!window.tricordDesktop;
+  const obs =
+    capabilities?.version === DESKTOP_SCREEN_PROTOCOL_VERSION ? capabilities.obs : undefined;
+  useEffect(() => {
+    const bridge = window.tricordDesktop?.screens;
+    if (!bridge?.nativeCommand) return;
+    let active = true;
+    void bridge.capabilities().then(
+      (capabilities) => {
+        if (active) setCapabilities(capabilities);
+      },
+      () => {},
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
   const [error, setError] = useState('');
   const currentControls = useRef(controls);
   currentControls.current = controls;
@@ -420,23 +444,9 @@ function ConnectedScreenPanel({
       failed(cause);
     }
   };
-  const requested = (item: Readonly<ScreenShare>, preference: ScreenQuality): ScreenQuality => {
-    const offered = screenQualityCeiling(item);
-    return {
-      profile: 'smooth',
-      resolution: Math.min(preference.resolution!, offered.height) as ScreenQuality['resolution'],
-      frameRate: Math.min(preference.frameRate!, offered.frameRate) as ScreenQuality['frameRate'],
-      videoBitrate: preference.videoBitrate ?? item.videoBitrate,
-    };
-  };
   const addToMulti = async (item: Readonly<ScreenShare>) => {
-    await controls.watchMultiple(item.id, requested(item, watchQuality));
+    await controls.watchMultiple(item.id);
     controls.zoomOutWatch();
-  };
-  const changeWatchQuality = (next: ScreenQuality) => {
-    setWatchQuality(next);
-    const selected = state.shares.find((item) => item.id === state.watching);
-    if (selected) run(() => controls.watchMultiple(selected.id, requested(selected, next)));
   };
   const toggleFullscreen = () => {
     const element = panel.current;
@@ -447,10 +457,18 @@ function ConnectedScreenPanel({
         : element.requestFullscreen(),
     );
   };
-  const displayQuality =
-    activeShare && (state.watching ? requested(activeShare, watchQuality) : activeShare);
   function openSettings(trigger: HTMLButtonElement) {
     if (settingsVisible) return;
+    const own = state.shares.find((item) => item.id === state.ownShareId);
+    if (own) {
+      setQuality({
+        profile: own.profile,
+        videoBitrate: own.videoBitrate,
+        resolution: own.resolution ?? quality.resolution,
+        frameRate: own.frameRate ?? quality.frameRate,
+      });
+      setAdaptiveCapture(own.resolution === undefined);
+    }
     settingsTrigger.current = trigger;
     setSettingsVisible(true);
   }
@@ -482,7 +500,7 @@ function ConnectedScreenPanel({
         watch={() => {
           setSettingsVisible(false);
           if (watched) controls.focusWatch(item.id);
-          else run(() => controls.watch(item.id, requested(item, watchQuality)));
+          else run(() => controls.watch(item.id));
         }}
         multiple={() => {
           setSettingsVisible(false);
@@ -505,6 +523,7 @@ function ConnectedScreenPanel({
 
   const busy = ['connecting', 'preparing', 'choosing', 'publishing'].includes(state.phase);
   const live = !!state.watching || state.phase === 'sharing';
+  const publishingShare = state.shares.find((item) => item.id === state.ownShareId);
   const phases = {
     idle: 'Join voice to share or watch',
     connecting: 'Connecting…',
@@ -541,6 +560,9 @@ function ConnectedScreenPanel({
               {state.watching && state.phase !== 'sharing'
                 ? `Watching ${activePublisher}`
                 : phases[state.phase]}
+              {state.phase === 'sharing' &&
+                state.obsEncoder &&
+                ' · ' + encoderLabels[state.obsEncoder]}
               <span className="screen-people-count">
                 {' '}
                 · {participants.length} {participants.length === 1 ? 'participant' : 'participants'}
@@ -550,10 +572,10 @@ function ConnectedScreenPanel({
         </div>
         <span className="grow" />
         <div className="screen-call-indicators">
-          {displayQuality && (
+          {activeShare && (
             <span className="screen-quality-badge">
-              {displayQuality.resolution
-                ? `${displayQuality.resolution}p ${displayQuality.frameRate} FPS`
+              {activeShare.resolution
+                ? `${activeShare.resolution}p ${activeShare.frameRate} FPS`
                 : 'Adaptive'}
             </span>
           )}
@@ -722,9 +744,38 @@ function ConnectedScreenPanel({
         </div>
         <div className="screen-settings-content">
           <div className="screen-options">
-            <fieldset disabled={busy || (state.prepared && state.phase !== 'preview')}>
+            <fieldset
+              disabled={
+                busy ||
+                applyingQuality ||
+                (state.prepared && state.phase !== 'preview' && state.phase !== 'sharing')
+              }
+            >
               <legend>Your screen</legend>
-              {!window.tricordDesktop && (
+              {desktop && (
+                <label>
+                  Encoder
+                  <select
+                    aria-label="Screen encoder"
+                    value={encoder}
+                    disabled={state.prepared}
+                    onChange={(event) => setEncoder(event.target.value as ObsEncoderChoice)}
+                  >
+                    <option value="auto">Automatic (Recommended)</option>
+                    {OBS_ENCODERS.map((option) => (
+                      <option
+                        key={option}
+                        value={option}
+                        disabled={!obs?.encoders.includes(option)}
+                      >
+                        {encoderLabels[option]}
+                      </option>
+                    ))}
+                  </select>
+                  {obs?.reason && <span className="screen-help">{obs.reason}</span>}
+                </label>
+              )}
+              {!desktop && (
                 <label className="screen-capture-mode">
                   Capture mode
                   <select
@@ -801,28 +852,24 @@ function ConnectedScreenPanel({
                   </select>
                 </label>
               </div>
-              {automaticAudio ? (
-                <p className="screen-help" role="note">
-                  Audio follows your source: an application window shares that app's audio; an
-                  entire display shares system audio, including other apps and call playback. App
-                  audio includes its child processes and may include its other windows.
-                </p>
-              ) : (
-                <label>
-                  Source sound
-                  <select
-                    aria-label="Screen source sound"
-                    disabled={state.prepared}
-                    value={sound}
-                    onChange={(event) => setSound(event.target.value as ScreenSound)}
-                  >
-                    <option value="none">Video only</option>
-                    {!window.tricordDesktop && (
-                      <option value="tab">Selected browser tab sound</option>
-                    )}
-                  </select>
-                </label>
-              )}
+              <label>
+                Source sound
+                <select
+                  aria-label="Screen source sound"
+                  disabled={state.prepared}
+                  value={sound}
+                  onChange={(event) => setSound(event.target.value as ScreenSound)}
+                >
+                  <option value="none">Video only</option>
+                  {desktop ? (
+                    <option value="source" disabled={capabilities?.sourceSound === false}>
+                      Application audio or system audio excluding Rajcord
+                    </option>
+                  ) : (
+                    <option value="tab">Selected browser tab sound</option>
+                  )}
+                </select>
+              </label>
             </fieldset>
             {sound === 'tab' && (
               <p className="screen-help">
@@ -835,7 +882,13 @@ function ConnectedScreenPanel({
                 disabled={busy}
                 onClick={() => {
                   setSettingsVisible(true);
-                  run(() => controls.prepare({ ...publishQuality, sound: sourceSound }));
+                  run(() =>
+                    controls.prepare({
+                      ...publishQuality,
+                      sound,
+                      ...(desktop ? { encoder } : {}),
+                    }),
+                  );
                 }}
               >
                 Prepare source
@@ -863,6 +916,28 @@ function ConnectedScreenPanel({
                 Start sharing
               </button>
             )}
+            {state.phase === 'sharing' && (
+              <button
+                className="screen-action-primary"
+                disabled={
+                  applyingQuality ||
+                  !publishingShare ||
+                  sameScreenQuality(publishQuality, publishingShare)
+                }
+                onClick={() =>
+                  run(async () => {
+                    setApplyingQuality(true);
+                    try {
+                      await controls.updateQuality(publishQuality);
+                    } finally {
+                      setApplyingQuality(false);
+                    }
+                  })
+                }
+              >
+                {applyingQuality ? 'Applying quality…' : 'Apply stream quality'}
+              </button>
+            )}
             {busy && (
               <p role="status">
                 {state.phase === 'choosing' ? 'Choose a source in the picker…' : 'Preparing…'}
@@ -872,8 +947,7 @@ function ConnectedScreenPanel({
               {adaptiveCapture
                 ? 'The browser can adjust resolution and frame rate up to 1080p and 60 fps.'
                 : 'Capture uses the selected resolution and frame rate.'}{' '}
-              Each viewer has a separate video bitrate allowance. Upload capacity and encoder speed
-              affect playback.
+              Viewers automatically adapt to their connection up to your selected quality.
             </p>
           </div>
           <div className="screen-settings-divider" />
@@ -881,68 +955,6 @@ function ConnectedScreenPanel({
             <div className="screen-watch-heading">
               <strong>Available screens</strong>
               <span>Choose a stream to watch</span>
-            </div>
-            <div className="screen-watch-quality">
-              <label>
-                Watch resolution
-                <select
-                  aria-label="Watch resolution"
-                  value={watchQuality.resolution}
-                  onChange={(event) =>
-                    changeWatchQuality({
-                      ...watchQuality,
-                      resolution: Number(event.target.value) as ScreenQuality['resolution'],
-                    })
-                  }
-                >
-                  {SCREEN_RESOLUTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {value}p
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Watch frame rate
-                <select
-                  aria-label="Watch frame rate"
-                  value={watchQuality.frameRate}
-                  onChange={(event) =>
-                    changeWatchQuality({
-                      ...watchQuality,
-                      frameRate: Number(event.target.value) as ScreenQuality['frameRate'],
-                    })
-                  }
-                >
-                  {SCREEN_FRAME_RATES.map((value) => (
-                    <option key={value} value={value}>
-                      {value} fps
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Watch video cap
-                <select
-                  aria-label="Watch video bitrate"
-                  value={watchQuality.videoBitrate ?? ''}
-                  onChange={(event) =>
-                    changeWatchQuality({
-                      ...watchQuality,
-                      videoBitrate: event.target.value
-                        ? (Number(event.target.value) as ScreenQuality['videoBitrate'])
-                        : null,
-                    })
-                  }
-                >
-                  <option value="">Publisher’s bitrate</option>
-                  {SCREEN_VIDEO_BITRATES.map((value) => (
-                    <option key={value} value={value}>
-                      {value / 1000000} Mb/s
-                    </option>
-                  ))}
-                </select>
-              </label>
             </div>
             <div className="screen-share-list" role="group" aria-label="Available screen shares">
               {state.shares.length === 0 && <p>No one is sharing yet.</p>}
@@ -952,13 +964,14 @@ function ConnectedScreenPanel({
                   participants.find((person) => person.id === item.publisherId)?.name ??
                   'Participant';
                 const watched = state.watchingShareIds.includes(item.id);
+                const ceiling = screenQualityCeiling(item);
                 return (
                   <div key={item.id} className="screen-share-item">
                     <MonitorUp size={16} aria-hidden="true" />
                     <span className="screen-share-details">
                       <strong>{ownShare ? 'Your screen' : publisher}</strong>
                       <small>
-                        {item.resolution ?? 1080}p · {item.frameRate ?? 60} fps ·{' '}
+                        {ceiling.height}p · {ceiling.frameRate} fps ·{' '}
                         {item.sound === 'none' ? 'Video' : 'With sound'}
                       </small>
                     </span>
@@ -969,7 +982,7 @@ function ConnectedScreenPanel({
                       onClick={() => {
                         setSettingsVisible(false);
                         if (watched) controls.focusWatch(item.id);
-                        else run(() => controls.watch(item.id, requested(item, watchQuality)));
+                        else run(() => controls.watch(item.id));
                       }}
                     >
                       {state.selectingShareId === item.id

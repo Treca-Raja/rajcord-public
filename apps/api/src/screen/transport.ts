@@ -1,5 +1,5 @@
 import type { Server, Socket } from 'socket.io';
-import { SCREEN_DIRECTORY_PAGE_SIZE } from '@tricord/shared';
+import { SCREEN_DIRECTORY_PAGE_SIZE, sameScreenQuality } from '@tricord/shared';
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
@@ -8,6 +8,7 @@ import type {
   ScreenClosed,
   ScreenDirectory,
   ScreenDirectoryReply,
+  ScreenShare,
 } from '@tricord/shared';
 import { HttpError } from '../auth/validation.js';
 import { ScreenService, ScreenError, type ScreenCaller, type ScreenSnapshot } from './service.js';
@@ -23,7 +24,7 @@ type Connection = {
   revision: number;
   completeRevision: number;
   links: Set<string>;
-  shares: Set<string>;
+  shares: Map<string, ScreenShare>;
   legacyOutgoing: Set<string>;
   dirty: boolean;
   refreshing: boolean;
@@ -44,8 +45,11 @@ function emitClosed(c: Connection, notice: ClosedLink) {
 function sendDirectoryChanges(c: Connection, directory: ScreenDirectory) {
   const { epoch, revision, shares } = directory;
   const current = new Set(shares.map((share) => share.id));
-  const removed = [...c.shares].filter((id) => !current.has(id));
-  const added = shares.filter((share) => !c.shares.has(share.id));
+  const removed = [...c.shares.keys()].filter((id) => !current.has(id));
+  const added = shares.filter((share) => {
+    const previous = c.shares.get(share.id);
+    return !previous || !sameScreenQuality(share, previous);
+  });
   // Recompute each unsent delta from a freshly authorized snapshot on every refresh.
   c.directoryPending = true;
   let addIndex = 0,
@@ -63,7 +67,7 @@ function sendDirectoryChanges(c: Connection, directory: ScreenDirectory) {
     if (!c.output.take(false, [page])) return false;
     c.socket.emit('screen:directoryChanges', page);
     for (const id of removePage) c.shares.delete(id);
-    for (const share of addPage) c.shares.add(share.id);
+    for (const share of addPage) c.shares.set(share.id, share);
   } while (addIndex < added.length || removeIndex < removed.length);
   c.directoryPending = false;
   c.revision = revision;
@@ -114,7 +118,7 @@ export function registerScreen(
       c.caller.directoryChanges && directory.shares.length > SCREEN_DIRECTORY_PAGE_SIZE;
     const sendDirectory = () => {
       c.socket.emit('screen:directory', directory);
-      c.shares = new Set(directory.shares.map((share) => share.id));
+      c.shares = new Map(directory.shares.map((share) => [share.id, share]));
       c.revision = directory.revision;
       c.directoryPending = false;
     };
@@ -135,7 +139,7 @@ export function registerScreen(
         if (c.output.take(false, [batch])) {
           c.socket.emit('screen:snapshot', batch);
           for (const id of batch.closed) c.legacyOutgoing.delete(id);
-          c.shares = new Set(directory.shares.map((share) => share.id));
+          c.shares = new Map(directory.shares.map((share) => [share.id, share]));
           c.revision = c.completeRevision = directory.revision;
           c.directoryPending = false;
           c.links = current;
@@ -267,7 +271,7 @@ export function registerScreen(
       revision: 0,
       completeRevision: 0,
       links: new Set(),
-      shares: new Set(),
+      shares: new Map(),
       legacyOutgoing: new Set(),
       dirty: false,
       refreshing: false,
@@ -338,6 +342,9 @@ export function registerScreen(
     );
     socket.on('screen:stop', (data, ack) =>
       rejectUnexpected(handle('control', data, ack, () => service.stop(c.caller, data))),
+    );
+    socket.on('screen:quality', (data, ack) =>
+      rejectUnexpected(handle('control', data, ack, () => service.updateQuality(c.caller, data))),
     );
     socket.on('screen:select', (data, ack) =>
       rejectUnexpected(

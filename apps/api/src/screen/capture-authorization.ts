@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { CaptureAuthorization, CaptureSoundChoice } from '@tricord/shared';
+import type {
+  CaptureAuthorization,
+  CaptureSoundChoice,
+  NativeViewerSnapshot,
+} from '@tricord/shared';
 import { approved, equal, identity, type Identity } from '../auth/service.js';
 import { HttpError, input, uuid } from '../auth/validation.js';
 import type { Lease, VoiceService } from '../voice/service.js';
@@ -67,6 +71,7 @@ export class CaptureAuthorizationService {
       approved(await identity(voice.pool, token)),
     private matchBinding: CaptureBindingMatcher = () => null,
     private matchPublication: CapturePublicationMatcher = () => null,
+    private nativeViewers?: (share: object, userId: string) => NativeViewerSnapshot,
   ) {
     this.time = now();
     this.unsubscribe = voice.onLeaseInvalidated((lease) => {
@@ -369,7 +374,9 @@ export class CaptureAuthorizationService {
     });
   }
   checkPublication(token: string, value: unknown, csrf: unknown) {
-    const body = input(value, ['id', 'requestId', 'revision']);
+    const body = input(value, ['id', 'requestId', 'revision', 'nativeViewers']);
+    if (body.nativeViewers !== undefined && body.nativeViewers !== 1)
+      throw new HttpError(400, 'Invalid native viewer request.');
     const id = uuid(body.id),
       requestId = uuid(body.requestId),
       revision = body.revision;
@@ -414,6 +421,14 @@ export class CaptureAuthorizationService {
           auth.expiresAt.getTime(),
         ) - this.now();
       if (remainingMs <= 0) throw denied();
+      if (body.nativeViewers === 1) {
+        if (!this.nativeViewers) throw denied();
+        return {
+          id: publication.id,
+          remainingMs,
+          native: this.nativeViewers(own.identity, auth.user.id),
+        };
+      }
       return { id: publication.id, remainingMs };
     });
   }

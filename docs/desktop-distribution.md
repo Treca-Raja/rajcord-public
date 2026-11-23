@@ -6,20 +6,24 @@ Microphone approval is stored in the app profile and scoped to the configured se
 
 ## Build locally
 
-Use Windows, Node 24 and pnpm 11.25.0 from the repository root:
+Use Windows x64, PowerShell 7, Node 24 and pnpm 11.25.0 from the repository root. The [OBS build prerequisites](screen-sharing-handoff.md#windows-obs-publisher) include Visual Studio x64 C++ tools and Windows SDK 26100 or later.
 
 ```powershell
 pnpm install --frozen-lockfile
 pnpm setup:desktop
+pnpm desktop:obs:setup
 pnpm desktop:package
 pnpm desktop:audit
+python scripts/audit-obs-runtime.py artifacts/desktop/win-unpacked/resources/obs-screen
 ```
 
-The default build is unsigned and has **no automatic update feed**. Release builds can opt in to [Rajcord-signed update metadata](#rajcord-signed-update-metadata) or Authenticode. Output is ignored under `artifacts/desktop/`: `Rajcord-Setup-<version>-x64.exe`, its blockmap and `win-unpacked/Rajcord.exe`. The version in `apps/desktop/package.json` controls the executable metadata, installer name, preload version and release tag (`v0.1.0` initially). Increase that desktop version in a reviewed change for every release; other workspace packages need not change versions. Never replace an existing version's assets.
+The local qualification build is unsigned and has no automatic update feed by default. It includes the private OBS runtime and Visual C++ DLLs. Output under `artifacts/desktop/` includes `Rajcord-Setup-<version>-x64.exe`, its blockmap and `win-unpacked/Rajcord.exe`. The version in `apps/desktop/package.json` controls the executable metadata, installer name, preload version and release tag. Signing and installer distribution are held pending [GPL review and OBS qualification](screen-sharing-handoff.md#windows-obs-publisher).
 
-The desktop build copies the screen-picker HTML/CSS/JavaScript into `dist/picker/`; packaging and the audit require those assets, the dedicated picker preload, native boundary, screen IPC and main authorization modules. Screen sharing uses the main window, a dedicated local source picker and a narrow versioned preparation/handoff/cancellation bridge. Main independently authenticates the session and exact screen binding, derives the native frame/navigation identity, and consumes one-use authority immediately before granting the selected source. An epoch or renderer flag is never a permission grant. Camera requests remain denied. See [screen sharing](../README.md#screen-sharing) for controls and consent.
+The native source manifest maps the installer DLLs to their upstream inputs. The audited installer retains the pinned OBS FFmpeg DLLs. The release needs complete corresponding-source inputs, a reproduction check, physical AMF qualification and a licensing decision for the combined distribution. [Source manifest](../apps/desktop/native/obs/corresponding-source.md) · [Exact installer evidence](verification.md#native-windows-sender-cutover--2026-11-23)
 
-`pnpm test:desktop:picker` checks the isolated picker, and `pnpm test:desktop:capture` checks the native handler with test-owned synthetic WebContents video. Both use disposable profiles without database/media services or physical source enumeration. Consent capability is distinct from qualification: Windows system sound is explicitly labelled whole-system loopback, and physical source identity, routing/feedback, actual playback and performance remain open acceptance gates.
+The desktop build includes the isolated source picker, the versioned preparation and handoff bridge, and the app-local OBS runtime. Main authenticates the session and binding, verifies the exact source and consumes one-use authority before granting capture. OBS is the Windows desktop sender, with libopus, libdatachannel, libnice and OpenSSL in the private runtime. The inventory audit checks package contents. The PE audit verifies the helper's native import chain and rejects retired transport imports. [Screen sharing controls and consent](../README.md#screen-sharing)
+
+`pnpm test:desktop:picker` checks the isolated picker, and `pnpm test:desktop:capture` checks the display-request boundary with test-owned synthetic WebContents video. Both use disposable profiles without database or media services. The signed-in OBS smoke and scoped audio fixtures exercise the publishing pipeline. [Windows OBS tests](screen-sharing-handoff.md#local-tests)
 
 `pnpm test:desktop:authority` additionally uses the actual Electron session cookie/network stack against a disposable API, then captures owned synthetic WebContents video through the existing picker. It verifies distinct publication handoff, survival beyond the old preview deadline and fresh publication revocation. It requires local PostgreSQL/LiveKit test services and owns `127.0.0.1:3006`, generated accounts/database/rooms and a disposable profile. Its process-control IPC is test-only and absent from the renderer; the package excludes this smoke entry. Physical source/audio and performance qualification do not follow from it.
 
@@ -37,7 +41,7 @@ Never copy `.env`, `.local`, profiles, server code, API keys or signing material
 - The Windows executable, window, tray, and web favicon use the same citron waveform. Regenerate the assets with `node scripts/desktop-icons.mjs` after changing its geometry. The Windows title bar matches the midnight-violet Original sidebar or racing-green Retro sidebar and keeps Windows high-contrast colors when enabled. Press Alt to reveal the menu bar for clipboard and zoom commands, update checks and installation. Validated HTTP(S) message links open in the default browser through the main-process handler. Renderer-created windows/navigation, invalid link destinations, cross-origin redirects and webviews remain blocked.
 - Notifications retain per-account opt-in, generic previews and click-to-open behavior. They require the app to be running, including in the tray. The installer registers the same AppUserModelID used by notifications. No login autostart is enabled.
 - Context isolation, sandboxing, disabled renderer Node integration, main-frame/origin checks and narrowly scoped notification IPC remain enabled. Updates are controlled by native menus/dialogs, without privileged updater IPC exposed to hosted content.
-- Voice continues through the same authenticated `/media/rtc` gateway with server-side LiveKit tokens and microphone-only consent. Camera access stays denied. Screen capture requires its separate authenticated preparation, fresh native gesture, source/sound consent and preview confirmation. Hiding to tray retains voice and outgoing sharing but closes incoming screen delivery. Native menus/tray offer **Stop screen sharing**. Accepted tracks remain renderer-owned, so Stop is not independently guaranteed while that renderer is frozen. Updates require confirmation because restart disconnects calls.
+- Voice uses the authenticated `/media/rtc` gateway with server-side LiveKit tokens and microphone-only consent. Screen sharing requires separate preparation, source and sound consent, then preview confirmation. Hiding to tray retains voice and outgoing sharing and closes incoming screen delivery. **Stop screen sharing** in the native menu or tray revokes the helper’s publication in Electron main. Updates require confirmation because restart disconnects calls.
 
 ## Signing and automatic updates
 
@@ -53,7 +57,7 @@ Configure these only in the protected GitHub `desktop-release` environment:
 | `WIN_CSC_KEY_PASSWORD` | Secret   | Certificate password                                                               |
 | `RAJCORD_PUBLISHER_DN` | Variable | Exact full `SignerCertificate.Subject` returned by Windows, including its ordering |
 
-For a local signed build, supply those variables through your private secret tooling, set `RAJCORD_SIGNED_RELEASE=1`, then run the same package/audit commands. Never paste private values into documentation, shell history or tracked configuration. Use a clean generated output directory when switching build modes; the audit deliberately refuses stale unsigned/signed metadata combinations. `forceCodeSigning` makes a requested signed build fail without a usable certificate. Keep SHA-256 timestamped signing enabled through electron-builder defaults and verify both app and installer with Windows `Get-AuthenticodeSignature` before distribution.
+The OBS distribution hold currently rejects `RAJCORD_SIGNED_RELEASE=1`. After the hold is lifted in a reviewed change, supply signing values through private secret tooling, use a clean output directory when switching build modes, and verify both app and installer with Windows `Get-AuthenticodeSignature` before distribution.
 
 Signed builds embed a fixed public GitHub repository (`Treca-Raja/rajcord-public`) and the publisher identity in `app-update.yml`. Checks run 30 seconds after startup, every six hours and from the native menu. Only stable releases are selected, with downgrades disabled. Download and restart each require user consent; quitting normally never installs an update. Drafts are invisible to the public update feed.
 
@@ -73,7 +77,7 @@ Use the same key for later releases. If the key is lost or compromised, distribu
 
 ## Authorized release process
 
-`.github/workflows/desktop.yml` builds unsigned review artifacts on PRs, pushes to `develop`/`main`, and manual runs. Feature work follows `feature/*` → `develop` → `main`; desktop release publication remains restricted to explicitly authorized dispatches on `main`. Those review artifacts have a seven-day retention and are not published Releases. Linux Verify owns the reusable database/server checks; Delivery calls them on every main push. The Windows desktop workflow does not deploy the server.
+`.github/workflows/desktop.yml` builds and audits the unsigned OBS package on PRs, pushes to `develop`/`main`, and manual runs. CI retains the binary only on the build runner while the redistribution review is open. Its release-policy job rejects draft requests before entering the signing environment. The steps below apply after the hold is lifted in a reviewed change. Linux Verify continues to own the database and server checks.
 
 Before the first release, an authorized repository administrator must create `desktop-release` with a required maintainer reviewer, administrator bypass disabled, and a selected-branch policy allowing exactly `main`. The workflow checks those settings before entering the environment and again after approval. This change does not create or modify remote environments or secrets.
 
@@ -95,7 +99,7 @@ Run the repository quality/runtime commands in [verification](verification.md). 
 pnpm desktop:test:install
 ```
 
-The fixture refuses to replace an existing installation or personal profile. It silently installs into `.local/desktop-install`, checks executable metadata and shortcut targets, launches the installed app with loopback DevTools automation, verifies the anonymous production sign-in page, preload version, isolation and secure WebRTC/media APIs, then terminates only that test process and uninstalls. It never signs in or opens a microphone. It checks shortcut/registration removal and profile preservation. Native tray/Quit behavior remains a manual check; CDP key events do not exercise native menu accelerators. The resulting `%APPDATA%\Rajcord` test profile is intentionally retained with a fixture-ownership marker; subsequent runs can reuse that fixture profile. Do not use the fixture profile for personal accounts. The test command uses a process-scoped PowerShell RemoteSigned policy and a debugging flag; ordinary shortcuts do not enable debugging.
+The fixture refuses to replace an existing installation or personal profile. It silently installs into `.local/desktop-install`, checks executable metadata and shortcut targets, launches the installed app with loopback DevTools automation, verifies anonymous production sign-in, preload version, isolation and secure WebRTC/media APIs, then probes the installed OBS bridge with a system-only PATH and deliberately invalid SDK settings. The private software encoder must initialize. The fixture reports other usable encoders, terminates its test process and uninstalls. It checks shortcut/registration removal and profile preservation. It runs without account or microphone access. The resulting `%APPDATA%\Rajcord` test profile is retained with a fixture-ownership marker for reruns. Keep personal accounts out of the fixture profile. The test command uses a process-scoped PowerShell RemoteSigned policy and a debugging flag. Ordinary shortcuts omit debugging. Native tray/Quit and signed-in screen sharing remain part of the [manual acceptance procedure](screen-sharing-handoff.md#windows-obs-publisher).
 
 Manual release gates (record versions, OS, signing mode and actual results in `docs/verification.md`):
 

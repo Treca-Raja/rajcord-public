@@ -20,7 +20,6 @@ export class ScreenVideoQualityError extends Error {
 export type ScreenVideoRequest = Readonly<{
   revision: number;
   publisher: Readonly<ScreenQuality>;
-  viewer: Readonly<ScreenQuality>;
 }>;
 export type ScreenVideoSource = Readonly<{ width: number; height: number; frameRate: number }>;
 export type ScreenVideoEncoding = Readonly<{
@@ -38,31 +37,6 @@ export type ScreenVideoPlan = Readonly<{
 }>;
 export type ScreenVideoApplied = Readonly<{ plan: ScreenVideoPlan; encoding: ScreenVideoEncoding }>;
 export type ScreenVideoSender = Pick<RTCRtpSender, 'track' | 'getParameters' | 'setParameters'>;
-
-// The content-hint specification includes this value ahead of TypeScript's DOM declarations.
-const fixedPreference = 'maintain-framerate-and-resolution' as RTCDegradationPreference;
-
-export async function requireFixedScreenFormat() {
-  let peer: RTCPeerConnection | undefined;
-  try {
-    // Check a local sender without opening the picker or starting ICE.
-    peer = new RTCPeerConnection();
-    const { sender } = peer.addTransceiver('video', { direction: 'sendonly' });
-    const parameters = sender.getParameters();
-    parameters.degradationPreference = fixedPreference;
-    await sender.setParameters(parameters);
-    if (sender.getParameters().degradationPreference !== fixedPreference)
-      throw new Error('The video sender did not retain the fixed-format setting.');
-  } catch (cause) {
-    throw new ScreenVideoQualityError(
-      'unsupported',
-      'This browser cannot publish screen shares at a fixed resolution and frame rate. Choose Adaptive capture in the browser, or use a version of Rajcord that supports fixed-format sharing.',
-      { cause },
-    );
-  } finally {
-    peer?.close();
-  }
-}
 
 function object(value: unknown, fields: string[]): Record<string, unknown> {
   if (
@@ -104,13 +78,12 @@ function quality(value: unknown): Readonly<ScreenQuality> {
   });
 }
 export function screenVideoRequest(value: unknown): ScreenVideoRequest {
-  const data = object(value, ['revision', 'publisher', 'viewer']);
+  const data = object(value, ['revision', 'publisher']);
   if (!Number.isSafeInteger(data.revision) || (data.revision as number) < 1)
     throw new ScreenVideoQualityError('invalid', 'Invalid video limit revision.');
   return Object.freeze({
     revision: data.revision as number,
     publisher: quality(data.publisher),
-    viewer: quality(data.viewer),
   });
 }
 export function screenVideoSource(settings: MediaTrackSettings): ScreenVideoSource {
@@ -135,29 +108,18 @@ export function screenVideoSource(settings: MediaTrackSettings): ScreenVideoSour
 export function screenVideoPlan(value: unknown, settings: MediaTrackSettings): ScreenVideoPlan {
   const request = screenVideoRequest(value),
     source = screenVideoSource(settings);
-  const publisher = screenQualityCeiling(request.publisher),
-    viewer = screenQualityCeiling(request.viewer);
-  const ceiling = Object.freeze({
-    width: Math.min(publisher.width, viewer.width),
-    height: Math.min(publisher.height, viewer.height),
-    frameRate: Math.min(publisher.frameRate, viewer.frameRate),
-  });
+  const ceiling = Object.freeze(screenQualityCeiling(request.publisher));
   const fixed = request.publisher.resolution !== undefined;
-  if (fixed && (source.height < ceiling.height || source.frameRate < ceiling.frameRate))
-    throw new ScreenVideoQualityError(
-      'unqualified',
-      `The source provides ${source.height}p at ${source.frameRate} fps. This link requires ${ceiling.height}p at ${ceiling.frameRate} fps.`,
-    );
   return Object.freeze({
     qualification: fixed ? 'fixed-format' : 'experimental-ceilings',
     request,
     source,
     ceiling,
     encoding: Object.freeze({
-      maxBitrate: Math.min(request.publisher.videoBitrate!, request.viewer.videoBitrate!),
+      maxBitrate: request.publisher.videoBitrate!,
       maxFramerate: Math.min(source.frameRate, ceiling.frameRate),
       scaleResolutionDownBy: fixed
-        ? source.height / ceiling.height
+        ? Math.max(1, source.height / ceiling.height)
         : Math.max(1, source.width / ceiling.width, source.height / ceiling.height),
     }),
   });
@@ -185,9 +147,8 @@ export async function applyScreenVideoPlan(
     throw new ScreenVideoQualityError('unsupported', 'Exactly one video encoding is required.');
   parameters.encodings[0] = { ...parameters.encodings[0], ...plan.encoding };
   const fixed = plan.qualification === 'fixed-format';
-  parameters.degradationPreference = fixed
-    ? fixedPreference
-    : (plan.content ?? (plan.ceiling.frameRate > 30 ? 'motion' : 'detail')) === 'motion'
+  parameters.degradationPreference =
+    (plan.content ?? (plan.ceiling.frameRate > 30 ? 'motion' : 'detail')) === 'motion'
       ? 'maintain-framerate'
       : 'maintain-resolution';
   check();
@@ -209,8 +170,7 @@ export async function applyScreenVideoPlan(
   const { maxBitrate, maxFramerate, scaleResolutionDownBy } = observed.encodings[0]!;
   if (
     fixed &&
-    (observed.degradationPreference !== fixedPreference ||
-      maxBitrate !== plan.encoding.maxBitrate ||
+    (maxBitrate !== plan.encoding.maxBitrate ||
       maxFramerate !== plan.encoding.maxFramerate ||
       scaleResolutionDownBy !== plan.encoding.scaleResolutionDownBy)
   )

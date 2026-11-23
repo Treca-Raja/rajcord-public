@@ -8,6 +8,7 @@ import {
   type ScreenAck,
   type ScreenDescription,
   type ScreenLinkRequest,
+  type ScreenQuality,
   type ScreenSignal,
   type ScreenSound,
 } from '@tricord/shared';
@@ -39,16 +40,14 @@ export type BorrowedScreenSource = Readonly<{
   audio: MediaStreamTrack | null;
   sound: ScreenSound;
 }>;
+export type ScreenRtcTransceiver = Pick<RTCRtpTransceiver, 'direction'> &
+  Partial<Pick<RTCRtpTransceiver, 'setCodecPreferences'>> & { sender: ScreenVideoSender };
 export type ScreenRtcPeer = Pick<
   RTCPeerConnection,
-  | 'addTransceiver'
-  | 'getTransceivers'
-  | 'getConfiguration'
-  | 'addEventListener'
-  | 'removeEventListener'
-  | 'close'
-  | 'connectionState'
+  'getConfiguration' | 'addEventListener' | 'removeEventListener' | 'close' | 'connectionState'
 > & {
+  addTransceiver(track: MediaStreamTrack, init: RTCRtpTransceiverInit): ScreenRtcTransceiver;
+  getTransceivers(): Pick<RTCRtpTransceiver, 'direction'>[];
   // Only the promise API is part of the injected boundary, not legacy callbacks.
   createOffer(options?: RTCOfferOptions): Promise<RTCSessionDescriptionInit>;
   createAnswer(options?: RTCAnswerOptions): Promise<RTCSessionDescriptionInit>;
@@ -108,7 +107,7 @@ export class ScreenPeer {
   private recoveryAttempts = 0;
   private connectedSince = 0;
   private initialRequest?: ScreenVideoRequest;
-  private videoTransceiver?: RTCRtpTransceiver;
+  private videoTransceiver?: ScreenRtcTransceiver;
   private preferredCodec: string | null = null;
   private codecPreferenceError = false;
   private statisticsPending = false;
@@ -127,6 +126,7 @@ export class ScreenPeer {
       iceServers?: readonly RTCIceServer[];
       currentIceServers?: () => readonly RTCIceServer[];
       initialVideoQuality?: unknown;
+      videoSource?: Readonly<MediaTrackSettings>;
       content?: () => ScreenContentKind;
       codecPreference?: () => Promise<string | null>;
     },
@@ -183,7 +183,7 @@ export class ScreenPeer {
       options.initialVideoQuality === undefined
         ? undefined
         : this.source
-          ? screenVideoPlan(options.initialVideoQuality, this.source.video.getSettings())
+          ? screenVideoPlan(options.initialVideoQuality, this.videoSettings())
           : (() => {
               throw failure('only a publisher can set initial video quality.');
             })();
@@ -286,7 +286,7 @@ export class ScreenPeer {
         throw new ScreenVideoQualityError('stale', 'Stale video limit revision.');
       if (this.qualityPending >= 2)
         throw new ScreenVideoQualityError('busy', 'Finish the pending video limit updates first.');
-      screenVideoPlan(request, this.source.video.getSettings());
+      screenVideoPlan(request, this.videoSettings());
     } catch (error) {
       return Promise.reject(error);
     }
@@ -305,7 +305,7 @@ export class ScreenPeer {
       const plan = this.videoPlan(request);
       const verify = () => {
         target();
-        if (!sameScreenVideoSource(plan.source, screenVideoSource(track.getSettings())))
+        if (!sameScreenVideoSource(plan.source, screenVideoSource(this.videoSettings())))
           throw new ScreenVideoQualityError('stale', 'Video source settings changed.');
       };
       applied = await applyScreenVideoPlan(sender, plan, (raw) => this.wait(raw), verify);
@@ -325,6 +325,16 @@ export class ScreenPeer {
         this.qualityPending--;
       });
   }
+  async updatePublisherQuality(publisher: Readonly<ScreenQuality>) {
+    // The answer path applies the latest ceiling to peers still negotiating.
+    if (this.phase !== 'stable') return;
+    const request = screenVideoRequest({
+      revision: (this.qualityRequested?.revision ?? 0) + 1,
+      publisher,
+    });
+    this.qualityRequested = request;
+    await this.refreshVideoLimits(request);
+  }
   inspectVideoQuality() {
     if (!this.closed) {
       try {
@@ -339,7 +349,7 @@ export class ScreenPeer {
           this.source &&
           !sameScreenVideoSource(
             this.qualityApplied.plan.source,
-            screenVideoSource(this.source.video.getSettings()),
+            screenVideoSource(this.videoSettings()),
           )
         )
           this.qualityApplied = undefined;
@@ -705,8 +715,11 @@ export class ScreenPeer {
       }
     }, delay);
   }
+  private videoSettings() {
+    return this.options.videoSource ?? this.source!.video.getSettings();
+  }
   private videoPlan(request: ScreenVideoRequest) {
-    const plan = screenVideoPlan(request, this.source!.video.getSettings());
+    const plan = screenVideoPlan(request, this.videoSettings());
     return Object.freeze({
       ...plan,
       content: this.options.content?.() ?? (plan.ceiling.frameRate > 30 ? 'motion' : 'detail'),
@@ -719,7 +732,8 @@ export class ScreenPeer {
       const track = this.source!.video;
       const verify = () => {
         this.check();
-        if (this.videoSender!.track !== track) throw failure('video sender source changed.');
+        if (this.videoSender!.track !== track || this.source?.video !== track)
+          throw failure('video sender source changed.');
       };
       const result = await applyScreenVideoPlan(
         this.videoSender!,
@@ -730,7 +744,7 @@ export class ScreenPeer {
       verify();
       this.qualityApplied = sameScreenVideoSource(
         current.source,
-        screenVideoSource(track.getSettings()),
+        screenVideoSource(this.videoSettings()),
       )
         ? result
         : undefined;

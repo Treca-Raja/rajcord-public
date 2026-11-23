@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, desktopCapturer } from 'electron';
+import { app, BrowserWindow, session, desktopCapturer, screen } from 'electron';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -11,6 +11,14 @@ import {
 } from '../apps/desktop/dist/application-audio.js';
 const fixturePath = fileURLToPath(import.meta.url);
 const mode = process.argv.find((x) => x.startsWith('--mode='))?.slice(7) || 'capture';
+const animate = process.argv.includes('--animate-source');
+const duration = Number(process.argv.find((x) => x.startsWith('--duration='))?.slice(11) ?? 60);
+const outputClock = process.argv.includes('--output-clock');
+const layered = mode === 'target' && process.argv.includes('--layered');
+const otherToneHz = process.argv.includes('--nonharmonic-tone') ? 1247 : 880;
+const toneGain = mode === 'other' && process.argv.includes('--silent-decoy') ? 0 : 0.025;
+assert(Number.isInteger(duration) && duration >= 10 && duration <= 600);
+const fixtureDisplay = animate && mode === 'target' && process.argv.includes('--fixture-display');
 const profile = process.argv.find((x) => x.startsWith('--audio-profile='))?.slice(16);
 const root = fileURLToPath(new URL('../', import.meta.url));
 if (
@@ -21,17 +29,21 @@ if (
   throw new Error('Owned audio profile required.');
 app.setPath('userData', path.join(profile, mode));
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+if (animate) app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 app.on('window-all-closed', () => {});
 const children = [];
 let stage = 'starting';
 const cleanup = () => {
   for (const child of children) child.kill();
 };
-const deadline = setTimeout(() => {
-  cleanup();
-  console.error('Application audio fixture timed out.');
-  app.exit(1);
-}, 35000);
+const deadline = setTimeout(
+  () => {
+    cleanup();
+    console.error('Application audio fixture timed out.');
+    app.exit(1);
+  },
+  animate ? (duration + 5) * 1000 : 35000,
+);
 app.on('will-quit', cleanup);
 app
   .whenReady()
@@ -49,6 +61,11 @@ app
       show: mode !== 'capture',
       width: 320,
       height: 200,
+      ...(animate && {
+        x: mode === 'target' ? 20 : 380,
+        y: 80,
+        alwaysOnTop: mode === 'target',
+      }),
       skipTaskbar: true,
       webPreferences: {
         sandbox: true,
@@ -57,17 +74,75 @@ app
         backgroundThrottling: false,
       },
     });
+    let monitor;
+    if (fixtureDisplay) {
+      const primaryId = screen.getPrimaryDisplay().id;
+      const display = screen.getAllDisplays().find(({ id }) => id !== primaryId);
+      assert(display, 'The system audio fixture requires a separate source display.');
+      win.setBounds(display.bounds);
+      win.setAlwaysOnTop(true, 'screen-saver');
+      win.setFullScreen(true);
+      const { x, y, width, height } = screen.dipToScreenRect(win, display.bounds);
+      monitor = [x, y, x + width, y + height];
+    }
     await win.loadURL('http://127.0.0.1:' + server.address().port);
     stage = 'synthetic tone startup';
     if (mode !== 'capture') {
       await win.webContents.executeJavaScript(
-        `const ac=new AudioContext();const osc=ac.createOscillator();osc.frequency.value=${mode === 'target' ? 440 : 880};const gain=ac.createGain();gain.gain.value=.025;osc.connect(gain).connect(ac.destination);osc.start();ac.resume();`,
+        `const ac=new AudioContext();const osc=ac.createOscillator();osc.frequency.value=${mode === 'target' ? 440 : otherToneHz};const gain=ac.createGain();gain.gain.value=${toneGain};osc.connect(gain).connect(ac.destination);osc.start();ac.resume();`,
       );
+      if (layered)
+        await win.webContents.executeJavaScript(`
+          const chord = ac.createGain();
+          chord.gain.value = 0.005;
+          chord.connect(ac.destination);
+          for (const hz of [330, 523, 660]) {
+            const note = ac.createOscillator();
+            note.frequency.value = hz;
+            note.connect(chord);
+            note.start();
+          }
+          const pulse = ac.createOscillator();
+          const envelope = ac.createGain();
+          pulse.frequency.value = 3;
+          envelope.gain.value = 0.003;
+          pulse.connect(envelope).connect(chord.gain);
+          pulse.start();
+        `);
+      let markerStartMs;
+      if (mode === 'target' && animate) {
+        markerStartMs = await win.webContents.executeJavaScript(`
+          const marker = ac.createOscillator(), markerGain = ac.createGain();
+          marker.frequency.value = 1800;
+          markerGain.gain.value = 0;
+          marker.connect(markerGain).connect(ac.destination);
+          const start = ac.currentTime + 0.1;
+          marker.start(start);
+          for (let i = 0; i < ${Math.ceil(duration / 0.4)}; i++)
+            markerGain.gain.setValueAtTime(i % 2 ? 0 : 0.025, start + i * 0.4);
+          document.body.style.margin = '0';
+          function draw() {
+            const clock = ${outputClock} ? ac.getOutputTimestamp().contextTime : ac.currentTime;
+            const elapsed = Math.max(0, clock - start);
+            const light = Math.floor(elapsed / 0.4) % 2 ? 28 : 225;
+            document.documentElement.style.backgroundColor =
+              'rgb(' + [light, light, Math.floor(elapsed * 180) % 256] + ')';
+            requestAnimationFrame(draw);
+          }
+          requestAnimationFrame(draw);
+          const output = ac.getOutputTimestamp();
+          const estimate = performance.now() + (start - ac.currentTime) * 1000;
+          performance.timeOrigin + (${outputClock} && output.performanceTime > 0
+            ? output.performanceTime + (start - output.contextTime) * 1000 : estimate);
+        `);
+      }
       console.log(
         'tone-ready:' +
           JSON.stringify({
             pid: process.pid,
             id: 'window:' + win.getNativeWindowHandle().readBigUInt64LE().toString() + ':0',
+            markerStartMs,
+            monitor,
           }),
       );
       return;

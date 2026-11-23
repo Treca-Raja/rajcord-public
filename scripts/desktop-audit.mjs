@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { auditObsBundle } from './desktop-obs-audit.mjs';
 const require = createRequire(new URL('../apps/desktop/package.json', import.meta.url));
 const builderRequire = createRequire(require.resolve('electron-builder'));
 const libRequire = createRequire(builderRequire.resolve('app-builder-lib'));
@@ -15,12 +16,15 @@ const {
   updatePublicKey,
   verifyUpdateManifest,
 } = require('./dist/update-manifest.js');
-const dir = path.resolve('artifacts/desktop');
+const stagedObs = process.env.RAJCORD_OBS_PACKAGE_BUNDLE;
+if (stagedObs) assert.ok(path.isAbsolute(stagedObs), 'Expected an absolute OBS bundle path.');
+const dir = path.resolve(process.argv[2] ?? 'artifacts/desktop');
 const archive = path.join(dir, 'win-unpacked/resources/app.asar');
 const files = listPackage(archive).map((file) => file.replaceAll('\\', '/'));
 assert.ok(files.includes('/dist/main.js'));
 for (const file of [
   '/dist/native-capture.js',
+  '/dist/obs-screen.js',
   '/dist/capture-authority.js',
   '/dist/capture-authority-http.js',
   '/dist/screen-ipc.js',
@@ -31,7 +35,9 @@ for (const file of [
 ])
   assert.ok(files.includes(file), 'Missing packaged picker asset: ' + file);
 const unexpectedFiles = files.filter((file) =>
-  /(?:\.env|\.local|\.test\.js|smoke\.js|\.pem|\.pfx|\.key|\/apps\/api\/)/i.test(file),
+  /(?:\.env|\.local|\.test\.js|smoke\.js|\.pem|\.pfx|\.key|\/apps\/api\/|\/dist\/gstreamer-)/i.test(
+    file,
+  ),
 );
 assert.equal(
   unexpectedFiles.length,
@@ -46,6 +52,11 @@ assert.ok(fs.existsSync(path.join(dir, `Rajcord-Setup-${pkg.version}-x64.exe`)))
 assert.ok(fs.existsSync(path.join(dir, 'win-unpacked/Rajcord.exe')));
 const configFile = path.join(dir, 'win-unpacked/resources/app-update.yml');
 const signed = process.env.RAJCORD_SIGNED_RELEASE === '1';
+const obsFiles = auditObsBundle(
+  path.dirname(archive),
+  stagedObs ?? path.resolve('apps/desktop/native/obs/dist/bundle'),
+);
+console.log(`Verified ${obsFiles} OBS bundle files.`);
 if (signed) {
   assert.ok(
     trustedUpdateConfig(load(fs.readFileSync(configFile, 'utf8'))),

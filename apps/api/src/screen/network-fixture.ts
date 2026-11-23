@@ -2,6 +2,7 @@
 // All sockets bind to loopback and may relay only to this fixture's allocations.
 import { createSocket, type Socket, type RemoteInfo } from 'node:dgram';
 import { randomBytes, createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { networkInterfaces } from 'node:os';
 
 const cookie = 0x2112a442;
 function attribute(type: number, value: Buffer) {
@@ -27,25 +28,28 @@ function address(port: number) {
   value.writeUInt32BE((0x7f000001 ^ cookie) >>> 0, 4);
   return value;
 }
-const lifetime = () => {
+const lifetime = (seconds = 600) => {
   const value = Buffer.alloc(4);
-  value.writeUInt32BE(600);
+  value.writeUInt32BE(seconds);
   return value;
 };
-type Allocation = {
+type MediaFlow = {
+  sequence: number;
+  next: number;
+  timers: Set<ReturnType<typeof setTimeout>>;
+};
+type Allocation = MediaFlow & {
   socket: Socket;
   port: number;
   client: RemoteInfo;
   channels: Map<number, number>;
-  sequence: number;
-  next: number;
-  timers: Set<ReturnType<typeof setTimeout>>;
 };
 export type NetworkConditions = Readonly<{
   lossEvery: number;
   bitrate: number;
   delayMs: number;
   jitterMs: number;
+  sharedUpload?: boolean;
 }>;
 export async function createScreenNetworkFixture() {
   const control = createSocket('udp4'),
@@ -71,15 +75,21 @@ export async function createScreenNetworkFixture() {
     return packet;
   };
   let conditions: NetworkConditions = { lossEvery: 0, bitrate: 0, delayMs: 0, jitterMs: 0 };
-  const counters = {
+  let sharedNext = 0;
+  let phaseMaxQueueMs = 0;
+  const mediaCounters = () => ({
     mediaPackets: 0,
+    mediaBytes: 0,
     droppedPackets: 0,
     queueDroppedPackets: 0,
     forwardedPackets: 0,
     forwardedBytes: 0,
-    rejectedRecipients: 0,
     maxQueueMs: 0,
-  };
+  });
+  const counters = { ...mediaCounters(), rejectedRecipients: 0, releasedAllocations: 0 };
+  const voice = mediaCounters();
+  const voiceFlows = new Map<string, MediaFlow & { socket: Socket }>();
+  let voiceEntry: Socket | undefined;
   const errors: string[] = [];
   const requests: Record<string, number> = {};
   const error = (cause: Error & { code?: string }) => {
@@ -109,44 +119,64 @@ export async function createScreenNetworkFixture() {
         allocation.client.port,
       );
   };
+  const scheduleMedia = (
+    flow: MediaFlow,
+    packet: Buffer,
+    metrics: ReturnType<typeof mediaCounters>,
+    deliver: () => boolean,
+  ) => {
+    const media = packet.length > 1 && (packet[0]! & 0xc0) === 0x80;
+    if (!media) {
+      deliver();
+      return;
+    }
+    metrics.mediaPackets++;
+    metrics.mediaBytes += packet.length;
+    flow.sequence++;
+    if (conditions.lossEvery && flow.sequence % conditions.lossEvery === 0) {
+      metrics.droppedPackets++;
+      return;
+    }
+    const now = performance.now();
+    const ready = Math.max(now, conditions.sharedUpload ? sharedNext : flow.next);
+    const queued = ready - now;
+    if (flow.timers.size >= 256 || queued > 250) {
+      metrics.queueDroppedPackets++;
+      return;
+    }
+    flow.next = ready + (conditions.bitrate ? (packet.length * 8000) / conditions.bitrate : 0);
+    if (conditions.sharedUpload) sharedNext = flow.next;
+    metrics.maxQueueMs = Math.max(metrics.maxQueueMs, queued);
+    phaseMaxQueueMs = Math.max(phaseMaxQueueMs, queued);
+    const delay = Math.max(
+      0,
+      queued + conditions.delayMs + ((flow.sequence % 3) - 1) * conditions.jitterMs,
+    );
+    const deliverMedia = () => {
+      if (closed || !deliver()) return;
+      metrics.forwardedPackets++;
+      metrics.forwardedBytes += packet.length;
+    };
+    if (!delay) {
+      deliverMedia();
+      return;
+    }
+    const timer = setTimeout(() => {
+      flow.timers.delete(timer);
+      deliverMedia();
+    }, delay);
+    flow.timers.add(timer);
+  };
   const forward = (allocation: Allocation, packet: Buffer, target: number) => {
     if (!relays.has(target)) {
       counters.rejectedRecipients++;
       return;
     }
-    const media = packet.length > 1 && (packet[0]! & 0xc0) === 0x80;
-    if (!media) {
+    scheduleMedia(allocation, packet, counters, () => {
+      if (clients.get(allocation.client.port) !== allocation) return false;
       send(allocation.socket, packet, target);
-      return;
-    }
-    counters.mediaPackets++;
-    allocation.sequence++;
-    if (conditions.lossEvery && allocation.sequence % conditions.lossEvery === 0) {
-      counters.droppedPackets++;
-      return;
-    }
-    const now = performance.now();
-    const ready = Math.max(now, allocation.next);
-    const queued = ready - now;
-    if (allocation.timers.size >= 256 || queued > 250) {
-      counters.queueDroppedPackets++;
-      return;
-    }
-    allocation.next =
-      ready + (conditions.bitrate ? (packet.length * 8000) / conditions.bitrate : 0);
-    counters.maxQueueMs = Math.max(counters.maxQueueMs, queued);
-    const delay = Math.max(
-      0,
-      queued + conditions.delayMs + ((allocation.sequence % 3) - 1) * conditions.jitterMs,
-    );
-    const timer = setTimeout(() => {
-      allocation.timers.delete(timer);
-      if (closed || clients.get(allocation.client.port) !== allocation) return;
-      counters.forwardedPackets++;
-      counters.forwardedBytes += packet.length;
-      send(allocation.socket, packet, target);
-    }, delay);
-    allocation.timers.add(timer);
+      return true;
+    });
   };
   const allocate = async (client: RemoteInfo) => {
     if (closed || clients.size + allocating.size >= 20 || clients.has(client.port)) return;
@@ -269,9 +299,22 @@ export async function createScreenNetworkFixture() {
           ]),
           client.port,
         );
-      else if (type === 0x0004)
-        send(control, response(0x0104, transaction, [attribute(0x000d, lifetime())]), client.port);
-      else if ([0x0008, 0x0009, 0x0016].includes(type)) {
+      else if (type === 0x0004) {
+        const duration = attributes.get(0x000d);
+        const releasing = duration?.length === 4 && duration.readUInt32BE() === 0;
+        send(
+          control,
+          response(0x0104, transaction, [attribute(0x000d, lifetime(releasing ? 0 : 600))]),
+          client.port,
+        );
+        if (releasing) {
+          clients.delete(client.port);
+          relays.delete(allocation.port);
+          for (const timer of allocation.timers) clearTimeout(timer);
+          allocation.socket.close();
+          counters.releasedAllocations++;
+        }
+      } else if ([0x0008, 0x0009, 0x0016].includes(type)) {
         const peer = attributes.get(0x0012);
         if (
           !peer ||
@@ -331,7 +374,6 @@ export async function createScreenNetworkFixture() {
         ![value.lossEvery, value.bitrate, value.delayMs, value.jitterMs].every(Number.isFinite) ||
         !Number.isInteger(value.lossEvery) ||
         value.lossEvery < 0 ||
-        value.lossEvery === 1 ||
         value.bitrate < 0 ||
         value.delayMs < 0 ||
         value.delayMs > 500 ||
@@ -340,12 +382,59 @@ export async function createScreenNetworkFixture() {
       )
         throw new Error('Invalid synthetic network conditions.');
       conditions = Object.freeze({ ...value });
+      sharedNext = 0;
+      phaseMaxQueueMs = 0;
       for (const allocation of clients.values()) allocation.next = 0;
+      for (const flow of voiceFlows.values()) flow.next = 0;
+    },
+    async voiceUpload(target: number) {
+      if (closed || voiceEntry || !Number.isInteger(target) || target < 1024 || target > 65535)
+        throw new Error('Invalid local voice media proxy.');
+      const entry = (voiceEntry = createSocket('udp4'));
+      const local = new Set([
+        '127.0.0.1',
+        ...Object.values(networkInterfaces())
+          .flat()
+          .filter((item) => item?.family === 'IPv4')
+          .map((item) => item?.address),
+      ]);
+      entry.on('error', error);
+      entry.on('message', (packet, peer) => {
+        if (closed || !local.has(peer.address) || packet.length > 16384) return;
+        const id = peer.address + ':' + peer.port;
+        let flow = voiceFlows.get(id);
+        if (!flow) {
+          if (voiceFlows.size >= 8) return;
+          const socket = createSocket('udp4');
+          flow = { socket, sequence: 0, next: 0, timers: new Set() };
+          voiceFlows.set(id, flow);
+          socket.on('error', error);
+          socket.on('message', (response, remote) => {
+            if (!closed && remote.address === '127.0.0.1' && remote.port === target)
+              entry.send(response, peer.port, peer.address);
+          });
+        }
+        const socket = flow.socket;
+        scheduleMedia(flow, packet, voice, () => {
+          send(socket, packet, target);
+          return true;
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        entry.once('error', reject);
+        entry.bind(0, '127.0.0.1', () => {
+          entry.removeListener('error', reject);
+          resolve();
+        });
+      });
+      return entry.address().port;
     },
     inspect: () => ({
       ...counters,
+      phaseMaxQueueMs,
       requests: { ...requests },
       errors: [...errors],
+      ...(voiceEntry ? { voice: { ...voice } } : {}),
       allocations: clients.size,
       queued: [...clients.values()].reduce((sum, item) => sum + item.timers.size, 0),
       closed,
@@ -364,6 +453,15 @@ export async function createScreenNetworkFixture() {
         );
         clients.clear();
         relays.clear();
+        for (const { timers } of voiceFlows.values())
+          for (const timer of timers) clearTimeout(timer);
+        await Promise.all(
+          [...voiceFlows.values()].map(
+            ({ socket }) => new Promise<void>((resolve) => socket.close(() => resolve())),
+          ),
+        );
+        voiceFlows.clear();
+        if (voiceEntry) await new Promise<void>((resolve) => voiceEntry!.close(() => resolve()));
         await new Promise<void>((resolve) => control.close(() => resolve()));
       })();
       return closing;

@@ -7,6 +7,7 @@ export type VoiceConfig = {
   secret: string;
   prefix?: string;
   screenTurnHost?: string;
+  screenCoturn?: { host: string; secret: string };
   useServerIceServers?: boolean;
 };
 export function voiceConfig(): VoiceConfig | undefined {
@@ -30,18 +31,30 @@ export function parseVoiceConfig(env: Record<string, string | undefined>): Voice
       'LiveKit control must use an exact loopback HTTP origin or the private livekit Docker service in production.',
     );
   const screenTurnHost = env.SCREEN_TURN_HOST;
-  if (
-    screenTurnHost &&
-    (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(screenTurnHost) ||
-      screenTurnHost.includes('..') ||
-      screenTurnHost.length > 253)
-  )
+  const coturnHost = env.SCREEN_COTURN_HOST;
+  const coturnSecret = env.SCREEN_COTURN_SECRET;
+  const validHost = (host: string) =>
+    host.length <= 253 &&
+    host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+  if (screenTurnHost && !validHost(screenTurnHost))
     throw new Error('SCREEN_TURN_HOST must be a bare hostname.');
+  if (
+    (coturnHost || coturnSecret) &&
+    (!coturnHost ||
+      !validHost(coturnHost) ||
+      !coturnSecret ||
+      !/^[0-9a-f]{64}$/.test(coturnSecret) ||
+      coturnSecret === secret)
+  )
+    throw new Error('Screen coturn requires a bare hostname and a dedicated 32-byte hex secret.');
   return {
     url,
     key,
     secret,
     useServerIceServers: hosted,
     ...(screenTurnHost ? { screenTurnHost } : {}),
+    ...(coturnHost && coturnSecret
+      ? { screenCoturn: { host: coturnHost, secret: coturnSecret } }
+      : {}),
   };
 }
