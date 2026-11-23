@@ -1994,6 +1994,23 @@ The first supervised application run of the preceding repair-pacing build captur
 
 **Not Yet Verified for cutover.** Smooth playback under the sustained loss profile and voice competing on the same shaped upload need further qualification. The standalone Windows transport SDK build was paused during the uncontended rerun before libnice was built. The normal Windows setup still uses the GStreamer SDK and legacy sender. The audited alternate installer contains the native stack.
 
+## OBS viewer capacity — 2026-11-23
+
+The Windows loopback fixture replayed moving Freedoom gameplay on an RTX 3060 Ti using NVENC, with tiled Electron receivers and a 1080p60, 12 Mb/s ceiling per viewer. Before the encoder guard, six peers could connect, but playback stalled. At nine and ten, ICE connected and the encoders ran, but frames took too long to reach the sender's 250 ms freshness gate and the viewers never presented video. The revised helper uses that measured encoder pressure to reduce the frame rate while keeping the selected ceiling and independent network feedback.
+
+| Viewers | Presented FPS per viewer | Video Mb/s per viewer | Aggregate received transport Mb/s | Peak NVENC use | Host CPU | Peak helper memory |
+| ------: | -----------------------: | --------------------: | --------------------------------: | -------------: | -------: | -----------------: |
+|       1 |                     60.0 |                  11.0 |                              11.3 |            32% |      17% |            130 MiB |
+|       3 |                59.9–60.0 |             10.4–10.8 |                              32.4 |            62% |      26% |            205 MiB |
+|       4 |                     60.0 |             10.6–11.2 |                              44.8 |            66% |      25% |            242 MiB |
+|       6 |                26.5–28.2 |              9.8–10.8 |                              63.8 |            85% |      24% |            330 MiB |
+|       9 |                     15.0 |             10.3–11.0 |                              98.8 |            86% |      28% |            459 MiB |
+|      10 |                14.9–15.0 |             10.6–11.1 |                             111.1 |            86% |      28% |            500 MiB |
+
+All receivers decoded at 1920 × 1080. The six-viewer sample included a freeze during encoder backoff. Nine and ten sustained about 15 fps through the 15-second sample. At ten, the slowest initial join took 7.61 seconds. Restart and rejoin took at most 1.31 seconds across the four-or-more viewer cases, with another receiver continuing to present frames during each operation. The nine- and ten-viewer cases returned the remaining viewer to the 60 fps encoder ceiling within 3.5 seconds of the other peers leaving. Native queue age peaked at 114 ms across the matrix. Receiver packet loss and native video repairs were zero during the measured loopback windows. The helper used up to 0.45 CPU core equivalents during measurement and exited in under 0.19 seconds after Stop.
+
+The ten-viewer result covers connected, video-only loopback receivers on one Windows host. Aggregate receiver transport bitrate estimates traffic delivered by the publisher over loopback. WAN upload, other GPU families and screen-audio continuity at this audience size require separate evidence.
+
 ## Automatic screen viewing quality — 2026-11-23
 
 Browser and Electron use the same Watch Stream interface. It sends the share ID and selection metadata. The server accepts older quality fields and uses the broadcaster's current ceiling for grants. Regression tests cover all nine resolution and frame-rate combinations, six bitrate ceilings, older grants, authorized live edits, and selection and renewal fencing. The disposable PostgreSQL suite passed all 183 tests. The Electron authority suite passed all 58 checks.

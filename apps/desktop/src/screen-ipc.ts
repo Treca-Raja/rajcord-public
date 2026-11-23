@@ -183,11 +183,16 @@ export function installScreenIpc(options: {
         await previous;
         if (retiring === previous) retiring = undefined;
       }
+      const { NATIVE_VIEWER_GRANT_BATCH_SIZE } = await import('@tricord/shared');
       if (current !== owned || !options.trusted(event)) throw new Error('Screen source ended.');
       const intent = authority.inspect();
       if (!intent) throw new Error('The OBS screen source ended.');
       const target = options.target(intent);
-      const result = await authority.handoff(request.shareId, request.sourceGeneration as number);
+      const result = await authority.handoff(
+        request.shareId,
+        request.sourceGeneration as number,
+        true,
+      );
       if (current !== owned || !options.trusted(event)) throw new Error('Screen source ended.');
       const process = new ObsScreen(
         runtime,
@@ -198,6 +203,7 @@ export function installScreenIpc(options: {
           nativeError = reason;
           authority.invalidate();
         },
+        NATIVE_VIEWER_GRANT_BATCH_SIZE,
         owned.encoder,
       );
       native = process;

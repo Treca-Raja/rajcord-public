@@ -10,8 +10,10 @@ export class NativeViewerGrants {
   private waiting = new Set<() => void>();
   private ended = false;
 
+  constructor(private readonly batchSize: number) {}
+
   observe(snapshot: NativeViewerSnapshot, started: number) {
-    if (!Array.isArray(snapshot.viewers) || snapshot.viewers.length > 3)
+    if (!Array.isArray(snapshot.viewers) || snapshot.viewers.length > this.batchSize)
       throw new Error('Invalid authorized native viewers.');
     const next = new Map<string, { expires: number; answerHash: string | null }>();
     for (const viewer of snapshot.viewers) {
@@ -31,21 +33,24 @@ export class NativeViewerGrants {
     }
     this.viewers = next;
     for (const notify of [...this.waiting]) notify();
-    return next;
+  }
+
+  currentDeadline(id: string, answerHash?: string) {
+    const grant = this.viewers.get(id);
+    return !this.ended &&
+      grant &&
+      grant.expires > Date.now() &&
+      (!answerHash || grant.answerHash === answerHash)
+      ? grant.expires
+      : 0;
   }
 
   async deadline(id: string, answerHash?: string) {
-    const current = () => {
-      const grant = this.viewers.get(id);
-      return !this.ended &&
-        grant &&
-        grant.expires > Date.now() &&
-        (!answerHash || grant.answerHash === answerHash)
-        ? grant.expires
-        : 0;
-    };
+    const current = () => this.currentDeadline(id, answerHash);
     if (!current()) {
-      if (this.waiting.size >= 6 || this.ended) throw new Error('Native viewer admission closed.');
+      if (this.ended) throw new Error('Native viewer admission closed.');
+      if (this.waiting.size >= this.batchSize)
+        throw new Error('Native viewer authorization is busy.');
       await new Promise<void>((resolve) => {
         const finish = () => {
           this.waiting.delete(notify);

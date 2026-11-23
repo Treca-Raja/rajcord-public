@@ -388,7 +388,7 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
       }
     }
   }
-  async handoff(shareId: string, sourceGeneration: number) {
+  async handoff(shareId: string, sourceGeneration: number, native = false) {
     const record = this.record;
     if (
       !record ||
@@ -405,6 +405,9 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
     let issued: CaptureAuthorization | undefined;
     try {
       if (this.flight) await this.flight.result;
+      const version = native
+        ? (await import('@tricord/shared')).NATIVE_VIEWER_GRANT_VERSION
+        : undefined;
       if (this.record !== record || this.inspect() !== record.intent)
         throw new Error('Capture ended.');
       const started = this.now();
@@ -415,6 +418,7 @@ export class ServerCaptureAuthority implements CaptureIntentSource {
           shareId,
           sourceGeneration,
           requestId: randomUUID(),
+          ...(version === undefined ? {} : { nativeViewers: version }),
         }),
       );
       if (issued.id === record.grantId)

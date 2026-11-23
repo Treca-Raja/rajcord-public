@@ -1,6 +1,11 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { ScreenSelectRequest } from '@tricord/shared';
-import { SCREEN_RENEWAL_PAGE_SIZE } from '@tricord/shared';
+import {
+  NATIVE_VIEWER_GRANT_BATCH_SIZE,
+  NATIVE_VIEWER_GRANT_RESPONSE_BYTES,
+  SCREEN_RENEWAL_PAGE_SIZE,
+  validateApiResponse,
+} from '@tricord/shared';
 import { ScreenOutput } from './budget.js';
 import type { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -339,6 +344,171 @@ async function signalingFixture() {
   return { ...f, publisher, viewer, p, v, share, grant, offer, answer, candidate };
 }
 describe('authorized signaling and private delivery fences', () => {
+  it('renews and negotiates ten concurrent native viewers independently through leave and Stop', async () => {
+    const f = fixture();
+    const publisher = f.user(undefined, true);
+    const p = await f.bind(publisher);
+    const share = await f.publish(publisher.caller, p.epoch, 1, true);
+    const { userId, sessionId } = publisher.lease;
+    const own = f.screen.capturePublication(
+      userId,
+      sessionId,
+      publisher.lease,
+      p.epoch,
+      share.id,
+      share.sourceGeneration,
+      share.sound,
+    )!;
+    const snapshot = () => f.screen.nativeViewers(own.identity, userId);
+    const people = await Promise.all(
+      Array.from({ length: 10 }, async () => {
+        const user = f.user();
+        return { user, binding: await f.bind(user) };
+      }),
+    );
+    const watch = ({ user, binding }: (typeof people)[number], revision = 1) =>
+      f.screen.select(user.caller, selection(binding.epoch, share.id, revision));
+    await Promise.all(people.slice(0, 3).map((person) => watch(person)));
+    await expect(watch(people[3]!)).rejects.toMatchObject({ code: 'capacity' });
+    own.enableNativeViewerBatch!();
+    await Promise.all(people.slice(3).map((person) => watch(person)));
+    const outsider = f.user(randomUUID());
+    const outside = await f.bind(outsider);
+    await expect(watch({ user: outsider, binding: outside })).rejects.toMatchObject({
+      code: 'not_authorized',
+    });
+    const renew = (revision: number) =>
+      f.screen.renew(publisher.caller, {
+        epoch: p.epoch,
+        requestId: randomUUID(),
+        revision,
+      });
+    const initial = await renew(1);
+    expect(initial.links).toHaveLength(10);
+    expect((await snapshot()).viewers).toHaveLength(10);
+    await Promise.all(
+      initial.links.map(async ({ link }) => {
+        const person = people.find(({ user }) => user.lease.userId === link.viewerId)!;
+        const offer = {
+          epoch: p.epoch,
+          linkId: link.id,
+          revision: 1,
+          sequence: 1,
+          payload: { type: 'offer' as const, sdp: screenSdp('offer') },
+        };
+        await f.screen.relay(publisher.caller, offer, () => true);
+        await f.screen.relay(
+          person.user.caller,
+          {
+            ...offer,
+            epoch: person.binding.epoch,
+            payload: { type: 'answer', sdp: screenSdp('answer') },
+          },
+          () => true,
+        );
+        await f.screen.relay(
+          publisher.caller,
+          {
+            ...offer,
+            sequence: 2,
+            payload: { type: 'ice', candidate: screenIce },
+          },
+          () => true,
+        );
+      }),
+    );
+    expect((await snapshot()).viewers.every(({ answerHash }) => answerHash !== null)).toBe(true);
+    const first = people[0]!;
+    const revoked = people[1]!;
+    const firstLink = initial.links.find(({ link }) => link.viewerId === first.user.lease.userId)!;
+    await f.screen.select(first.user.caller, selection(first.binding.epoch, null, 2));
+    revoked.user.auth.revoked = true;
+    const expected = initial.links.filter(
+      ({ link }) =>
+        link.viewerId !== first.user.lease.userId && link.viewerId !== revoked.user.lease.userId,
+    );
+    expect((await snapshot()).viewers.map(({ id }) => id)).toEqual(
+      expected.map(({ link }) => link.id),
+    );
+    await expect(watch(revoked, 2)).rejects.toMatchObject({ code: 'stale' });
+    const rejoined = (await watch(first, 3))!;
+    expect(rejoined.link.id).not.toBe(firstLink.link.id);
+    expect((await renew(2)).links).toEqual([...expected, rejoined]);
+    await f.screen.stop(publisher.caller, { epoch: p.epoch, shareId: share.id });
+    await expect(snapshot()).rejects.toMatchObject({ code: 'not_authorized' });
+    expect((await renew(3)).links).toEqual([]);
+    expect(publisher.lease.revoked).toBe(false);
+  });
+
+  it('bounds a concurrent native admission burst to one complete authorization batch', async () => {
+    const f = fixture();
+    const publisher = f.user(undefined, true);
+    publisher.caller.renewalPages = true;
+    const p = await f.bind(publisher);
+    const share = await f.publish(publisher.caller, p.epoch, 1, true);
+    const { userId, sessionId } = publisher.lease;
+    const own = f.screen.capturePublication(
+      userId,
+      sessionId,
+      publisher.lease,
+      p.epoch,
+      share.id,
+      share.sourceGeneration,
+      share.sound,
+    )!;
+    own.enableNativeViewerBatch!();
+    const viewers = await Promise.all(
+      Array.from({ length: NATIVE_VIEWER_GRANT_BATCH_SIZE + 2 }, async () => {
+        const user = f.user();
+        return { user, binding: await f.bind(user) };
+      }),
+    );
+    const admissions = await Promise.allSettled(
+      viewers.map(({ user, binding }) =>
+        f.screen.select(user.caller, selection(binding.epoch, share.id)),
+      ),
+    );
+    expect(admissions.filter(({ status }) => status === 'fulfilled')).toHaveLength(
+      NATIVE_VIEWER_GRANT_BATCH_SIZE,
+    );
+    expect(admissions.filter(({ status }) => status === 'rejected')).toEqual([
+      expect.objectContaining({ reason: expect.objectContaining({ code: 'capacity' }) }),
+      expect.objectContaining({ reason: expect.objectContaining({ code: 'capacity' }) }),
+    ]);
+    const native = await f.screen.nativeViewers(own.identity, userId);
+    expect(native.viewers).toHaveLength(NATIVE_VIEWER_GRANT_BATCH_SIZE);
+    expect(new Set(native.viewers.map(({ id }) => id)).size).toBe(native.viewers.length);
+    const other = f.user();
+    const otherBinding = await f.bind(other);
+    const otherShare = await f.publish(other.caller, otherBinding.epoch);
+    const incoming = await f.screen.select(publisher.caller, selection(p.epoch, otherShare.id));
+    const request = {
+      epoch: p.epoch,
+      requestId: randomUUID(),
+      revision: 1,
+    };
+    const renewal = await f.screen.renew(publisher.caller, request);
+    expect(renewal.links.map(({ link }) => link.id)).toEqual(native.viewers.map(({ id }) => id));
+    expect(renewal.nextOffset).toBe(SCREEN_RENEWAL_PAGE_SIZE);
+    const last = await f.screen.renew(publisher.caller, { ...request, offset: renewal.nextOffset });
+    expect(last.links).toEqual([incoming]);
+    expect(last.nextOffset).toBeUndefined();
+    const response = {
+      id: randomUUID(),
+      remainingMs: 45000,
+      native: {
+        ...native,
+        viewers: native.viewers.map((viewer) => ({ ...viewer, answerHash: 'a'.repeat(64) })),
+      },
+    };
+    expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThan(
+      NATIVE_VIEWER_GRANT_RESPONSE_BYTES,
+    );
+    expect(() =>
+      validateApiResponse('/api/screen/capture/publication-check', 'POST', response),
+    ).not.toThrow();
+  });
+
   it('binds native DTLS answers to an authorized viewer and removes a revoked session', async () => {
     const f = await signalingFixture();
     const publisher = f.publisher.lease;
@@ -617,7 +787,7 @@ function fixture() {
   };
   const bind = async (person: ReturnType<typeof user>) =>
     screen.bind(person.caller, { version: 2, leaseId: person.lease.id, requestId: randomUUID() });
-  const publish = (caller: ScreenCaller, epoch: string, sourceGeneration = 1) =>
+  const publish = (caller: ScreenCaller, epoch: string, sourceGeneration = 1, native?: true) =>
     screen
       .publish(caller, {
         epoch,
@@ -626,6 +796,7 @@ function fixture() {
         profile: 'smooth',
         videoBitrate: 8000000,
         sound: 'tab',
+        ...(native && { native }),
       })
       .then((grant) => grant.share);
   return {

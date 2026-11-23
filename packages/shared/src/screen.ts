@@ -1,5 +1,4 @@
 export const SCREEN_PROTOCOL_VERSION = 2;
-export const SCREEN_NATIVE_VIEWER_LIMIT = 3;
 // With the bounded link fields below, a page fits the 64 KiB socket output window.
 export const SCREEN_RENEWAL_PAGE_SIZE = 128;
 export const SCREEN_DIRECTORY_PAGE_SIZE = 128;

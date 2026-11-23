@@ -15,6 +15,19 @@ import { launch, setup, type Browser } from '../voice/browser-harness.js';
 import { checkVoiceTestServices } from '../voice/test-services.js';
 
 const origin = 'http://127.0.0.1:3002';
+const room = process.argv.includes('--voice-room');
+const viewerArg = process.argv.find((arg) => arg.startsWith('--viewers='));
+const watchCount = viewerArg ? Number(viewerArg.split('=')[1]) : room ? 2 : 1;
+assert(Number.isInteger(watchCount) && watchCount >= 1 && watchCount <= (room ? 9 : 1));
+assert(watchCount <= 2 || process.env.RAJCORD_SCREEN_BENCH_VIDEO, 'Select moving gameplay.');
+const crashHelper = process.argv.includes('--crash-helper');
+const logout = process.argv.includes('--logout');
+const revoke = process.argv.includes('--revoke');
+const endSource = process.argv.includes('--end-source');
+const fixtureBundle = process.env.RAJCORD_SCREEN_BENCH_BUNDLE
+  ? path.resolve(process.env.RAJCORD_SCREEN_BENCH_BUNDLE)
+  : undefined;
+assert([crashHelper, logout, revoke, endSource].filter(Boolean).length <= 1);
 const config = await checkVoiceTestServices();
 const fixture = await testDatabase();
 const prefix = 'obs-app-' + randomUUID() + '-';
@@ -25,15 +38,6 @@ const server = createApp({
   voiceConfig: { ...config, prefix },
 });
 const profile = await mkdtemp(path.join(tmpdir(), 'rajcord-obs-app-'));
-const room = process.argv.includes('--voice-room');
-const crashHelper = process.argv.includes('--crash-helper');
-const logout = process.argv.includes('--logout');
-const revoke = process.argv.includes('--revoke');
-const endSource = process.argv.includes('--end-source');
-const fixtureBundle = process.env.RAJCORD_SCREEN_BENCH_BUNDLE
-  ? path.resolve(process.env.RAJCORD_SCREEN_BENCH_BUNDLE)
-  : undefined;
-assert([crashHelper, logout, revoke, endSource].filter(Boolean).length <= 1);
 const browsers: Browser[] = [];
 let source: ReturnType<typeof spawn> | undefined;
 let desktop: ReturnType<typeof spawn> | undefined;
@@ -57,13 +61,14 @@ try {
     const viewer = await auth.login({ username, password, remember: false }, undefined);
     const browser = await launch({
       rajcordDesktop: !process.argv.includes('--edge-viewer'),
+      loopbackIce: true,
       roomWindow: room ? (index === 0 ? 'left' : index === 1 ? 'right' : 'background') : undefined,
     });
     browsers.push(browser);
     await setup(browser, viewer.token, origin);
     if (room && index < 2)
       await browser.js(`document.querySelector('button[aria-label="Unmute microphone"]')?.click()`);
-    if (index < 2) {
+    if (index < watchCount) {
       await browser.js("document.querySelector('.screen-launcher > button').click()");
       await browser.wait("document.querySelector('#screen-panel')?.dataset.phase==='ready'");
     }
@@ -115,12 +120,16 @@ try {
   for (const key of Object.keys(env))
     if (/^(DATABASE_URL|LIVEKIT_|TRICORD_TURN)/.test(key)) delete (env as NodeJS.ProcessEnv)[key];
   delete (env as NodeJS.ProcessEnv).ELECTRON_RUN_AS_NODE;
-  desktop = spawn(require('electron'), ['.', '--auth-smoke', '--native-screen-smoke'], {
-    cwd: fileURLToPath(new URL('../../../desktop/', import.meta.url)),
-    env,
-    stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
-    windowsHide: true,
-  });
+  desktop = spawn(
+    require('electron'),
+    ['.', '--auth-smoke', '--native-screen-smoke', '--allow-loopback-in-peer-connection'],
+    {
+      cwd: fileURLToPath(new URL('../../../desktop/', import.meta.url)),
+      env,
+      stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+      windowsHide: true,
+    },
+  );
   const exited = new Promise<number | null>((resolve, reject) => {
     desktop!.once('exit', resolve);
     desktop!.once('error', reject);
@@ -137,7 +146,7 @@ try {
       }),
     ]);
   await expected('published');
-  const viewers = browsers.slice(0, 2);
+  const viewers = browsers.slice(0, watchCount);
   const stats = (browser: Browser) =>
     browser.js(`(async()=>{
     for(const pc of window.__peers) {
@@ -163,14 +172,18 @@ try {
       local: string;
       remote: string;
     }>;
-  for (const browser of viewers) {
-    if (browser.rajcordDesktop) await browser.call('Page.bringToFront');
-    await browser.wait("!!document.querySelector('.screen-share-item .screen-share-action')");
-    await browser.js("document.querySelector('.screen-share-item .screen-share-action').click()");
-    await browser.wait(
-      "document.querySelector('[data-screen-playback]')?.getVideoPlaybackQuality().totalVideoFrames > 30",
-    );
-  }
+  const joinMs = await Promise.all(
+    viewers.map(async (browser) => {
+      if (browser.rajcordDesktop) await browser.call('Page.bringToFront');
+      await browser.wait("!!document.querySelector('.screen-share-item .screen-share-action')");
+      const started = performance.now();
+      await browser.js("document.querySelector('.screen-share-item .screen-share-action').click()");
+      await browser.wait(
+        "document.querySelector('[data-screen-playback]')?.getVideoPlaybackQuality().totalVideoFrames > 30",
+      );
+      return performance.now() - started;
+    }),
+  );
   const received = await Promise.all(viewers.map(stats));
   const receiver = await viewers[0]!.js('navigator.userAgent');
   console.log('Receiver', receiver);
@@ -364,6 +377,8 @@ try {
           sender: 'obs',
           receiver,
           participants: 10,
+          viewers: watchCount,
+          joinMs,
           talkers: 2,
           received,
           ...measured,

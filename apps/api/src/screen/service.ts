@@ -2,7 +2,7 @@ import { screenRelayServers } from './relay.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   SCREEN_PROTOCOL_VERSION,
-  SCREEN_NATIVE_VIEWER_LIMIT,
+  NATIVE_VIEWER_GRANT_BATCH_SIZE,
   SCREEN_RENEWAL_PAGE_SIZE,
   SCREEN_PROFILES,
   SCREEN_VIDEO_BITRATES,
@@ -68,6 +68,8 @@ type Share = {
   value: ScreenShare;
   publisher: Binding;
   native: boolean;
+  nativeViewerBatch?: true;
+  viewers: Set<Link>;
   expires: number;
   publishExpires: number;
   qualityRevision: number;
@@ -159,7 +161,7 @@ export class ScreenService {
     shareId: string,
     sourceGeneration: number,
     sound: string,
-  ): { identity: object; expires: number } | null {
+  ) {
     if (!this.captureBinding(userId, sessionId, lease, epoch)) return null;
     const share = this.bindings.get(userId)?.share;
     return share &&
@@ -167,7 +169,13 @@ export class ScreenService {
       share.value.sourceGeneration === sourceGeneration &&
       share.value.sound === sound &&
       share.expires > this.now()
-      ? { identity: share, expires: Math.min(share.expires, lease.expires) }
+      ? {
+          identity: share,
+          expires: Math.min(share.expires, lease.expires),
+          enableNativeViewerBatch: share.native
+            ? () => (share.nativeViewerBatch = true)
+            : undefined,
+        }
       : null;
   }
   private relayConfig(binding: Binding) {
@@ -176,13 +184,11 @@ export class ScreenService {
   }
   async nativeViewers(shareIdentity: object, userId: string) {
     const publisher = this.bindings.get(userId);
-    if (!publisher || publisher.share !== shareIdentity || !this.current(publisher)) throw denied();
-    const links = [...this.links.values()]
-      .filter(
-        ({ share, viewer, expires }) =>
-          share === shareIdentity && expires > this.now() && this.current(viewer),
-      )
-      .slice(0, SCREEN_NATIVE_VIEWER_LIMIT);
+    const share = publisher?.share;
+    if (!publisher || share !== shareIdentity || !this.current(publisher)) throw denied();
+    const links = [...share.viewers].filter(
+      ({ viewer, expires }) => expires > this.now() && this.current(viewer),
+    );
     if (links.length)
       await this.endpoints(publisher, new Set(links.map(({ viewer }) => viewer)), true);
     if (publisher.share !== shareIdentity || !this.current(publisher)) throw denied();
@@ -355,15 +361,14 @@ export class ScreenService {
   }
   private checkRenewalCapacity(binding: Binding, additional: number) {
     if (binding.renewalPages || additional <= 0) return;
-    let count = binding.selections.size + additional;
-    if (binding.share)
-      for (const link of this.links.values()) if (link.share === binding.share) count++;
+    const count = binding.selections.size + additional + (binding.share?.viewers.size ?? 0);
     if (count > SCREEN_RENEWAL_PAGE_SIZE)
       throw new ScreenError('capacity', 409, 'Update the screen client to renew more links.');
   }
   private dropLink(link: Link) {
     if (this.links.get(link.value.id) === link) {
       this.links.delete(link.value.id);
+      link.share.viewers.delete(link);
       this.changed();
     }
     if (link.viewer.selections.get(link.share.value.id) === link)
@@ -375,7 +380,7 @@ export class ScreenService {
       this.changed();
     }
     if (share.publisher.share === share) share.publisher.share = undefined;
-    for (const link of this.links.values()) if (link.share === share) this.dropLink(link);
+    for (const link of share.viewers) this.dropLink(link);
   }
   private dropBinding(binding: Binding) {
     if (binding.share) this.dropShare(binding.share);
@@ -523,6 +528,7 @@ export class ScreenService {
         publishExpires: binding.lease.expires,
         publisher: binding,
         native,
+        viewers: new Set(),
         qualityRevision: 0,
         value: {
           id: randomUUID(),
@@ -681,20 +687,25 @@ export class ScreenService {
       if (share) {
         await this.pair(viewer, share.publisher);
         if (share.publisher.share !== share) throw stale();
-        if (
-          (share.native || !share.publisher.supportsMoreThanNineViewers) &&
-          !viewer.selections.has(share.value.id)
-        ) {
-          const viewers = [...this.links.values()].filter((link) => link.share === share).length;
-          const limit = share.native ? SCREEN_NATIVE_VIEWER_LIMIT : 9;
-          if (viewers >= limit)
+        if (!viewer.selections.has(share.value.id)) {
+          // The old native helper accepts three peers and rejects larger authorization snapshots.
+          if (
+            share.native &&
+            share.viewers.size >= (share.nativeViewerBatch ? NATIVE_VIEWER_GRANT_BATCH_SIZE : 3)
+          )
             throw new ScreenError(
               'capacity',
               409,
-              `This publisher can share with up to ${limit} viewers.`,
+              share.nativeViewerBatch
+                ? 'This publisher has filled its native viewer authorization batch.'
+                : 'Update the publisher’s Rajcord Desktop to share with more viewers.',
             );
-        }
-        if (!viewer.selections.has(share.value.id)) {
+          if (!share.publisher.supportsMoreThanNineViewers && share.viewers.size >= 9)
+            throw new ScreenError(
+              'capacity',
+              409,
+              'This publisher can share with up to 9 viewers.',
+            );
           this.checkRenewalCapacity(share.publisher, 1);
           this.checkRenewalCapacity(viewer, mode === 'replace' ? 1 - viewer.selections.size : 1);
         }
@@ -719,6 +730,7 @@ export class ScreenService {
         },
       };
       viewer.selections.set(share.value.id, link);
+      share.viewers.add(link);
       this.links.set(link.value.id, link);
       this.changed();
       return finish(this.grant(link));

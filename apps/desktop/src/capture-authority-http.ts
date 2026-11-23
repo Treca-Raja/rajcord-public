@@ -6,7 +6,7 @@ import {
   type CaptureAuthorityTransport,
 } from './capture-authority.js';
 
-async function json(response: Response, signal: AbortSignal) {
+async function json(response: Response, signal: AbortSignal, limit = 8192) {
   const reader = response.body?.getReader();
   let cancellation: Promise<{ ok: true } | { ok: false; error: unknown }> | undefined;
   const cancel = () => {
@@ -45,7 +45,7 @@ async function json(response: Response, signal: AbortSignal) {
       current();
       if (result.done) break;
       size += result.value.byteLength;
-      if (size > 8192) throw new Error('Capture authority response exceeded its limit.');
+      if (size > limit) throw new Error('Capture authority response exceeded its limit.');
       chunks.push(result.value);
     }
     const buffer = new Uint8Array(size);
@@ -116,6 +116,10 @@ export function sessionCaptureTransport(
       csrf = auth.csrfToken;
     }
     if (!csrf) throw new Error('Capture session is unavailable.');
+    const limit =
+      operation === 'publication-check' && body.nativeViewers === 1
+        ? (await import('@tricord/shared')).NATIVE_VIEWER_GRANT_RESPONSE_BYTES
+        : undefined;
     if (signal.aborted) throw new Error('Capture authority request ended.');
     return json(
       await session.fetch(origin + '/api/screen/capture/' + operation, {
@@ -128,6 +132,7 @@ export function sessionCaptureTransport(
         body: JSON.stringify(body),
       }),
       signal,
+      limit,
     );
   };
 }
