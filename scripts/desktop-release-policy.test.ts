@@ -21,6 +21,8 @@ beforeEach(() => {
   vi.stubEnv('GITHUB_REF', 'refs/heads/main');
   vi.stubEnv('GITHUB_SHA', sha);
   vi.stubEnv('RAJCORD_RELEASE_TAG', `v${version}`);
+  vi.stubEnv('RAJCORD_RELEASE_MANIFEST_UPDATES', 'true');
+  vi.stubEnv('RAJCORD_RELEASE_SIGNED', 'false');
   vi.stubEnv('GH_TOKEN', 'disposable-test');
   main = sha;
   environment = {
@@ -66,6 +68,15 @@ afterEach(() => {
 it('accepts only the canonical repository with current main, approval and successful verification', async () => {
   await expect(check()).resolves.toBeUndefined();
   expect(fetchMock).toHaveBeenCalledTimes(4);
+});
+
+it('requires the v0.1.2 manifest signing mode before network access', async () => {
+  vi.stubEnv('RAJCORD_RELEASE_MANIFEST_UPDATES', 'false');
+  await expect(check()).rejects.toThrow('OBS release exception');
+  vi.stubEnv('RAJCORD_RELEASE_MANIFEST_UPDATES', 'true');
+  vi.stubEnv('RAJCORD_RELEASE_SIGNED', 'true');
+  await expect(check()).rejects.toThrow('OBS release exception');
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 it.each(['Treca-Raja/tricord-public', 'fakebane/tricord-public', 'other/rajcord-public'])(
