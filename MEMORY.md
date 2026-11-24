@@ -31,6 +31,7 @@ The remaining shared UI, native notification and human-readable API/development 
 - PostgreSQL persistence; approval-based accounts; Argon2id passwords; HttpOnly session cookies; CSRF; owner-only sensitive account actions.
 - Shared text channels, persistent DMs and invitation-based groups. Private history follows membership periods; edits/deletes are author-only.
 - Community voice through self-hosted LiveKit and an authenticated same-origin gateway. One API process coordinates ephemeral leases. Local ten-client synthetic capacity/recovery testing has passed.
+- Speaking rings follow LiveKit's speaker updates. Development Compose and new hosting configurations use a 200 ms audio update interval with LiveKit's default detection thresholds and smoothing. Existing hosts apply the setting through the [deployment runbook](docs/deployment.md#https-and-media).
 - Account-scoped unread cursors, @username mention matching/highlighting, unread badges and opt-in browser/desktop alerts. Generic notifications require the app to remain open; there is no closed-app push delivery.
 - Local server-image build `tricord-server:alpha` and isolated backup/restore verification, including persisted read progress. This tag is a local Docker image, not evidence that an image registry or hosted service exists.
 

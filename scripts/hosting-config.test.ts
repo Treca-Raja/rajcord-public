@@ -2,8 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 // @ts-expect-error This operator tool is JavaScript executed directly by Node.
 import { initialize, isPublicIPv4, isPublicHost } from './hosting/init.mjs';
+
+const { load } = createRequire(new URL('../apps/desktop/package.json', import.meta.url))(
+  'js-yaml',
+) as { load: (source: string) => unknown };
 
 const directories: string[] = [];
 afterEach(() => {
@@ -17,6 +22,20 @@ const fixture = () => {
 };
 
 describe('hosting initialization', () => {
+  it('configures a 200 ms speaker update interval for development and new hosts', () => {
+    const target = path.join(fixture(), 'production');
+    initialize('production', '8.8.8.8', target, 'rajcord.com', 'turn.rajcord.com');
+    const hosted = load(readFileSync(path.join(target, 'livekit.yaml'), 'utf8'));
+    const compose = load(
+      readFileSync(new URL('../infrastructure/compose.voice.yaml', import.meta.url), 'utf8'),
+    ) as { services: { livekit: { environment: { LIVEKIT_CONFIG: string } } } };
+    const local = load(compose.services.livekit.environment.LIVEKIT_CONFIG);
+
+    for (const config of [hosted, local]) {
+      expect(config).toHaveProperty('audio', { update_interval: 200 });
+    }
+  });
+
   it('accepts bare DNS names and rejects URL or configuration injection before creating files', () => {
     for (const host of ['rajcord.com', 'turn.rajcord.com', '8.8.8.8'])
       expect(isPublicHost(host)).toBe(true);

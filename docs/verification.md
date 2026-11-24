@@ -2441,3 +2441,22 @@ In the first fixture, two owned processes play 440 Hz and 880 Hz tones. The pipe
 In the second fixture, the native sender captures only the owned window playing the 440 Hz tone. A visible Rajcord Electron window receives H.264 and Opus over a local WebRTC connection driven by fixture signaling. With the staged 1.28.9 package, the receiver decoded 374 video frames and received 91,871 audio payload bytes. The selected tone measured −59.64 dBFS and the other tone measured −140.59 dBFS. The helper stopped when the selected process exited.
 
 The source schedules a flash and an 1800 Hz tone on the same timeline. Over 7.2 seconds, receiver-side sampling detected the tone **242, 177, 123, 124, 127, 137, 140 and 136 ms after the flash**. A second run using the complete 1.28.9 runtime observed 108–223 ms. These offsets include video presentation, Web Audio analysis and fixture sampling. The measurements leave an audible A/V alignment concern. Physical speaker/display sync, human listening, mixed system playback with live Rajcord voice, and cross-machine or WAN A/V timing remain unverified.
+
+## Voice speaking ring timing (2026-11-24)
+
+LiveKit's 400 ms default controls both the audio observation window and the interval at which rooms check for speaker changes. Development Compose and new hosting configurations set `audio.update_interval: 200` and use the pinned server's existing thresholds and smoothing. The browser and Windows app still render the server's speaking state. [Audio level defaults](https://github.com/livekit/livekit/blob/v1.13.10/pkg/sfu/audio/audiolevel.go#L38-L45) · [Room update worker](https://github.com/livekit/livekit/blob/v1.13.10/pkg/rtc/room.go)
+
+Measured two signed-in sessions in a disposable loopback room using LiveKit 1.13.10, Edge, and Electron 45.1.0. Each client took a turn sending the same file-backed speech stimulus, made from the repository's RNNoise speech fixture with long silences and a 120 ms input pause. The test recorded audio energy in the outgoing track or received track and `data-speaking` changes on the same renderer clock. Each range below is from two onsets and two releases, relative to the measured audio in that renderer.
+
+| Viewer and speaker | Onset at 400 ms | Onset at 200 ms | Release at 400 ms | Release at 200 ms |
+| ------------------ | --------------- | --------------- | ----------------- | ----------------- |
+| Edge, self         | 337–531 ms      | 253–263 ms      | 708–804 ms        | 318–438 ms        |
+| Electron, remote   | 286–501 ms      | 204–223 ms      | 678–744 ms        | 259–388 ms        |
+| Electron, self     | 423–629 ms      | 120 ms          | 415–901 ms        | 172–304 ms        |
+| Edge, remote       | 393–569 ms      | 50–60 ms        | 356–841 ms        | 102–234 ms        |
+
+The rings stayed on through all observed short pauses (70–110 ms after processing). At 200 ms, a separate state check confirmed that muting and deafening the active speaker cleared the ring in both clients, with Edge and Electron each taking a turn as the speaker.
+
+The final full browser voice smoke passed all 33 checks on the disposable stack at 200 ms. The regression asserts that one speaker's ring appears in both browser sessions, clears when the speaker mutes or deafens, and returns after undeafening. An earlier smoke attempt at each cadence stopped at the playback amplification check because the receiver measured silence. The final run passed that check as well.
+
+These measurements cover synthetic speech across actual clients and voice transport on one Windows workstation. A two-person listening check with physical microphones and a hosted connection remains open. Existing hosts apply the change through the [deployment runbook](deployment.md#https-and-media).
