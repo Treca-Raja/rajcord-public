@@ -2459,4 +2459,6 @@ The rings stayed on through all observed short pauses (70–110 ms after process
 
 The final full browser voice smoke passed all 33 checks on the disposable stack at 200 ms. The regression asserts that one speaker's ring appears in both browser sessions, clears when the speaker mutes or deafens, and returns after undeafening. An earlier smoke attempt at each cadence stopped at the playback amplification check because the receiver measured silence. The final run passed that check as well.
 
+The nine-viewer screen regression uses two synthetic talkers to keep the shared runner's audio workload bounded. It still requires inbound voice bytes to grow for all ten clients during the screen renewal window and checks both video streams after hide and resume. The separate voice load smoke exercises a room with every microphone active.
+
 These measurements cover synthetic speech across actual clients and voice transport on one Windows workstation. A two-person listening check with physical microphones and a hosted connection remains open. Existing hosts apply the change through the [deployment runbook](deployment.md#https-and-media).
