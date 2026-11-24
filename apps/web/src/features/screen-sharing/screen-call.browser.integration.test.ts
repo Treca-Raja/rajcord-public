@@ -158,7 +158,8 @@ for (const sound of ['none', 'tab', 'three', 'nine'] as const) {
             ),
           );
         if (sound === 'nine') {
-          for (const browser of browsers)
+          // Two talkers give every client inbound voice during the video fan-out checks.
+          for (const browser of browsers.slice(-2))
             await browser.js(
               'document.querySelector(\'button[aria-label="Unmute microphone"]\').click()',
             );

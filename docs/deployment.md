@@ -91,6 +91,15 @@ The container helper takes both hostnames explicitly and reads its Node image pi
 
 ## HTTPS and media
 
+New installations use a 200 ms LiveKit speaker update interval. For an existing installation, back up the protected `/etc/tricord/ENVIRONMENT/livekit.yaml` as part of the runtime configuration backup and set the following in its top-level `audio` section. If the section already exists, edit the key there and preserve the other settings.
+
+```yaml
+audio:
+  update_interval: 200
+```
+
+Apply the change during an approved maintenance window with the environment lock held. Use the active release's Compose configuration to recreate only the LiveKit service so it reads the updated file. This interrupts current calls. Confirm voice readiness and have two clients check that each speaking ring turns on and off as expected. If needed, restore the previous setting and recreate LiveKit again.
+
 For scoped Cloudflare API access instead of manual DNS editing, create a user API token from the **Edit zone DNS** template. Use Zone/DNS/Edit plus Zone/Zone/Read for zone lookup, restrict resources to the single zone rajcord.com, and set a short setup expiration. No account permissions or Global API Key are required. The DNS permission covers all DNS records in that zone; the authorized setup changes are only the app and TURN A records. See [Cloudflare's token instructions](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
 
 Keep the token out of chat, shell command arguments, source files and the VPS. On the operator's **Windows PC**, a hidden prompt can save it in user-encrypted local storage:

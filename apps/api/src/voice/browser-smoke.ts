@@ -63,6 +63,11 @@ try {
   });
   const b = await launch();
   browsers.push(b);
+  // Keep the friend's synthetic tone detectable while exercising RNNoise on the owner.
+  await b.call('Page.addScriptToEvaluateOnNewDocument', {
+    source: `localStorage.setItem(${JSON.stringify('rajcord.voice.processing.' + member.id)},
+      JSON.stringify({echoCancellation:false,noiseSuppression:false,autoGainControl:false}))`,
+  });
   await setup(a, first.token, origin);
   await setup(b, second.token, origin);
   for (const browser of [a, b])
@@ -89,6 +94,26 @@ try {
   }
   await a.wait('(' + received + ').then(bytes=>bytes>1000)');
   await b.wait('(' + received + ').then(bytes=>bytes>1000)');
+
+  const waitForFriendSpeaking = (speaking: boolean) =>
+    Promise.all(
+      browsers.map((browser) =>
+        browser.wait(
+          `[...document.querySelectorAll('.voice-members li')].some(row=>row.textContent.includes('Voice friend')&&row.dataset.speaking==='${speaking}')`,
+        ),
+      ),
+    );
+  await waitForFriendSpeaking(true);
+  await b.js('document.querySelector(\'.profile-audio-controls [aria-label="Deafen"]\').click()');
+  await waitForFriendSpeaking(false);
+  await b.js(
+    'document.querySelector(\'.profile-audio-controls [aria-label="Enable audio"]\').click()',
+  );
+  await waitForFriendSpeaking(true);
+  await b.js('document.querySelector(\'button[aria-label="Mute microphone"]\').click()');
+  await waitForFriendSpeaking(false);
+  await b.js('document.querySelector(\'button[aria-label="Unmute microphone"]\').click()');
+
   await a.wait(
     'window.__noiseGraphs.length===1 && window.__sending(window.__noiseGraphs[0].output)',
   );
@@ -433,6 +458,7 @@ try {
     'switching suppression off publishes the direct capture with browser suppression off',
     'microphone-only media grants',
     'remote mute state',
+    'speaking ring follows the local and remote speaker and clears on mute or deafen',
     'deafen stops playback',
     'signaling reconnect',
     'mute preserved on recovery',

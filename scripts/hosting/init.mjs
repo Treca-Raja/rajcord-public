@@ -87,6 +87,8 @@ export function initialize(
     'livekit.yaml',
     `port: 7880
 bind_addresses: ['0.0.0.0']
+audio:
+  update_interval: 200
 rtc:
   tcp_port: 7881
   udp_port: 7882
