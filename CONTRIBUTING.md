@@ -42,12 +42,13 @@ The Linux verification workflow runs browser regressions against disposable serv
 ## Submitting changes
 
 - Use [the ticket template](docs/ticket-template.md) when drafting work items. AI-created Trello cards and GitHub issues must follow it; keep personal Trello access/routing in [personal MCP configuration](docs/trello-mcp.md), not the repository.
-- For larger work, open an issue or discussion first to align on scope.
+- For larger work, agree on scope in the existing ticket, issue or discussion. Choose from vetted, optionally unclaimed work in Ready and name the accountable human when moving a ticket into In Development. Use Review & CI for an explicit reviewer handoff. Routine checks stay on GitHub. See the [board workflow](docs/ticket-template.md#board-workflow).
+- Check related PRs and agree on shared contracts or migration order where changes overlap. Contributors without board access can use GitHub directly.
 - Follow `feature/* -> develop -> main` for features, fixes, documentation and CI changes.
 - Create a descriptive `feature/<short-description>` branch from an up-to-date `develop`, for example `feature/message-search` or `feature/fix-login-redirect`. Inspect local work before fetching or switching; only fast-forward shared branches and never discard unrelated changes.
 - Open feature pull requests against `develop`. Release pull requests go from `develop` to `main`; do not open feature pull requests directly against `main` or push changes directly to either shared branch.
 - CI checks PR source/base pairs, including retargeted PRs. Dependency-update branches (`dependabot/*`) also target `develop`; retarget any default-branch security-update PR before merging. Both Linux `verify` and Windows `build` checks must pass before merge.
-- Keep PRs focused. Explain what changed and how you tested it.
+- Keep PRs focused. Explain the change and local checks. Resolve substantive review findings and confirm required checks and approvals against the current head. Link public evidence from the board and keep private board URLs out of public PRs. Record functional acceptance and applicable delivery evidence against the agreed outcome.
 - Add tests for implemented behavior and run applicable local checks from [rajcord-verify](.agents/skills/rajcord-verify/SKILL.md). Database tests (`pnpm test:db`) require the documented local services. Documentation-only changes need formatting/link checks, not the runtime stack.
 - Update existing documentation for changed features or commands, using [rajcord-document-change](.agents/skills/rajcord-document-change/SKILL.md). Keep code comments limited to non-obvious intent or constraints.
 - Do not include generated output, dependencies, secrets, or unrelated formatting changes.
