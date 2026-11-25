@@ -7,7 +7,7 @@ Use this format for AI-created Trello cards and GitHub issues, and when drafting
 - Use one independently verifiable outcome per ticket. Split unrelated work and link dependencies.
 - State the problem and expected result before suggesting implementation. Separate confirmed facts, constraints and proposed approaches.
 - Keep requirements and acceptance criteria specific enough to test. Include limits or measurable thresholds only when known.
-- Replace placeholders before publishing. Use `TBD` for unresolved decisions, `Unassigned` for an unknown owner and `Not applicable: <reason>` for irrelevant sections. Do not invent estimates, deadlines, people, designs or approvals.
+- Replace placeholders before publishing. Identify unresolved decisions and omit inapplicable fields. Leave an unclaimed ticket available for a contributor to pick up.
 - Keep testing and completion items unchecked when drafting. Record evidence before marking them complete.
 - For bugs, include reproducible steps, expected/actual behavior and the relevant version/environment. Keep sensitive reports private as described in [SECURITY.md](../SECURITY.md).
 - For a Spike, define the question, agreed timebox if known, and expected decision/evidence instead of promising implementation.
@@ -20,37 +20,33 @@ Types: `Feature`, `Bug`, `Improvement`, `Task`, `Spike`, `Security`, `QA`, `Main
 
 ## Board workflow
 
-Use one shared project board. The lists describe workflow state, not ticket type or subsystem.
+Trello holds the team's ordering, claims, blockers and acceptance decisions. GitHub holds code, review, checks and release records. Keep durable technical decisions and reusable verification evidence in the repository. Link the relevant record once from Trello. Contributors without board access can use an issue or PR. A board member links it if the team takes on the work.
 
-- **Roadmap & Epics:** track outcomes and linked child tickets, not day-to-day implementation.
-- **Inbox / Triage:** capture new requests; clarify impact, scope and reproduction before accepting work.
-- **Backlog:** accepted, prioritized work that is not ready to start.
-- **Ready:** one bounded outcome, testable acceptance criteria, confirmed human owner, dependencies and overlapping work checked.
-- **In Development:** active implementation with a work claim and a feature branch.
-- **Review & CI:** an open, reviewable PR; resolve findings and obtain the required checks and approvals.
-- **QA / Acceptance:** verify the expected behavior in the relevant environment, separating automated, synthetic, physical-device and WAN evidence.
-- **Ready for Release:** accepted changes integrated and awaiting the applicable delivery step.
-- **Done:** acceptance and applicable delivery are evidenced. For documentation/research work, record the agreed deliverable; an unrelated desktop release is not required.
+| List              | How to use it                                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbox / Triage    | Capture a request or link an existing report. Clarify the problem, impact and expected result.                                                                                |
+| Backlog           | Keep worthwhile work here until its scope, priority or prerequisite is settled.                                                                                               |
+| Ready             | Order vetted work by priority. A card can be unclaimed once its scope, acceptance check and dependencies are clear.                                                           |
+| In Development    | Name one accountable human on the card as it enters this stage. Link the branch or PR when available and identify any shared contract or dependency.                          |
+| Review & CI       | Use only when a specific reviewer has been explicitly asked to act. Link the PR and state what needs review. Routine checks stay on GitHub.                                   |
+| QA / Acceptance   | Use when an agreed acceptance check is outstanding. Identify the build, environment, next check and who can perform it. Record the result or an explicit scope decision.      |
+| Ready for Release | Use only when the outcome includes a specific delivery step. Link the integrated change and identify the remaining target, such as the hosted environment or desktop release. |
+| Done              | Link evidence for the agreed integration, functional acceptance or delivery outcome. Research ends with its evidence and decision.                                            |
+| Roadmap & Epics   | Optionally group independently verifiable outcomes when their sequence or shared direction needs coordination. Link the children.                                             |
 
-Blocked is a condition, not a stage: retain the current workflow state and record the blocking dependency and next action. During a board migration, existing legacy lists and labels remain valid until explicitly reconciled. Do not migrate existing cards without authorization.
+Move a card when responsibility or the next action changes. Skip intermediate lists when their work is already complete. On a blocker, keep the card at its current step and record the condition, dependency link and next action. Check the board's migration record before acting on older setup instructions.
 
-A human owner is accountable even when several AI agents contribute. Before starting, inspect active tickets/PRs and coordinate shared files, contracts, migrations, security-sensitive paths and release dependencies. Record a concise work claim (owner, branch, affected areas, dependency, intended outcome) and update it if scope changes. Prefer independent, reviewable outcomes over parallel edits to the same component.
+Before claiming, search active work and open PRs for the same outcome or shared interface. If two changes touch the same contract, agree on its shape and integration order so independent implementation can proceed in parallel. Keep the handoff to the next decision or check, its owner, and a link to the current work. Share public GitHub links from the private board. Keep private board links and content out of public issues, PRs and files.
 
-Every implementation PR should link its associated ticket when appropriate and safe; record exact PR, check and release evidence on the ticket. Do not copy private board content into public GitHub descriptions. A draft or open PR does not prove integration, a merged feature PR does not prove deployment, and a successful build does not establish real-world acceptance. Preserve actual branch protections and approval policies.
+Base verification on the risk and promised behavior. For media quality, identify the workload and distinguish local synthetic measurements from physical-device or WAN results. For distribution, link the applicable [hosted deployment](deployment.md#release-path) or [desktop release](desktop-distribution.md#authorized-release-process) evidence. A feature merge, a successful workflow, a published desktop version and a test on an installed client each answer a different question.
 
 ## Classification and priority
 
-- **Type:** use the title prefix. Types describe the deliverable, not the workflow state.
-- **Primary area:** Chat & Messaging, Voice & Audio, Screen Sharing, Desktop, UI & Appearance, Accounts & Security, Infrastructure & DevOps, Mobile, or Developer Experience. Choose the affected subsystem; add a secondary area only when useful.
-- **Priority:** P0 Critical (outage or confirmed critical exposure), P1 High (major broken functionality or release blocker), P2 Normal, P3 Low (optional polish or experiments). Use actual impact rather than scanner severity alone; retain TBD when priority has not been agreed.
-- **Conditions:** Epic, Blocked, Needs Design, Needs Reproduction, Needs Hardware Testing as applicable.
-- **Optional planning metadata:** target release, effort S/M/L/XL, parent epic and dependency links. Do not invent dates, estimates or owners.
-
-Use native fields and labels only when they exist and are authorized. During transition, record unavailable metadata in the description; do not pretend a proposed board label or automation is already configured.
+Use the title type to describe the outcome. Keep the next work the team wants pulled at the top of Ready. Update its order when impact or prerequisites change. Add an area, condition, parent, target release, estimate or label only when it helps someone choose, coordinate or verify the work. Record an urgent impact or dependency directly on the card. No estimate or label is required to start.
 
 ## Compact template (default for bounded work)
 
-Keep small tasks short. Use the detailed template below for complex, risky, cross-component or multi-stage work. Preserve historical evidence in comments or linked verification records; do not remove it merely to shorten an existing card.
+Remove inapplicable prompts and add handoff information as work progresses. Use the detailed template below for complex, risky, cross-component or multi-stage work. Preserve historical evidence in comments or linked verification records; do not remove it merely to shorten an existing card.
 
 ```markdown
 ## Outcome
@@ -68,11 +64,9 @@ Keep small tasks short. Use the detailed template below for complex, risky, cros
 
 ## Coordination and evidence
 
-- Owner: [Confirmed human owner / Unassigned]
-- Area / priority: [Primary area / P0–P3 or TBD]
-- Dependencies / affected files: [Links or TBD]
-- Parent epic / target release: [As agreed or Unscheduled]
-- Branch / PR / evidence: [Actual links when available]
+- [Link an existing report, dependency or overlapping contract when relevant.]
+- [At claim or handoff, record the human owner, current branch or PR, and next action.]
+- [At acceptance, link the applicable result and identify any outstanding criterion.]
 ```
 
 For security work, identify the finding, affected surface, demonstrated exposure, remediation and verification without publishing sensitive details. For a spike, state the question and required decision/evidence. For QA, identify the build, environment, scenarios and actual results. For an epic, link child outcomes and track progress through those children rather than accumulating a single oversized implementation PR.
@@ -140,21 +134,17 @@ Copy the following into the Trello card description or GitHub issue body. Keep t
 
 ## Delivery Metadata
 
-- Priority: [P0 Critical / P1 High / P2 Normal / P3 Low / TBD]
-- Effort: [S / M / L / XL / Unestimated]
-- Assignee: [Owner / Unassigned]
-- Reporter: [Actual requester / TBD]
-- Target Release: [Agreed target / Unscheduled]
-- Primary area / Parent epic: [Area / linked epic if applicable]
-- Affected components / Work claim: [Confirmed scope and active branch, if started]
-- Dependencies / Blockers: [Ticket links and blocking conditions / None / TBD]
+- Accountable human: [At claim, use the existing native assignment when available.]
+- Dependencies / blockers: [Linked work, shared contract and next action if applicable.]
+- Target and evidence: [Agreed integration, acceptance or distribution target and its record.]
+- Other planning details: [Include an area, parent, estimate or agreed date only when useful.]
 ```
 
 Adapt checklists to the ticket type rather than leaving meaningless work items. Documentation-only tasks need formatting/link checks, not application runtime tests; research tickets need evidence and a decision. Completion of implementation is not evidence that a release was deployed.
 
 ## Trello field mapping
 
-- Put the title in the card name and the complete body in its description. This works without paid custom fields.
-- When requested and supported, reuse existing board labels, members and custom fields for the same metadata. Verify identifiers and keep the description consistent; do not create labels/fields, assign someone or set a date by guessing.
-- Prefer native Trello acceptance checklists for new work when supported and authorized by the board workflow. In a draft or when unavailable, keep Markdown checkboxes in the description. Preserve existing evidence, avoid duplicate checklists, and never pre-complete an unverified item. Existing checklists and cards are migrated only under explicit authorization.
-- If an estimate or field has no native equivalent, retain it in the description and report that limitation.
+- On a new card, put the title in the card name and the complete body in its description. On an existing ticket, post status corrections, evidence and handoffs in comments. Preserve the original title and description unless an edit is requested.
+- When requested and supported, reuse existing board labels, members and custom fields for the same metadata. Verify identifiers. A native assignment can carry the claim without a copy in the description.
+- Record acceptance in one place. Use Markdown in the description or an authorized native checklist for work that needs individually tracked checks. Preserve existing evidence and check items only after verification. Existing tickets and checklists are migrated only under explicit authorization.
+- An agreed detail without a native field can go in the description.
